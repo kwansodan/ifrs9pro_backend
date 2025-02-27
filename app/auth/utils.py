@@ -9,12 +9,14 @@ from app.database import get_db
 from app.models import User
 from app.schemas import TokenData
 import os
+from dotenv import load_dotenv
 from app import models
+from app.config import settings
 
-SECRET_KEY = os.getenv("SECRET_KEY")
+
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-INVITATION_EXPIRE_HOURS = 24
+settings.ACCESS_TOKEN_EXPIRE_MINUTES = 30
+settings.INVITATION_EXPIRE_HOURS = 24
 
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
@@ -30,28 +32,28 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
 def create_email_verification_token(email: str):
     to_encode = {"sub": email, "type": "email_verification"}
     expire = datetime.utcnow() + timedelta(hours=24)
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
 def create_invitation_token(email: str):
     to_encode = {"sub": email, "type": "invitation"}
-    expire = datetime.utcnow() + timedelta(hours=INVITATION_EXPIRE_HOURS)
+    expire = datetime.utcnow() + timedelta(hours=settings.INVITATION_EXPIRE_HOURS)
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
 def decode_token(token: str):
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
         email: str = payload.get("sub")
         exp: datetime = datetime.fromtimestamp(payload.get("exp"))
         token_type: str = payload.get("type", "access")

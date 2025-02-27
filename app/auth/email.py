@@ -1,5 +1,6 @@
 import os
 from typing import List
+from app.config import settings
 
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 
@@ -58,7 +59,7 @@ Your access request has been approved! Please set up your password by clicking t
 
 {invitation_url}
 
-This link will expire in {INVITATION_EXPIRE_HOURS} hours.
+This link will expire in {settings.INVITATION_EXPIRE_HOURS} hours.
 
 Thank you,
 IFRS9Pro Team

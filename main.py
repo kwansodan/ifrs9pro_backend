@@ -1,12 +1,15 @@
+# app/main.py
 import os
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from app.database import engine, Base
+from sqlalchemy.orm import Session
+from app.database import get_db, init_db
 from app.routes import auth
 from app.models import User, UserRole
-from sqlalchemy.orm import Session
-from app.database import get_db
 from app.auth.utils import get_password_hash
+
+# Initialize database tables explicitly before the app starts
+init_db()
 
 app = FastAPI()
 
@@ -19,9 +22,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Create tables
-Base.metadata.create_all(bind=engine)
-
 # Register routers
 app.include_router(auth.router)
 
@@ -33,23 +33,34 @@ async def root():
 async def dashboard():
     return {"message": "Welcome to your dashboard"}
 
+# Create admin user function
+def create_admin_user():
+    # Get a new session
+    db = SessionLocal = next(get_db())
+    try:
+        admin_email = os.getenv("ADMIN_EMAIL", "admin@example.com")
+        admin_password = os.getenv("ADMIN_PASSWORD", "admin123")
+        
+        existing_admin = db.query(User).filter(User.email == admin_email).first()
+        if not existing_admin:
+            admin_user = User(
+                email=admin_email,
+                hashed_password=get_password_hash(admin_password),
+                role=UserRole.ADMIN
+            )
+            db.add(admin_user)
+            db.commit()
+            print(f"Admin user created: {admin_email}")
+    except Exception as e:
+        db.rollback()
+        print(f"Error creating admin user: {e}")
+    finally:
+        db.close()
+
 @app.on_event("startup")
 async def startup_event():
-    # Create admin user if it doesn't exist
-    db = next(get_db())
-    admin_email = os.getenv("ADMIN_EMAIL", "admin@example.com")
-    admin_password = os.getenv("ADMIN_PASSWORD", "admin123")
-    
-    existing_admin = db.query(User).filter(User.email == admin_email).first()
-    if not existing_admin:
-        admin_user = User(
-            email=admin_email,
-            hashed_password=get_password_hash(admin_password),
-            role=UserRole.ADMIN
-        )
-        db.add(admin_user)
-        db.commit()
-        print(f"Admin user created: {admin_email}")
+    # Create admin user on startup
+    create_admin_user()
 
 if __name__ == "__main__":
     import uvicorn

@@ -47,3 +47,7 @@ class TokenData(BaseModel):
     email: Optional[str] = None
     exp: Optional[datetime] = None
 
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str

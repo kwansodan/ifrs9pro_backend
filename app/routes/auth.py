@@ -1,14 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Form
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Form, Body
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from app.database import get_db
 from app.models import AccessRequest, User, RequestStatus, UserRole
-from app.schemas import EmailVerificationRequest, AccessRequestSubmit, AccessRequestResponse, AccessRequestUpdate, PasswordSetup, Token
+from app.schemas import EmailVerificationRequest, AccessRequestSubmit, AccessRequestResponse, AccessRequestUpdate, PasswordSetup, Token, LoginRequest
 from app.auth.utils import create_email_verification_token, create_invitation_token, get_password_hash, verify_password, create_access_token, get_current_active_user, is_admin, decode_token
 from app.auth.email import send_verification_email, send_admin_notification, send_invitation_email
 from typing import List
+from app.config import settings
 import os
+
 
 router = APIRouter(tags=["auth"])
 
@@ -71,13 +73,11 @@ async def verify_email(token: str, db: Session = Depends(get_db)):
         access_request.is_email_verified = True
         db.commit()
         
-        # Redirect to the request submission page
-        redirect_url = f"/submit-request?email={token_data.email}"
-        return RedirectResponse(url=redirect_url)
+        return {"message": "Email successfully verified. Thank you for confirming your email address."}
     
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-
+    
 @router.post("/submit-admin-request/")
 async def submit_admin_request(
     request_data: AccessRequestSubmit, 
@@ -146,7 +146,7 @@ async def update_access_request(
         # Generate invitation token
         token = create_invitation_token(access_request.email)
         access_request.token = token
-        access_request.token_expiry = datetime.utcnow() + timedelta(hours=INVITATION_EXPIRE_HOURS)
+        access_request.token_expiry = datetime.utcnow() + timedelta(hours=settings.INVITATION_EXPIRE_HOURS)
         
         # Send invitation email
         await send_invitation_email(access_request.email, token)
@@ -155,65 +155,18 @@ async def update_access_request(
     
     return {"message": "Request updated successfully"}
 
-@router.get("/set-password/{token}")
-async def get_password_setup(token: str, db: Session = Depends(get_db)):
-    try:
-        token_data, token_type = decode_token(token)
-        
-        if token_type != "invitation":
-            raise HTTPException(status_code=400, detail="Invalid token type")
-        
-        access_request = db.query(AccessRequest).filter(
-            AccessRequest.email == token_data.email,
-            AccessRequest.status == RequestStatus.APPROVED
-        ).first()
-        
-        if not access_request:
-            raise HTTPException(status_code=404, detail="Approved request not found")
-        
-        # Redirect to password setup form
-        return HTMLResponse(f"""
-        <html>
-            <head>
-                <title>Set Password</title>
-            </head>
-            <body>
-                <h1>Set Your Password</h1>
-                <form action="/set-password/{token}" method="post">
-                    <div>
-                        <label for="password">Password:</label>
-                        <input type="password" id="password" name="password" required minlength="8">
-                    </div>
-                    <div>
-                        <label for="confirm_password">Confirm Password:</label>
-                        <input type="password" id="confirm_password" name="confirm_password" required minlength="8">
-                    </div>
-                    <button type="submit">Set Password</button>
-                </form>
-            </body>
-        </html>
-        """)
-    
-    except Exception as e:
-        return HTMLResponse(f"""
-        <html>
-            <head>
-                <title>Error</title>
-            </head>
-            <body>
-                <h1>Error</h1>
-                <p>{str(e)}</p>
-            </body>
-        </html>
-        """)
-
 @router.post("/set-password/{token}")
 async def set_password(
     token: str,
-    password: str = Form(...),
-    confirm_password: str = Form(...),
+    password_data: dict = Body(...),
     db: Session = Depends(get_db)
 ):
+    password = password_data.get("password")
+    confirm_password = password_data.get("confirm_password")
+    
+    if not password or not confirm_password:
+        raise HTTPException(status_code=400, detail="Password and confirm password are required")
+        
     if password != confirm_password:
         raise HTTPException(status_code=400, detail="Passwords do not match")
     
@@ -234,51 +187,86 @@ async def set_password(
         if not access_request:
             raise HTTPException(status_code=404, detail="Approved request not found")
         
-        # Create the user
-        new_user = User(
-            email=access_request.email,
-            hashed_password=get_password_hash(password),
-            role=access_request.role
-        )
-        
-        db.add(new_user)
+        # Check if user already exists
+        existing_user = db.query(User).filter(User.email == access_request.email).first()
+        if existing_user:
+            # Update existing user's password instead of creating new user
+            existing_user.hashed_password = get_password_hash(password)
+            # You might want to update other fields as needed
+        else:
+            # Create the user
+            new_user = User(
+                email=access_request.email,
+                hashed_password=get_password_hash(password),
+                role=access_request.role
+            )
+            db.add(new_user)
         
         # Mark the request as complete
-        access_request.status = "completed"
+        access_request.status = RequestStatus.APPROVED
         
         db.commit()
         
-        # Generate access token for auto-login
+        # Generate access token
         access_token = create_access_token(
             data={"sub": access_request.email},
-            expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+            expires_delta=timedelta(hours=settings.INVITATION_EXPIRE_HOURS)
         )
         
-        return RedirectResponse(url=f"/dashboard?token={access_token}", status_code=303)
+        return {
+            "message": "Password set successfully",
+            "access_token": access_token,
+            "token_type": "bearer"
+        }
     
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-@router.post("/login", response_model=Token)
+        # More specific error handling
+        if "UNIQUE constraint failed: users.email" in str(e):
+            raise HTTPException(
+                status_code=400, 
+                detail="An account with this email already exists. If you've already set up your password, please log in."
+            )
+        raise HTTPException(status_code=400, detail=f"Error setting password: {str(e)}")
+    
+@router.post("/login", response_model=dict)
 async def login(
-    email: str = Form(...),
-    password: str = Form(...),
+    request: LoginRequest,  
     db: Session = Depends(get_db)
 ):
-    user = db.query(User).filter(User.email == email).first()
+    user = db.query(User).filter(User.email == request.email).first()
     
-    if not user or not verify_password(password, user.hashed_password):
+    if not user or not verify_password(request.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        # Include user info in the token
+    token_data = {
+        "sub": user.email,
+        "id": user.id,
+        "role": user.role,
+        "is_active": user.is_active
+    }
+        
     access_token = create_access_token(
-        data={"sub": user.email}, expires_delta=access_token_expires
+        data=token_data, expires_delta=access_token_expires
     )
     
-    return {"access_token": access_token, "token_type": "bearer"}
-
+    # Decode the token for sending back user info
+    decoded_token = decode_token(access_token)
+    
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": access_token_expires.total_seconds(),
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "role": user.role,
+            "is_active": user.is_active
+        }
+    }
 

@@ -1,9 +1,8 @@
-from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
 from enum import Enum as PyEnum
-
-Base = declarative_base()
+from app.database import Base  
 
 class RequestStatus(str, PyEnum):
     PENDING = "pending"
@@ -39,6 +38,3 @@ class AccessRequest(Base):
     token_expiry = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-
-
-
