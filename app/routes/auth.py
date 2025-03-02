@@ -124,7 +124,7 @@ async def get_access_requests(
     
     return access_requests
 
-@router.put("/admin/request/{request_id}")
+@router.put("/admin/requests/{request_id}")
 async def update_access_request(
     request_id: int,
     request_update: AccessRequestUpdate,

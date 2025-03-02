@@ -4,7 +4,7 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from app.database import get_db, init_db
-from app.routes import auth
+from app.routes import auth, portfolio
 from app.models import User, UserRole
 from app.auth.utils import get_password_hash
 
@@ -24,6 +24,7 @@ app.add_middleware(
 
 # Register routers
 app.include_router(auth.router)
+app.include_router(portfolio.router)
 
 @app.get("/")
 async def root():
