@@ -20,6 +20,7 @@ jinja2 = "^3.1.5"
 aiosmtplib = "^4.0.0"
 argon2-cffi = "^23.1.0"
 dotenv = "^0.9.9"
+psycopg2-binary = "^2.9.10"
 
 
 [build-system]

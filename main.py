@@ -39,8 +39,8 @@ def create_admin_user():
     # Get a new session
     db = SessionLocal = next(get_db())
     try:
-        admin_email = os.getenv("ADMIN_EMAIL", "admin@example.com")
-        admin_password = os.getenv("ADMIN_PASSWORD", "admin123")
+        admin_email = os.getenv("ADMIN_EMAIL")
+        admin_password = os.getenv("ADMIN_PASSWORD")
         
         existing_admin = db.query(User).filter(User.email == admin_email).first()
         if not existing_admin:
