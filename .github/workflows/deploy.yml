@@ -1,0 +1,30 @@
+name: CI/CD with Nix and Poetry
+
+on:
+  push:
+    branches:
+      - main  
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v22
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Enter Nix Shell and Install Dependencies
+        run: nix-shell --run "poetry install --no-interaction --no-ansi"
+
+      # - name: Deploy to Azure App Service
+      #   uses: azure/webapps-deploy@v3
+      #   with:
+      #     app-name: "ifrs9pro"
+      #     publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+      #     package: "."
