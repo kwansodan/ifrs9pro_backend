@@ -53,7 +53,7 @@ async def send_email(to_email: str, subject: str, body: str):
         return False
 
 async def send_verification_email(email: str, token: str):
-    verification_url = f"{FRONTEND_BASE_URL}/verify-email/{token}"
+    verification_url = f"{FRONTEND_BASE_URL}/admin-request/{token}"
     subject = "Verify your email"
     body = f"""
 Hello,
