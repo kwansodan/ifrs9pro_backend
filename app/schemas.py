@@ -87,6 +87,10 @@ class PortfolioCreate(BaseModel):
     funding_source: FundingSource
     data_source: DataSource
     repayment_source: bool = False
+    credit_source: str
+    loan_assets: str
+    ecl_impairment_account: str
+
 
 # For updating an existing portfolio
 class PortfolioUpdate(BaseModel):
