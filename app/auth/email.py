@@ -6,7 +6,7 @@ from azure.communication.email.aio import EmailClient as AsyncEmailClient
 from azure.core.credentials import AzureKeyCredential
 from app.config import settings
 
-BASE_URL = os.getenv("BASE_URL")
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL")
 
 # Azure Communication Services configuration
 AZURE_COMMUNICATION_CONNECTION_STRING = os.getenv("AZURE_COMMUNICATION_CONNECTION_STRING")
@@ -53,7 +53,7 @@ async def send_email(to_email: str, subject: str, body: str):
         return False
 
 async def send_verification_email(email: str, token: str):
-    verification_url = f"{BASE_URL}/verify-email/{token}"
+    verification_url = f"{FRONTEND_BASE_URL}/verify-email/{token}"
     subject = "Verify your email"
     body = f"""
 Hello,
@@ -78,7 +78,7 @@ IFRS9Pro Team
     return await send_email(admin_email, subject, body)
 
 async def send_invitation_email(email: str, token: str):
-    invitation_url = f"{BASE_URL}/set-password/{token}"
+    invitation_url = f"{FRONTEND_BASE_URL}/password-reset/{token}"
     subject = "Account Invitation"
     body = f"""
 Hello,
