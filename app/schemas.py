@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from enum import Enum
 
@@ -55,9 +55,6 @@ class LoginRequest(BaseModel):
 
 # Portfolio schemas
 
-from typing import Optional, List
-from datetime import datetime
-from enum import Enum
 
 class AssetType(str, Enum):
     EQUITY = "equity"
@@ -116,6 +113,9 @@ class PortfolioResponse(BaseModel):
     funding_source: str
     data_source: str
     repayment_source: bool
+    credit_source: str
+    loan_assets: str
+    ecl_impairment_account: str
     user_id: int
     created_at: datetime
     updated_at: Optional[datetime] = None
