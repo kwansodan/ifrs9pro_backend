@@ -10,7 +10,7 @@ BASE_URL = os.getenv("BASE_URL")
 
 # Azure Communication Services configuration
 AZURE_COMMUNICATION_CONNECTION_STRING = os.getenv("AZURE_COMMUNICATION_CONNECTION_STRING")
-AZURE_SENDER_EMAIL = os.getenv("AZURE_SENDER_EMAIL", "no-reply@yourdomain.com")
+AZURE_SENDER_EMAIL = os.getenv("AZURE_SENDER_EMAIL")
 
 async def send_email(to_email: str, subject: str, body: str):
     """
