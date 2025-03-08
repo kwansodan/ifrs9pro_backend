@@ -5,7 +5,7 @@ from azure.communication.email import EmailClient
 from azure.communication.email.aio import EmailClient as AsyncEmailClient
 from azure.core.credentials import AzureKeyCredential
 from app.config import settings
-from urllib import urlencode
+from urllib.parse import urlencode
 
 FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL")
 
