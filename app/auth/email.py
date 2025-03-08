@@ -5,6 +5,7 @@ from azure.communication.email import EmailClient
 from azure.communication.email.aio import EmailClient as AsyncEmailClient
 from azure.core.credentials import AzureKeyCredential
 from app.config import settings
+from urllib import urlencode
 
 FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL")
 
@@ -53,7 +54,8 @@ async def send_email(to_email: str, subject: str, body: str):
         return False
 
 async def send_verification_email(email: str, token: str):
-    verification_url = f"{FRONTEND_BASE_URL}/admin-request/{token}"
+    params = {'email': email, 'token': token}
+    verification_url = f"{FRONTEND_BASE_URL}/admin-request?{urlencode(params)}"
     subject = "Verify your email"
     body = f"""
 Hello,
