@@ -10,8 +10,10 @@ class RequestStatus(str, Enum):
     DENIED = "denied"
     FLAGGED = "flagged"
 
-class UserRole(str, Enum):
+class UserRole(str, PyEnum):
     ADMIN = "admin"
+    ANALYST = "analyst"
+    REVIEWER = "reviewer"
     USER = "user"
 
 class EmailVerificationRequest(BaseModel):

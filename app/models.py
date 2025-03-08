@@ -13,6 +13,8 @@ class RequestStatus(str, PyEnum):
 
 class UserRole(str, PyEnum):
     ADMIN = "admin"
+    ANALYST = "analyst"
+    REVIEWER = "reviewer"
     USER = "user"
 
 class User(Base):
