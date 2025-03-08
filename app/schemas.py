@@ -10,7 +10,7 @@ class RequestStatus(str, Enum):
     DENIED = "denied"
     FLAGGED = "flagged"
 
-class UserRole(str, PyEnum):
+class UserRole(str, Enum):
     ADMIN = "admin"
     ANALYST = "analyst"
     REVIEWER = "reviewer"
