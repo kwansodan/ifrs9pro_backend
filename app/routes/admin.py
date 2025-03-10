@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import AccessRequest, User
-from app.schemas import AccessRequestSubmit, AccessRequestResponse, AccessRequestUpdate, UserResponse
+from app.schemas import AccessRequestSubmit, AccessRequestResponse, AccessRequestUpdate, UserResponse, UserUpdate
 from typing import List
 from app.auth.email import (
     send_verification_email,
@@ -96,7 +96,7 @@ async def delete_access_request(
 
 # Handle user management
 @router.get("/users", response_model=List[UserResponse])
-async def get_access_requests(
+async def get_users(
     db: Session = Depends(get_db), current_user: User = Depends(is_admin)
 ):
     users = (
@@ -105,3 +105,25 @@ async def get_access_requests(
 
     return users
 
+@router.put("/users/{user_id}", response_model=UserResponse)
+async def update_user(user_id: int, user_update: UserUpdate, db: Session = Depends(get_db), current_user: User = Depends(is_admin)):
+    user = db.query(User).filter(User.id == user_id).first()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Update provided fields
+    update_data = user_update.dict(exclude_unset=True)
+    
+
+    # Convert enum values to strings
+    if "role" in update_data and update_data["role"]:
+        update_data["role"] = update_data["role"].value
+
+
+    for key, value in update_data.items():
+        setattr(user, key, value)
+
+    db.commit()
+    db.refresh(user)
+    return user

@@ -152,8 +152,13 @@ class AccessRequestUpdate(BaseModel):
 class UserResponse(BaseModel):
     id: int
     email: str
-    role: str
+    role: UserRole
     is_active: bool
     created_at: datetime
-    updated_at: Optional[datetime]
+    updated_at: Optional[datetime] = None
+    
+class UserUpdate(BaseModel):
+    email: Optional[str] = None
+    role: Optional[UserRole] = None
+    is_active: Optional[bool] = None
     
