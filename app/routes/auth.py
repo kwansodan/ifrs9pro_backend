@@ -293,7 +293,13 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # Set last login
+    user.last_login = datetime.utcnow()
+    db.commit()
+    db.refresh(user)
+
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+
     # Include user info in the token
     token_data = {
         "sub": user.email,

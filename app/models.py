@@ -35,10 +35,14 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
+    first_name = Column(String, nullable=True)
+    last_name = Column(String, nullable=True)
     email = Column(String, unique=True, index=True)
+    recovery_email = Column(String, nullable=True)
     hashed_password = Column(String, nullable=True)
     role = Column(String, default=UserRole.USER)
     is_active = Column(Boolean, default=True)
+    last_login = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     portfolios = relationship("Portfolio", back_populates="user")

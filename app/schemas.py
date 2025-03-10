@@ -123,7 +123,9 @@ class PortfolioList(BaseModel):
     class Config:
         from_attributes = True
 
+
 # Access request schemas
+
 
 class AccessRequestSubmit(BaseModel):
     email: EmailStr
@@ -148,17 +150,23 @@ class AccessRequestUpdate(BaseModel):
 
 
 # User management schemas
-
 class UserResponse(BaseModel):
     id: int
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     email: str
+    recovery_email: Optional[str] = None
     role: UserRole
     is_active: bool
     created_at: datetime
+    last_login: Optional[datetime] = None
     updated_at: Optional[datetime] = None
-    
+
+
 class UserUpdate(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     email: Optional[str] = None
+    recovery_email: Optional[str] = None
     role: Optional[UserRole] = None
     is_active: Optional[bool] = None
-    

@@ -2,7 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import AccessRequest, User
-from app.schemas import AccessRequestSubmit, AccessRequestResponse, AccessRequestUpdate, UserResponse, UserUpdate
+from app.schemas import (
+    AccessRequestSubmit,
+    AccessRequestResponse,
+    AccessRequestUpdate,
+    UserResponse,
+    UserUpdate,
+)
 from typing import List
 from app.auth.email import (
     send_verification_email,
@@ -23,6 +29,7 @@ from app.auth.utils import (
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 # Handle access requests
+
 
 @router.get("/requests", response_model=List[AccessRequestResponse])
 async def get_access_requests(
@@ -87,26 +94,31 @@ async def delete_access_request(
         db.delete(access_request)
         db.commit()
     else:
-         raise HTTPException(
+        raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Access request not found",
         )
 
     return None
 
+
 # Handle user management
 @router.get("/users", response_model=List[UserResponse])
 async def get_users(
     db: Session = Depends(get_db), current_user: User = Depends(is_admin)
 ):
-    users = (
-        db.query(User).all()
-    )
+    users = db.query(User).all()
 
     return users
 
+
 @router.put("/users/{user_id}", response_model=UserResponse)
-async def update_user(user_id: int, user_update: UserUpdate, db: Session = Depends(get_db), current_user: User = Depends(is_admin)):
+async def update_user(
+    user_id: int,
+    user_update: UserUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(is_admin),
+):
     user = db.query(User).filter(User.id == user_id).first()
 
     if not user:
@@ -114,12 +126,10 @@ async def update_user(user_id: int, user_update: UserUpdate, db: Session = Depen
 
     # Update provided fields
     update_data = user_update.dict(exclude_unset=True)
-    
 
     # Convert enum values to strings
     if "role" in update_data and update_data["role"]:
         update_data["role"] = update_data["role"].value
-
 
     for key, value in update_data.items():
         setattr(user, key, value)
