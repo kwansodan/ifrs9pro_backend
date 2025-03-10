@@ -34,12 +34,12 @@ class Token(BaseModel):
 
 
 class TokenData(BaseModel):
-    email: Optional[str] = None
+    email: Optional[EmailStr] = None
     exp: Optional[datetime] = None
 
 
 class LoginRequest(BaseModel):
-    email: str
+    email: EmailStr
     password: str
 
 
@@ -134,8 +134,8 @@ class AccessRequestSubmit(BaseModel):
 
 class AccessRequestResponse(BaseModel):
     id: int
-    email: str
-    admin_email: Optional[str] = None
+    email: EmailStr
+    admin_email: Optional[EmailStr] = None
     status: str
     created_at: datetime
     is_email_verified: bool
@@ -150,12 +150,21 @@ class AccessRequestUpdate(BaseModel):
 
 
 # User management schemas
+class UserCreate(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: EmailStr
+    recovery_email: Optional[EmailStr] = None
+    role: UserRole = UserRole.USER
+    is_active: bool = True
+    portfolio_id: Optional[int] = None
+
 class UserResponse(BaseModel):
     id: int
     first_name: Optional[str] = None
     last_name: Optional[str] = None
-    email: str
-    recovery_email: Optional[str] = None
+    email: EmailStr
+    recovery_email: Optional[EmailStr] = None
     role: UserRole
     is_active: bool
     created_at: datetime
@@ -166,7 +175,7 @@ class UserResponse(BaseModel):
 class UserUpdate(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
-    email: Optional[str] = None
-    recovery_email: Optional[str] = None
+    email: Optional[EmailStr] = None
+    recovery_email: Optional[EmailStr] = None
     role: Optional[UserRole] = None
     is_active: Optional[bool] = None
