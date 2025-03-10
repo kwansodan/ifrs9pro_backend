@@ -23,28 +23,6 @@ class EmailVerificationRequest(BaseModel):
     email: EmailStr
 
 
-class AccessRequestSubmit(BaseModel):
-    email: EmailStr
-    admin_email: Optional[EmailStr] = None
-
-
-class AccessRequestResponse(BaseModel):
-    id: int
-    email: str
-    admin_email: Optional[str] = None
-    status: str
-    created_at: datetime
-    is_email_verified: bool
-
-    class Config:
-        from_attributes = True
-
-
-class AccessRequestUpdate(BaseModel):
-    status: RequestStatus
-    role: Optional[UserRole] = None
-
-
 class PasswordSetup(BaseModel):
     password: str = Field(..., min_length=8, example="string")
     confirm_password: str
@@ -144,3 +122,38 @@ class PortfolioList(BaseModel):
 
     class Config:
         from_attributes = True
+
+# Access request schemas
+
+class AccessRequestSubmit(BaseModel):
+    email: EmailStr
+    admin_email: Optional[EmailStr] = None
+
+
+class AccessRequestResponse(BaseModel):
+    id: int
+    email: str
+    admin_email: Optional[str] = None
+    status: str
+    created_at: datetime
+    is_email_verified: bool
+
+    class Config:
+        from_attributes = True
+
+
+class AccessRequestUpdate(BaseModel):
+    status: RequestStatus
+    role: Optional[UserRole] = None
+
+
+# User management schemas
+
+class UserResponse(BaseModel):
+    id: int
+    email: str
+    role: str
+    is_active: bool
+    created_at: datetime
+    updated_at: Optional[datetime]
+    

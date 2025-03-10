@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import AccessRequest, User
-from app.schemas import AccessRequestSubmit, AccessRequestResponse, AccessRequestUpdate
+from app.schemas import AccessRequestSubmit, AccessRequestResponse, AccessRequestUpdate, UserResponse
 from typing import List
 from app.auth.email import (
     send_verification_email,
@@ -22,6 +22,7 @@ from app.auth.utils import (
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
+# Handle access requests
 
 @router.get("/requests", response_model=List[AccessRequestResponse])
 async def get_access_requests(
@@ -92,3 +93,15 @@ async def delete_access_request(
         )
 
     return None
+
+# Handle user management
+@router.get("/users", response_model=List[UserResponse])
+async def get_access_requests(
+    db: Session = Depends(get_db), current_user: User = Depends(is_admin)
+):
+    users = (
+        db.query(User).all()
+    )
+
+    return users
+
