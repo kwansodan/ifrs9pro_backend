@@ -10,8 +10,11 @@ from urllib.parse import urlencode
 FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL")
 
 # Azure Communication Services configuration
-AZURE_COMMUNICATION_CONNECTION_STRING = os.getenv("AZURE_COMMUNICATION_CONNECTION_STRING")
+AZURE_COMMUNICATION_CONNECTION_STRING = os.getenv(
+    "AZURE_COMMUNICATION_CONNECTION_STRING"
+)
 AZURE_SENDER_EMAIL = os.getenv("AZURE_SENDER_EMAIL")
+
 
 async def send_email(to_email: str, subject: str, body: str):
     """
@@ -19,28 +22,28 @@ async def send_email(to_email: str, subject: str, body: str):
     """
     try:
         # Create the email client
-        email_client = AsyncEmailClient.from_connection_string(AZURE_COMMUNICATION_CONNECTION_STRING)
-        
+        email_client = AsyncEmailClient.from_connection_string(
+            AZURE_COMMUNICATION_CONNECTION_STRING
+        )
+
         # Create the email message
         message = {
             "senderAddress": AZURE_SENDER_EMAIL,
-            "recipients": {
-                "to": [{"address": to_email}]
-            },
+            "recipients": {"to": [{"address": to_email}]},
             "content": {
                 "subject": subject,
                 "plainText": body,
-                "html": body.replace("\n", "<br>")
-            }
+                "html": body.replace("\n", "<br>"),
+            },
         }
-        
+
         # Send the email
         poller = await email_client.begin_send(message)
         result = await poller.result()
-        
+
         # Close the client
         await email_client.close()
-        
+
         return True
     except Exception as e:
         print(f"Failed to send email: {str(e)}")
@@ -53,8 +56,9 @@ async def send_email(to_email: str, subject: str, body: str):
             print(f"----- END EMAIL -----\n")
         return False
 
+
 async def send_verification_email(email: str, token: str):
-    params = {'email': email, 'token': token}
+    params = {"email": email, "token": token}
     verification_url = f"{FRONTEND_BASE_URL}/admin-request?{urlencode(params)}"
     subject = "Verify your email"
     body = f"""
@@ -67,6 +71,7 @@ IFRS9Pro Team
     """
     return await send_email(email, subject, body)
 
+
 async def send_admin_notification(admin_email: str, requester_email: str):
     subject = "New Access Request"
     body = f"""
@@ -78,6 +83,7 @@ Thank you,
 IFRS9Pro Team
     """
     return await send_email(admin_email, subject, body)
+
 
 async def send_invitation_email(email: str, token: str):
     invitation_url = f"{FRONTEND_BASE_URL}/password-reset/{token}"

@@ -3,6 +3,7 @@ from typing import Optional, List
 from datetime import datetime
 from enum import Enum
 
+
 # Auth schemas
 class RequestStatus(str, Enum):
     PENDING = "pending"
@@ -10,18 +11,22 @@ class RequestStatus(str, Enum):
     DENIED = "denied"
     FLAGGED = "flagged"
 
+
 class UserRole(str, Enum):
     ADMIN = "admin"
     ANALYST = "analyst"
     REVIEWER = "reviewer"
     USER = "user"
 
+
 class EmailVerificationRequest(BaseModel):
     email: EmailStr
+
 
 class AccessRequestSubmit(BaseModel):
     email: EmailStr
     admin_email: Optional[EmailStr] = None
+
 
 class AccessRequestResponse(BaseModel):
     id: int
@@ -34,25 +39,31 @@ class AccessRequestResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 class AccessRequestUpdate(BaseModel):
     status: RequestStatus
     role: Optional[UserRole] = None
+
 
 class PasswordSetup(BaseModel):
     password: str = Field(..., min_length=8, example="string")
     confirm_password: str
 
+
 class Token(BaseModel):
     access_token: str
     token_type: str
+
 
 class TokenData(BaseModel):
     email: Optional[str] = None
     exp: Optional[datetime] = None
 
+
 class LoginRequest(BaseModel):
     email: str
     password: str
+
 
 # Portfolio schemas
 
@@ -61,16 +72,19 @@ class AssetType(str, Enum):
     EQUITY = "equity"
     DEBT = "debt"
 
+
 class CustomerType(str, Enum):
     INDIVIDUALS = "individuals"
     INSTITUTION = "institution"
     MIXED = "mixed"
+
 
 class FundingSource(str, Enum):
     PRIVATE_INVESTORS = "private investors"
     PENSION_FUND = "pension fund"
     MUTUAL_FUND = "mutual fund"
     OTHER_FUNDS = "other funds"
+
 
 class DataSource(str, Enum):
     EXTERNAL_APPLICATION = "connect to external application"
@@ -104,7 +118,6 @@ class PortfolioUpdate(BaseModel):
     ecl_impairment_account: Optional[str] = None
 
 
-
 class PortfolioResponse(BaseModel):
     id: int
     name: str
@@ -120,13 +133,14 @@ class PortfolioResponse(BaseModel):
     user_id: int
     created_at: datetime
     updated_at: Optional[datetime] = None
-    
+
     class Config:
         from_attributes = True
+
 
 class PortfolioList(BaseModel):
     items: List[PortfolioResponse]
     total: int
-    
+
     class Config:
         from_attributes = True

@@ -9,6 +9,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
 
+
 def get_db():
     db = SessionLocal()
     try:
@@ -16,8 +17,10 @@ def get_db():
     finally:
         db.close()
 
+
 # Initialize the database
 def init_db():
     # Import models here to avoid circular imports
     from app.models import User, AccessRequest
+
     Base.metadata.create_all(bind=engine)

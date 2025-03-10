@@ -1,15 +1,28 @@
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, Date, Numeric, Float
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    Date,
+    Numeric,
+    Float,
+)
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
 from enum import Enum as PyEnum
 from app.database import Base
 from sqlalchemy.orm import relationship
- 
+
+
 class RequestStatus(str, PyEnum):
     PENDING = "pending"
     APPROVED = "approved"
     DENIED = "denied"
     FLAGGED = "flagged"
+
 
 class UserRole(str, PyEnum):
     ADMIN = "admin"
@@ -17,9 +30,10 @@ class UserRole(str, PyEnum):
     REVIEWER = "reviewer"
     USER = "user"
 
+
 class User(Base):
     __tablename__ = "users"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True)
     hashed_password = Column(String, nullable=True)
@@ -29,9 +43,10 @@ class User(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     portfolios = relationship("Portfolio", back_populates="user")
 
+
 class AccessRequest(Base):
     __tablename__ = "access_requests"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, index=True)
     admin_email = Column(String, nullable=True)
@@ -43,15 +58,17 @@ class AccessRequest(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    
+
 class AssetType(str, PyEnum):
     EQUITY = "equity"
     DEBT = "debt"
+
 
 class CustomerType(str, PyEnum):
     INDIVIDUALS = "individuals"
     INSTITUTION = "institution"
     MIXED = "mixed"
+
 
 class FundingSource(str, PyEnum):
     PRIVATE_INVESTORS = "private investors"
@@ -59,13 +76,15 @@ class FundingSource(str, PyEnum):
     MUTUAL_FUND = "mutual fund"
     OTHER_FUNDS = "other funds"
 
+
 class DataSource(str, PyEnum):
     EXTERNAL_APPLICATION = "connect to external application"
     UPLOAD_DATA = "upload data"
 
+
 class Portfolio(Base):
     __tablename__ = "portfolios"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     name = Column(String, nullable=True)
@@ -88,6 +107,7 @@ class ClientType(str, PyEnum):
     CORPORATE = "corporate"
     SME = "sme"
 
+
 class MaritalStatus(str, PyEnum):
     SINGLE = "single"
     MARRIED = "married"
@@ -95,11 +115,13 @@ class MaritalStatus(str, PyEnum):
     WIDOWED = "widowed"
     OTHER = "other"
 
+
 class Gender(str, PyEnum):
     MALE = "male"
     FEMALE = "female"
     OTHER = "other"
     PREFER_NOT_TO_SAY = "prefer_not_to_say"
+
 
 class Title(str, PyEnum):
     MR = "mr"
@@ -110,9 +132,10 @@ class Title(str, PyEnum):
     PROF = "prof"
     OTHER = "other"
 
+
 class Client(Base):
     __tablename__ = "clients"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     employee_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     lastname = Column(String, nullable=False, index=True)
@@ -148,6 +171,7 @@ class LoanType(str, PyEnum):
     EDUCATION = "education"
     OTHER = "other"
 
+
 class DeductionStatus(str, PyEnum):
     ACTIVE = "active"
     PENDING = "pending"
@@ -158,7 +182,7 @@ class DeductionStatus(str, PyEnum):
 
 class Loan(Base):
     __tablename__ = "loans"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     loan_no = Column(String, unique=True, index=True, nullable=False)
     employee_id = Column(Integer, ForeignKey("users.id"), nullable=True)
@@ -186,9 +210,9 @@ class Loan(Base):
     principal_paid = Column(Numeric(precision=18, scale=2), default=0)
     interest_paid = Column(Numeric(precision=18, scale=2), default=0)
     total_paid = Column(Numeric(precision=18, scale=2), default=0)
-    principal_paid2 = Column(Numeric(precision=18, scale=2), default=0)  
-    interest_paid2 = Column(Numeric(precision=18, scale=2), default=0)   
-    total_paid2 = Column(Numeric(precision=18, scale=2), default=0)      
+    principal_paid2 = Column(Numeric(precision=18, scale=2), default=0)
+    interest_paid2 = Column(Numeric(precision=18, scale=2), default=0)
+    total_paid2 = Column(Numeric(precision=18, scale=2), default=0)
     paid = Column(Boolean, default=False)
     cancelled = Column(Boolean, default=False)
     outstanding_loan_balance = Column(Numeric(precision=18, scale=2), default=0)

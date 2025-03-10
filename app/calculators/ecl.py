@@ -1,5 +1,6 @@
 from decimal import Decimal, ROUND_HALF_UP
 
+
 def calculate_ecl(outstanding_balance: Decimal, pd: Decimal, lgd: Decimal) -> Decimal:
     """
     Calculate the Expected Credit Loss (ECL) for a loan.
@@ -16,7 +17,7 @@ def calculate_ecl(outstanding_balance: Decimal, pd: Decimal, lgd: Decimal) -> De
         raise ValueError("PD must be between 0 and 1")
     if not (Decimal("0") <= lgd <= Decimal("1")):
         raise ValueError("LGD must be between 0 and 1")
-    
+
     # Exposure at Default (EAD) is the outstanding balance
     ead = outstanding_balance
 
@@ -25,4 +26,3 @@ def calculate_ecl(outstanding_balance: Decimal, pd: Decimal, lgd: Decimal) -> De
 
     # Round to 2 decimal places
     return ecl.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-
