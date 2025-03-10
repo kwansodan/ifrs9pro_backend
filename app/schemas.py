@@ -39,7 +39,7 @@ class AccessRequestUpdate(BaseModel):
     role: Optional[UserRole] = None
 
 class PasswordSetup(BaseModel):
-    password: str = Field(..., min_length=8)
+    password: str = Field(..., min_length=8, example="string")
     confirm_password: str
 
 class Token(BaseModel):
@@ -49,7 +49,6 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     email: Optional[str] = None
     exp: Optional[datetime] = None
-
 
 class LoginRequest(BaseModel):
     email: str

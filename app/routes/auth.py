@@ -158,7 +158,7 @@ async def update_access_request(
 @router.post("/set-password/{token}")
 async def set_password(
     token: str,
-    password_data: dict = Body(...),
+    password_data: PasswordSetup,
     db: Session = Depends(get_db)
 ):
     password = password_data.get("password")
