@@ -204,8 +204,8 @@ async def update_access_request(
 async def set_password(
     token: str, password_data: PasswordSetup, db: Session = Depends(get_db)
 ):
-    password = password_data.get("password")
-    confirm_password = password_data.get("confirm_password")
+    password = password_data.password
+    confirm_password = password_data.confirm_password
 
     if not password or not confirm_password:
         raise HTTPException(
