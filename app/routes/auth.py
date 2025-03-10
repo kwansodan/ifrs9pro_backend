@@ -321,7 +321,10 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
         "expires_in": access_token_expires.total_seconds(),
         "user": {
             "id": user.id,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
             "email": user.email,
+            "recovery_email": user.recovery_email,
             "role": user.role,
             "is_active": user.is_active,
         },
