@@ -93,6 +93,36 @@ Hello,
 Your access request has been approved! Please set up your password by clicking the link below:
 {invitation_url}
 This link will expire in {settings.INVITATION_EXPIRE_HOURS} hours.
+
+Thank you,
+IFRS9Pro Team
+    """
+    return await send_email(email, subject, body)
+
+
+async def send_invitation_email(email: str, token: str):
+    invitation_url = f"{FRONTEND_BASE_URL}/password-reset/{token}"
+    subject = "Account Invitation"
+    body = f"""
+Hello,
+Your access request has been approved! Please set your password by clicking the link below:
+{invitation_url}
+This link will expire in {settings.INVITATION_EXPIRE_HOURS} hours.
+    
+Thank you,
+IFRS9Pro Team
+    """
+    return await send_email(email, subject, body)
+
+async def send_password_setup_email(email: str, token: str):
+    invitation_url = f"{FRONTEND_BASE_URL}/password-reset/{token}"
+    subject = "Set your password"
+    body = f"""
+Hello,
+An account has been created for you! Please set your password by clicking the link below:
+    {invitation_url}
+This link will expire in {settings.INVITATION_EXPIRE_HOURS} hours.
+    
 Thank you,
 IFRS9Pro Team
     """
