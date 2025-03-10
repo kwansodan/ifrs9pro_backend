@@ -14,6 +14,7 @@ from app.auth.email import (
     send_verification_email,
     send_admin_notification,
     send_invitation_email,
+    send_password_setup_email
 )
 from app.auth.utils import (
     create_email_verification_token,
@@ -54,7 +55,7 @@ async def update_access_request(
     )
 
     if not access_request:
-        raise HTTPException(status_code=404, detail="Request not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
 
     access_request.status = request_update.status
 
@@ -112,6 +113,67 @@ async def get_users(
     return users
 
 
+@router.post("/users", response_model=UserResponse)
+async def create_user(
+    user_create: UserCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(is_admin),
+):
+    # Check if user with same email already exists
+    existing_user = db.query(User).filter(User.email == user_create.email).first()
+    if existing_user:
+        raise HTTPException(
+            status_code=400,
+            detail="Email already registered"
+        )
+    
+    # Create new user
+    user_data = user_create.dict(exclude={"portfolio_id"})
+    
+    # Convert enum values to strings if necessary
+    if user_data.get("role"):
+        user_data["role"] = user_data["role"].value
+    
+    new_user = User(**user_data)
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    
+    # Link portfolio if provided
+    if user_create.portfolio_id:
+        portfolio = db.query(Portfolio).filter(Portfolio.id == user_create.portfolio_id).first()
+        if not portfolio:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Portfolio not found"
+            )
+        portfolio.user_id = new_user.id
+        db.commit()
+    
+    # create token containing users email
+    token = create_invitation_token(new_user.email)
+    
+    # Send email for password setup
+    send_password_setup_email(new_user.email, token) 
+    
+    return new_user
+
+@router.delete("/users/{user_id}", status_code=204)
+async def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(is_admin),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    
+    # Delete the user
+    db.delete(user)
+    db.commit()
+    
+    return None  #
+
 @router.put("/users/{user_id}", response_model=UserResponse)
 async def update_user(
     user_id: int,
@@ -122,7 +184,7 @@ async def update_user(
     user = db.query(User).filter(User.id == user_id).first()
 
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     # Update provided fields
     update_data = user_update.dict(exclude_unset=True)
@@ -137,3 +199,18 @@ async def update_user(
     db.commit()
     db.refresh(user)
     return user
+
+@router.delete("/users/{user_id}", status_code=status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(is_admin),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    
+    db.delete(user)
+    db.commit()
+    
+    return None  
