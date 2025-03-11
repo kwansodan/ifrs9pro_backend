@@ -77,9 +77,9 @@ class PortfolioCreate(BaseModel):
     funding_source: FundingSource
     data_source: DataSource
     repayment_source: bool = False
-    credit_source: str
-    loan_assets: str
-    ecl_impairment_account: str
+    credit_source: Optional[str] = None
+    loan_assets: Optional[str] = None
+    ecl_impairment_account: Optional[str] = None
 
 
 # For updating an existing portfolio
@@ -105,9 +105,9 @@ class PortfolioResponse(BaseModel):
     funding_source: str
     data_source: str
     repayment_source: bool
-    credit_source: str
-    loan_assets: str
-    ecl_impairment_account: str
+    credit_source: Optional[str] = None
+    loan_assets: Optional[str] = None
+    ecl_impairment_account: Optional[str] = None
     user_id: int
     created_at: datetime
     updated_at: Optional[datetime] = None
