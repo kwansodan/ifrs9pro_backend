@@ -25,6 +25,8 @@ gunicorn = "^23.0.0"
 azure-communication-email = "^1.0.0"
 alembic = "^1.15.1"
 aiohttp = "^3.11.13"
+pandas = "^2.2.3"
+openpyxl = "^3.1.5"
 
 
 [build-system]

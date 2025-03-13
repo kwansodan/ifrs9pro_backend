@@ -1,7 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from typing import List, Optional
+import pandas as pd
+import io
 from app.database import get_db
+from app.models import Portfolio, User
+from app.auth.utils import get_current_active_user
 from app.models import (
     Portfolio,
     User,
@@ -169,3 +173,124 @@ def delete_portfolio(
     db.commit()
 
     return None
+
+@router.post("/{portfolio_id}/ingest", status_code=status.HTTP_200_OK)
+async def ingest_portfolio_data(
+    portfolio_id: int,
+    loan_details: Optional[UploadFile] = File(None),
+    loan_guarantee_data: Optional[UploadFile] = File(None),
+    loan_collateral_data: Optional[UploadFile] = File(None),
+    historical_repayments_data: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Ingest Excel files containing portfolio data.
+    
+    Accepts up to four Excel files:
+    - loan_details: Primary loan information
+    - loan_guarantee_data: Information about loan guarantees
+    - loan_collateral_data: Information about loan collateral
+    - historical_repayments_data: Historical repayment data
+    """
+    # Check if at least one file is provided
+    if not any([loan_details, loan_guarantee_data, loan_collateral_data, historical_repayments_data]):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one file must be provided"
+        )
+    
+    # Verify portfolio exists and belongs to current user
+    portfolio = (
+        db.query(Portfolio)
+        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .first()
+    )
+
+    if not portfolio:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Portfolio not found"
+        )
+    
+    results = {}
+    
+    # Process loan details file
+    if loan_details:
+        try:
+            content = await loan_details.read()
+            df = pd.read_excel(io.BytesIO(content))
+    
+            # process data
+            results["loan_details"] = {
+                "status": "success",
+                "rows_processed": len(df),
+                "filename": loan_details.filename
+            }
+        except Exception as e:
+            results["loan_details"] = {
+                "status": "error",
+                "message": str(e),
+                "filename": loan_details.filename
+            }
+    
+    # Process loan guarantee data file
+    if loan_guarantee_data:
+        try:
+            content = await loan_guarantee_data.read()
+            df = pd.read_excel(io.BytesIO(content))
+            # Process the data
+            results["loan_guarantee_data"] = {
+                "status": "success",
+                "rows_processed": len(df),
+                "filename": loan_guarantee_data.filename
+            }
+        except Exception as e:
+            results["loan_guarantee_data"] = {
+                "status": "error",
+                "message": str(e),
+                "filename": loan_guarantee_data.filename
+            }
+    
+    # Process loan collateral data file
+    if loan_collateral_data:
+        try:
+            content = await loan_collateral_data.read()
+            df = pd.read_excel(io.BytesIO(content))
+            # Process the data
+            results["loan_collateral_data"] = {
+                "status": "success",
+                "rows_processed": len(df),
+                "filename": loan_collateral_data.filename
+            }
+        except Exception as e:
+            results["loan_collateral_data"] = {
+                "status": "error",
+                "message": str(e),
+                "filename": loan_collateral_data.filename
+            }
+    
+    # Process historical repayments data file
+    if historical_repayments_data:
+        try:
+            content = await historical_repayments_data.read()
+            df = pd.read_excel(io.BytesIO(content))
+            # Process the data
+            results["historical_repayments_data"] = {
+                "status": "success",
+                "rows_processed": len(df),
+                "filename": historical_repayments_data.filename
+            }
+        except Exception as e:
+            results["historical_repayments_data"] = {
+                "status": "error",
+                "message": str(e),
+                "filename": historical_repayments_data.filename
+            }
+    
+    db.commit()
+    
+    return {
+        "portfolio_id": portfolio_id,
+        "results": results
+    }
