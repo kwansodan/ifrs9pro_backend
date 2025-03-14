@@ -7,4 +7,6 @@ pkgs.mkShell {
     pkgs.act
   ];
 
+  LD_LIBRARY_PATH="${pkgs.libGL}/lib/:${pkgs.stdenv.cc.cc.lib}/lib/:${pkgs.glib.out}/lib/";
+
 }
