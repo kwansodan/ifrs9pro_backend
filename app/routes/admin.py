@@ -113,6 +113,20 @@ async def get_users(
 
     return users
 
+@router.get("/users/{user_id}", response_model=UserResponse)
+async def get_user(
+        user_id: int, db: Session = Depends(get_db), current_user: User = Depends(is_admin)
+):
+    user = db.query(User).filter(User.id == user_id).first()
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+    return user
+
+
 
 @router.post("/users", response_model=UserResponse)
 async def create_user(
