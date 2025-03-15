@@ -105,6 +105,7 @@ class Portfolio(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     user = relationship("User", back_populates="portfolios")
     loans = relationship("Loan", back_populates="portfolio")
+    clients = relationship("Client", back_populates="portfolio")
 
 
 class ClientType(str, PyEnum):
@@ -142,9 +143,10 @@ class Client(Base):
     __tablename__ = "clients"
 
     id = Column(Integer, primary_key=True, index=True)
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id"), nullable=False) 
     employee_id = Column(String, nullable=False)
-    lastname = Column(String, nullable=False, index=True)
-    othernames = Column(String, nullable=False)
+    last_name = Column(String, nullable=False, index=True)
+    other_names = Column(String, nullable=False)
     residential_address = Column(String, nullable=True)
     postal_address = Column(String, nullable=True)
     phone_number = Column(String, nullable=True)
@@ -164,6 +166,7 @@ class Client(Base):
     client_type = Column(String, default=ClientType.INDIVIDUAL)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    portfolio = relationship("Portfolio", back_populates="clients")
 
 
 class LoanType(str, PyEnum):
