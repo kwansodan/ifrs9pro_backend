@@ -473,6 +473,10 @@ async def ingest_portfolio_data(
                             for field in column_mapping.values() 
                             if field in row and pd.notna(row[field])
                         }
+
+                        # Set client_type to default if it doesn't exist in the data
+                        if 'client_type' not in client_data:
+                            client_data['client_type'] = "consumer"  
                     
                         # Create new client record
                         new_client = Client(**client_data)
