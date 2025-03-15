@@ -141,7 +141,7 @@ class Client(Base):
     __tablename__ = "clients"
 
     id = Column(Integer, primary_key=True, index=True)
-    employee_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    employee_id = Column(String, nullable=False)
     lastname = Column(String, nullable=False, index=True)
     othernames = Column(String, nullable=False)
     residential_address = Column(String, nullable=True)
@@ -163,8 +163,6 @@ class Client(Base):
     client_type = Column(String, default=ClientType.INDIVIDUAL)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    employee = relationship("User", foreign_keys=[employee_id])
-    loans = relationship("Loan", back_populates="client")
 
 
 class LoanType(str, PyEnum):
@@ -189,8 +187,7 @@ class Loan(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     loan_no = Column(String, unique=True, index=True, nullable=False)
-    employee_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    employee_id = Column(String, nullable=False)
     employee_name = Column(String, nullable=True)
     employer = Column(String, nullable=True)
     loan_issue_date = Column(Date, nullable=False)
@@ -202,7 +199,7 @@ class Loan(Base):
     team_leader = Column(String, nullable=True)
     loan_type = Column(String, nullable=False)
     loan_amount = Column(Numeric(precision=18, scale=2), nullable=False)
-    loan_term = Column(Integer, nullable=False)  # In months
+    loan_term = Column(Integer, nullable=False)  
     administrative_fees = Column(Numeric(precision=18, scale=2), default=0)
     total_interest = Column(Numeric(precision=18, scale=2), default=0)
     total_collectible = Column(Numeric(precision=18, scale=2), default=0)
@@ -230,5 +227,3 @@ class Loan(Base):
     deduction_status = Column(String, default=DeductionStatus.PENDING)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    employee = relationship("User", foreign_keys=[employee_id])
-    client = relationship("Client", back_populates="loans")
