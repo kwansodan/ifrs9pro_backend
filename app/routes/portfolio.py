@@ -20,7 +20,7 @@ from app.schemas import (
     PortfolioUpdate,
     PortfolioResponse,
     PortfolioList,
-    PortfolioWithLoansResponse
+    PortfolioWithSummaryResponse
 )
 from app.auth.utils import get_current_active_user
 
@@ -86,19 +86,22 @@ def get_portfolios(
     return {"items": portfolios, "total": total}
 
 
-@router.get("/{portfolio_id}", response_model=PortfolioWithLoansResponse)
+@router.get("/{portfolio_id}", response_model=PortfolioWithSummaryResponse)
 def get_portfolio(
     portfolio_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
-    Retrieve a specific portfolio by ID including its loans.
+    Retrieve a specific portfolio by ID including overview and customer summary.
     """
-    # Query the portfolio with joined loans
+    # Query the portfolio with joined loans and clients
     portfolio = (
         db.query(Portfolio)
-        .options(joinedload(Portfolio.loans))  # Use joinedload to eagerly load the loans
+        .options(
+            joinedload(Portfolio.loans),
+            joinedload(Portfolio.clients)
+        )
         .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
         .first()
     )
@@ -108,8 +111,44 @@ def get_portfolio(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
     
-    return portfolio
-
+    # Calculate overview metrics
+    total_loans = len(portfolio.loans)
+    total_loan_value = sum(loan.loan_amount for loan in portfolio.loans if loan.loan_amount is not None)
+    average_loan_amount = total_loan_value / total_loans if total_loans > 0 else 0
+    total_customers = len(portfolio.clients)
+    
+    # Calculate customer summary metrics
+    individual_customers = sum(1 for client in portfolio.clients if client.client_type == "consumer")
+    institutions = sum(1 for client in portfolio.clients if client.client_type == "institution")
+    mixed = sum(1 for client in portfolio.clients if client.client_type not in ["consumer", "institution"])
+    # Determine active customers (you may need to adjust this logic based on your definition of "active")
+    active_customers = sum(1 for client in portfolio.clients if any(loan.paid is False for loan in portfolio.loans if hasattr(loan, 'employee_id') and loan.employee_id == client.employee_id))
+    
+    # Create response dictionary with portfolio data and summaries
+    response = {
+        "id": portfolio.id,
+        "name": portfolio.name,
+        "description": portfolio.description,
+        "asset_type": portfolio.asset_type,
+        "customer_type": portfolio.customer_type,
+        "funding_source": portfolio.funding_source,
+        "created_at": portfolio.created_at,
+        "updated_at": portfolio.updated_at,
+        "overview": {
+            "total_loans": total_loans,
+            "total_loan_value": total_loan_value,
+            "average_loan_amount": average_loan_amount,
+            "total_customers": total_customers
+        },
+        "customer_summary": {
+            "individual_customers": individual_customers,
+            "institutions": institutions,
+            "mixed": mixed,
+            "active_customers": active_customers
+        }
+    }
+    
+    return response
 @router.put("/{portfolio_id}", response_model=PortfolioResponse)
 def update_portfolio(
     portfolio_id: int,
