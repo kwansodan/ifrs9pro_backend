@@ -357,15 +357,87 @@ async def ingest_portfolio_data(
                 "filename": loan_guarantee_data.filename
             }
     
-    # Process loan collateral data file
+    # Process loan collateral data file (which contains client information)
     if loan_collateral_data:
         try:
             content = await loan_collateral_data.read()
             df = pd.read_excel(io.BytesIO(content))
-            # Process the data
+            
+            # Data cleanup and transformation
+            # Convert column names to match model field names
+            column_mapping = {
+                'Employee ID': 'employee_id',
+                'Last Name': 'last_name',
+                'Other Names': 'other_names',
+                'Residential Address': 'residential_address',
+                'Postal Address': 'postal_address',
+                'Phone Number': 'phone_number',
+                'Title': 'title',
+                'Marital Status': 'marital_status',
+                'Gender': 'gender',
+                'Date of Birth': 'date_of_birth',
+                'Employer': 'employer',
+                'Previous Employee No': 'previous_employee_no',
+                'Social Security No': 'social_security_no',
+                'Voters ID No': 'voters_id_no',
+                'Employment Date': 'employment_date',
+                'Next of Kin': 'next_of_kin',
+                'Next of Kin Contact': 'next_of_kin_contact',
+                'Next of Kin Address': 'next_of_kin_address',
+                'Search Name': 'search_name',
+                'Client Type': 'client_type'
+            }
+            
+            # Rename columns based on mapping
+            df = df.rename(columns=column_mapping)
+        
+            # Convert date columns to appropriate format
+            date_columns = ['date_of_birth', 'employment_date']
+            for col in date_columns:
+                if col in df.columns:
+                    df[col] = pd.to_datetime(df[col], errors='coerce')
+                
+                # Process and insert each row
+            rows_processed = 0
+            rows_skipped = 0
+            for index, row in df.iterrows():
+                try:
+                    # Check if client already exists by employee_id
+                    existing_client = db.query(Client).filter(Client.employee_id == row.get('employee_id')).first()
+                
+                    if existing_client:
+                        # Update existing client
+                        for field in column_mapping.values():
+                            if field in row and pd.notna(row[field]):
+                                setattr(existing_client, field, row[field])
+                        rows_processed += 1
+                    else:
+                        # Filter to keep only columns that exist in the model
+                        client_data = {
+                            field: row[field] 
+                            for field in column_mapping.values() 
+                            if field in row and pd.notna(row[field])
+                        }
+                    
+                        # Create new client record
+                        new_client = Client(**client_data)
+                        # Associate client with the portfolio
+                        new_client.portfolio_id = portfolio_id
+                        db.add(new_client)
+                        rows_processed += 1
+                    
+                except Exception as e:
+                    rows_skipped += 1
+                    print(f"Error processing row {index}: {str(e)}")
+                    continue
+            
+            # Commit changes to DB
+            db.commit()
+        
             results["loan_collateral_data"] = {
                 "status": "success",
-                "rows_processed": len(df),
+                "rows_processed": rows_processed,
+                "rows_skipped": rows_skipped,
                 "filename": loan_collateral_data.filename
             }
         except Exception as e:
@@ -374,7 +446,7 @@ async def ingest_portfolio_data(
                 "message": str(e),
                 "filename": loan_collateral_data.filename
             }
-    
+        
     # Process historical repayments data file
     if historical_repayments_data:
         try:

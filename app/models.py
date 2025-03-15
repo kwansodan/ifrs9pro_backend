@@ -106,6 +106,7 @@ class Portfolio(Base):
     user = relationship("User", back_populates="portfolios")
     loans = relationship("Loan", back_populates="portfolio")
     clients = relationship("Client", back_populates="portfolio")
+    guarantees = relationship("Guarantee", back_populates="portfolio")
 
 
 class ClientType(str, PyEnum):
@@ -233,3 +234,14 @@ class Loan(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     portfolio = relationship("Portfolio", back_populates="loans")
+
+
+class Guarantee(Base):
+    __tablename__ = "guarantees"
+    id = Column(Integer, primary_key=True, index=True)
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id"), nullable=True)
+    guarantor = Column(String, nullable=False)
+    pledged_amount = Column(Float, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    portfolio = relationship("Portfolio", back_populates="guarantees")
