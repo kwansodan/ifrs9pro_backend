@@ -344,10 +344,65 @@ async def ingest_portfolio_data(
         try:
             content = await loan_guarantee_data.read()
             df = pd.read_excel(io.BytesIO(content))
-            # Process the data
+        
+            # Data cleanup and transformation
+            # Convert column names to match model field names
+            column_mapping = {
+                'Guarantor Name': 'guarantor',
+                'Pledged Amount': 'pledged_amount'
+            }
+        
+            # Rename columns based on mapping
+            df = df.rename(columns=column_mapping)
+        
+            # Process and insert each row
+            rows_processed = 0
+            rows_skipped = 0
+            for index, row in df.iterrows():
+                try:
+                    # Check if guarantee already exists by guarantor name in this portfolio
+                    existing_guarantee = (
+                        db.query(Guarantee)
+                        .filter(
+                            Guarantee.guarantor == row.get('guarantor'),
+                            Guarantee.portfolio_id == portfolio_id
+                        )
+                        .first()
+                    )
+                
+                    if existing_guarantee:
+                        # Update existing guarantee
+                        for field in column_mapping.values():
+                            if field in row and pd.notna(row[field]):
+                                setattr(existing_guarantee, field, row[field])
+                        rows_processed += 1
+                    else:
+                        # Filter to keep only columns that exist in the model
+                        guarantee_data = {
+                            field: row[field] 
+                            for field in column_mapping.values() 
+                        if field in row and pd.notna(row[field])
+                        }
+                    
+                        # Create new guarantee record
+                        new_guarantee = Guarantee(**guarantee_data)
+                        # Associate guarantee with the portfolio
+                        new_guarantee.portfolio_id = portfolio_id
+                        db.add(new_guarantee)
+                        rows_processed += 1
+                    
+                except Exception as e:
+                    rows_skipped += 1
+                    print(f"Error processing row {index}: {str(e)}")
+                    continue
+                
+            # Commit changes to DB
+            db.commit()
+        
             results["loan_guarantee_data"] = {
                 "status": "success",
-                "rows_processed": len(df),
+                "rows_processed": rows_processed,
+                "rows_skipped": rows_skipped,
                 "filename": loan_guarantee_data.filename
             }
         except Exception as e:
