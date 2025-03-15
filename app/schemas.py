@@ -1,6 +1,6 @@
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, date
 from enum import Enum
 
 
@@ -123,6 +123,38 @@ class PortfolioList(BaseModel):
     class Config:
         from_attributes = True
 
+class LoanResponse(BaseModel):
+    id: int
+    loan_no: str
+    employee_id: str
+    employee_name: Optional[str]
+    employer: Optional[str]
+    loan_issue_date: date
+    loan_type: str
+    loan_amount: float
+    loan_term: int
+    outstanding_loan_balance: float
+    paid: bool
+    cancelled: bool
+    deduction_status: str
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+class PortfolioWithLoansResponse(BaseModel):
+    id: int
+    name: Optional[str]
+    description: Optional[str]
+    asset_type: Optional[str]
+    customer_type: Optional[str]
+    funding_source: Optional[str]
+    created_at: datetime
+    updated_at: Optional[datetime]
+    loans: List[LoanResponse]
+    
+    class Config:
+        from_attributes = True
 
 # Access request schemas
 

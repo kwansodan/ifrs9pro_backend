@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 import pandas as pd
 import io
@@ -13,12 +13,14 @@ from app.models import (
     CustomerType,
     FundingSource,
     DataSource,
+    Loan,
 )
 from app.schemas import (
     PortfolioCreate,
     PortfolioUpdate,
     PortfolioResponse,
     PortfolioList,
+    PortfolioWithLoansResponse
 )
 from app.auth.utils import get_current_active_user
 
@@ -84,28 +86,29 @@ def get_portfolios(
     return {"items": portfolios, "total": total}
 
 
-@router.get("/{portfolio_id}", response_model=PortfolioResponse)
+@router.get("/{portfolio_id}", response_model=PortfolioWithLoansResponse)
 def get_portfolio(
     portfolio_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
-    Retrieve a specific portfolio by ID.
+    Retrieve a specific portfolio by ID including its loans.
     """
+    # Query the portfolio with joined loans
     portfolio = (
         db.query(Portfolio)
+        .options(joinedload(Portfolio.loans))  # Use joinedload to eagerly load the loans
         .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
         .first()
     )
-
+    
     if not portfolio:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
-
+    
     return portfolio
-
 
 @router.put("/{portfolio_id}", response_model=PortfolioResponse)
 def update_portfolio(
@@ -220,11 +223,113 @@ async def ingest_portfolio_data(
         try:
             content = await loan_details.read()
             df = pd.read_excel(io.BytesIO(content))
-    
-            # process data
+            
+            # Data cleanup and transformation
+            # Convert column names to match model field names
+            column_mapping = {
+                'Loan No.': 'loan_no',
+                'Employee Id': 'employee_id',
+                'Employee Name': 'employee_name',
+                'Employer': 'employer',
+                'Loan Issue Date': 'loan_issue_date',
+                'Deduction Start Period': 'deduction_start_period',
+                'Submission Period': 'submission_period',
+                'Maturity Period': 'maturity_period',
+                'Location Code': 'location_code',
+                'Dalex Paddy': 'dalex_paddy',
+                'Team Leader': 'team_leader',
+                'Loan Type': 'loan_type',
+                'Loan Amount': 'loan_amount',
+                'Loan Term': 'loan_term',
+                'Administrative Fees': 'administrative_fees',
+                'Total Interest': 'total_interest',
+                'Total Collectible': 'total_collectible',
+                'Net Loan Amount': 'net_loan_amount',
+                'Monthly Installment': 'monthly_installment',
+                'Principal Due': 'principal_due',
+                'Interest Due': 'interest_due',
+                'Total Due': 'total_due',
+                'Principal Paid': 'principal_paid',
+                'Interest Paid': 'interest_paid',
+                'Total Paid': 'total_paid',
+                'Principal Paid2': 'principal_paid2',
+                'Interest Paid2': 'interest_paid2',
+                'Total Paid2': 'total_paid2',
+                'Paid': 'paid',
+                'Cancelled': 'cancelled',
+                'Outstanding Loan Balance': 'outstanding_loan_balance',
+                'Accumulated Arrears': 'accumulated_arrears',
+                'NDIA': 'ndia',
+                'Prevailing Posted Repayment': 'prevailing_posted_repayment',
+                'Prevailing Due Payment': 'prevailing_due_payment',
+                'Current Missed Deduction': 'current_missed_deduction',
+                'Admin Charge': 'admin_charge',
+                'Recovery Rate': 'recovery_rate',
+                'Deduction Status': 'deduction_status'
+            }
+            
+            # Rename columns based on mapping
+            df = df.rename(columns=column_mapping)
+            
+            # Convert date columns to appropriate format
+            date_columns = ['loan_issue_date', 'maturity_period']
+            for col in date_columns:
+                if col in df.columns:
+                    df[col] = pd.to_datetime(df[col], errors='coerce')
+            
+            # Special handling for period columns (they appear to be in Month-YY format)
+            period_columns = ['deduction_start_period', 'submission_period']
+            for col in period_columns:
+                if col in df.columns:
+                    df[col] = pd.to_datetime(df[col], errors='coerce', format='%b-%y')
+            
+            # Convert boolean columns
+            boolean_columns = ['paid', 'cancelled']
+            for col in boolean_columns:
+                if col in df.columns:
+                    df[col] = df[col].map({'Yes': True, 'No': False})
+            
+            # Process and insert each row
+            rows_processed = 0
+            rows_skipped = 0
+            for index, row in df.iterrows():
+                try:
+                    # Check if loan already exists
+                    existing_loan = db.query(Loan).filter(Loan.loan_no == row.get('loan_no')).first()
+                    
+                    if existing_loan:
+                        # Update existing loan
+                        for field in column_mapping.values():
+                            if field in row and pd.notna(row[field]):
+                                setattr(existing_loan, field, row[field])
+                        rows_processed += 1
+                    else:
+                        # Filter to keep only columns that exist in the model
+                        loan_data = {
+                            field: row[field] 
+                            for field in column_mapping.values() 
+                            if field in row and pd.notna(row[field])
+                        }
+                        
+                        # Create new loan record
+                        new_loan = Loan(**loan_data)
+                        # Associate loan with the portfolio
+                        new_loan.portfolio_id = portfolio_id
+                        db.add(new_loan)
+                        rows_processed += 1
+                    
+                except Exception as e:
+                    rows_skipped += 1
+                    print(f"Error processing row {index}: {str(e)}")
+                    continue
+            
+            # Commit changes to DB
+            db.commit()
+            
             results["loan_details"] = {
                 "status": "success",
-                "rows_processed": len(df),
+                "rows_processed": rows_processed,
+                "rows_skipped": rows_skipped,
                 "filename": loan_details.filename
             }
         except Exception as e:
@@ -287,8 +392,6 @@ async def ingest_portfolio_data(
                 "message": str(e),
                 "filename": historical_repayments_data.filename
             }
-    
-    db.commit()
     
     return {
         "portfolio_id": portfolio_id,
