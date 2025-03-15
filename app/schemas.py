@@ -125,23 +125,53 @@ class PortfolioList(BaseModel):
 
 class LoanResponse(BaseModel):
     id: int
+    portfolio_id: int
     loan_no: str
     employee_id: str
     employee_name: Optional[str]
     employer: Optional[str]
     loan_issue_date: date
+    deduction_start_period: Optional[date]
+    submission_period: Optional[date]
+    maturity_period: Optional[date]
+    location_code: Optional[str]
+    dalex_paddy: Optional[str]
+    team_leader: Optional[str]
     loan_type: str
     loan_amount: float
     loan_term: int
-    outstanding_loan_balance: float
-    paid: bool
-    cancelled: bool
-    deduction_status: str
+    administrative_fees: float = 0
+    total_interest: float = 0
+    total_collectible: float = 0
+    net_loan_amount: float = 0
+    monthly_installment: float = 0
+    principal_due: float = 0
+    interest_due: float = 0
+    total_due: float = 0
+    principal_paid: float = 0
+    interest_paid: float = 0
+    total_paid: float = 0
+    principal_paid2: float = 0
+    interest_paid2: float = 0
+    total_paid2: float = 0
+    paid: bool = False
+    cancelled: bool = False
+    outstanding_loan_balance: float = 0
+    accumulated_arrears: float = 0
+    ndia: float = 0
+    prevailing_posted_repayment: float = 0
+    prevailing_due_payment: float = 0
+    current_missed_deduction: float = 0
+    admin_charge: float = 0
+    recovery_rate: float = 0
+    deduction_status: str = "PENDING"
     created_at: datetime
+    updated_at: Optional[datetime]
     
     class Config:
         from_attributes = True
 
+        
 class PortfolioWithLoansResponse(BaseModel):
     id: int
     name: Optional[str]
