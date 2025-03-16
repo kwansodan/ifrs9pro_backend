@@ -1,11 +1,17 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.orm import Session, joinedload
-from typing import List, Optional
+import numpy as np
+import math
+from decimal import Decimal
+from datetime import datetime, timedelta, date
+from pydantic import BaseModel
+from typing import List, Dict, Optional, Union
 import pandas as pd
 import io
 from app.database import get_db
 from app.models import Portfolio, User
 from app.auth.utils import get_current_active_user
+from app.calculators.ecl import calculate_effective_interest_rate, calculate_exposure_at_default_percentage, calculate_probability_of_default, calculate_loss_given_default, calculate_marginal_ecl
 from app.models import (
     Portfolio,
     User,
@@ -14,13 +20,19 @@ from app.models import (
     FundingSource,
     DataSource,
     Loan,
+    Security,
+    Client,
 )
 from app.schemas import (
     PortfolioCreate,
     PortfolioUpdate,
     PortfolioResponse,
     PortfolioList,
-    PortfolioWithSummaryResponse
+    PortfolioWithSummaryResponse,
+    ECLSummary,
+    ECLCategoryData,
+    ECLSummaryMetrics,
+    
 )
 from app.auth.utils import get_current_active_user
 
@@ -149,6 +161,7 @@ def get_portfolio(
     }
     
     return response
+    
 @router.put("/{portfolio_id}", response_model=PortfolioResponse)
 def update_portfolio(
     portfolio_id: int,
@@ -545,25 +558,218 @@ async def ingest_portfolio_data(
                 "filename": loan_collateral_data.filename
             }
         
-    # Process historical repayments data file
-    if historical_repayments_data:
-        try:
-            content = await historical_repayments_data.read()
-            df = pd.read_excel(io.BytesIO(content))
-            # Process the data
-            results["historical_repayments_data"] = {
-                "status": "success",
-                "rows_processed": len(df),
-                "filename": historical_repayments_data.filename
-            }
-        except Exception as e:
-            results["historical_repayments_data"] = {
-                "status": "error",
-                "message": str(e),
-                "filename": historical_repayments_data.filename
-            }
-    
+
     return {
         "portfolio_id": portfolio_id,
         "results": results
     }
+
+
+
+
+# @router.get("/{portfolio_id}/calculate-local-impairment")
+# def calculate_local_impairment(
+#     portfolio_id: int,
+#     db: Session = Depends(get_db),
+#     current_user: User = Depends(get_current_active_user),
+# ):
+
+
+
+
+@router.get("/{portfolio_id}/calculate-ecl", response_model=ECLSummary)
+def calculate_ecl(
+    portfolio_id: int,
+    reporting_date: Optional[date] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    # Verify portfolio exists and belongs to current user
+    portfolio = (
+        db.query(Portfolio)
+        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .first()
+    )
+
+    if not portfolio:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Portfolio not found"
+        )
+    
+    # Use provided reporting date or default to current date
+    if not reporting_date:
+        reporting_date = datetime.now().date()
+    
+    # Get all loans in the portfolio
+    loans = (
+        db.query(Loan)
+        .filter(Loan.portfolio_id == portfolio_id)
+        .all()
+    )
+    
+    # Create a dictionary to map client IDs to their securities
+    client_securities = {}
+    
+    # Get all securities for clients with loans in this portfolio
+    client_ids = {loan.employee_id for loan in loans}
+    
+    if client_ids:
+        securities = (
+            db.query(Security)
+            .join(Client, Security.client_id == Client.id)
+            .filter(Client.employee_id.in_(client_ids))
+            .all()
+        )
+        
+        # Group securities by client employee_id
+        for security in securities:
+            client = db.query(Client).filter(Client.id == security.client_id).first()
+            if client and client.employee_id:
+                if client.employee_id not in client_securities:
+                    client_securities[client.employee_id] = []
+                client_securities[client.employee_id].append(security)
+    
+    # Categorize loans by NDIA (Stage 1, 2, 3)
+    # Based on IFRS 9 staging
+    # Stage 1: 0-120 days (Current + OLEM)
+    # Stage 2: 120-240 days (Substandard + Some Doubtful)
+    # Stage 3: 240+ days (Most Doubtful + Loss)
+    
+    current_loans = []
+    olem_loans = []
+    substandard_loans = []
+    doubtful_loans = []
+    loss_loans = []
+    
+    # Calculate totals for each category
+    current_total = 0
+    olem_total = 0
+    substandard_total = 0
+    doubtful_total = 0
+    loss_total = 0
+    
+    # Calculate provisions for each category
+    current_provision = 0
+    olem_provision = 0
+    substandard_provision = 0
+    doubtful_provision = 0
+    loss_provision = 0
+    
+    # Summary metrics
+    total_lgd = 0
+    total_pd = 0
+    total_ead_percentage = 0
+    total_loans = 0
+    
+    for loan in loans:
+        # Find securities for this loan's client
+        client_securities_list = client_securities.get(loan.employee_id, [])
+        
+        if loan.ndia is None:
+            # If NDIA is not available, try to calculate it from accumulated arrears and monthly installment
+            if loan.accumulated_arrears and loan.monthly_installment and loan.monthly_installment > 0:
+                ndia = int((loan.accumulated_arrears / loan.monthly_installment) * 30)  # Convert months to days
+            else:
+                ndia = 0
+        else:
+            ndia = loan.ndia
+        
+        # Calculate EIR for the loan
+        eir = calculate_effective_interest_rate(
+            loan_amount=loan.loan_amount,
+            monthly_installment=loan.monthly_installment,
+            loan_term=loan.loan_term
+        )
+        
+        # Calculate LGD for the loan using client's securities
+        lgd = calculate_loss_given_default(loan, client_securities_list)
+        
+        # Calculate PD for the loan
+        pd = calculate_probability_of_default(loan, ndia)
+        
+        # Calculate EAD percentage
+        ead_percentage = calculate_exposure_at_default_percentage(loan, reporting_date)
+        
+        # Calculate ECL for the loan
+        ecl = calculate_marginal_ecl(loan, pd, lgd, eir, reporting_date)
+        
+        # Update summary metrics
+        total_lgd += lgd
+        total_pd += pd
+        total_ead_percentage += ead_percentage
+        total_loans += 1
+        
+        # Categorize loan by NDIA
+        if ndia < 30:  # Current: 0-30 days
+            current_loans.append(loan)
+            current_total += loan.outstanding_loan_balance or 0
+            current_provision += ecl
+        elif ndia < 120:  # OLEM: 31-120 days
+            olem_loans.append(loan)
+            olem_total += loan.outstanding_loan_balance or 0
+            olem_provision += ecl
+        elif ndia < 180:  # Substandard: 121-180 days
+            substandard_loans.append(loan)
+            substandard_total += loan.outstanding_loan_balance or 0
+            substandard_provision += ecl
+        elif ndia < 240:  # Doubtful: 181-240 days
+            doubtful_loans.append(loan)
+            doubtful_total += loan.outstanding_loan_balance or 0
+            doubtful_provision += ecl
+        else:  # Loss: 240+ days
+            loss_loans.append(loan)
+            loss_total += loan.outstanding_loan_balance or 0
+            loss_provision += ecl
+    
+    # Calculate averages for summary metrics
+    avg_lgd = total_lgd / total_loans if total_loans > 0 else 0
+    avg_pd = total_pd / total_loans if total_loans > 0 else 0
+    avg_ead_percentage = total_ead_percentage / total_loans if total_loans > 0 else 0
+    
+    # Calculate total loan value and provision amount
+    total_loan_value = current_total + olem_total + substandard_total + doubtful_total + loss_total
+    total_provision = current_provision + olem_provision + substandard_provision + doubtful_provision + loss_provision
+    
+    # Calculate provision percentage
+    provision_percentage = (total_provision / total_loan_value * 100) if total_loan_value > 0 else 0
+    
+    # Construct response
+    response = ECLSummary(
+        portfolio_id=portfolio_id,
+        calculation_date=reporting_date.strftime("%Y-%m-%d"),
+        current=ECLCategoryData(
+            num_loans=len(current_loans),
+            total_loan_value=current_total,
+            provision_amount=current_provision
+        ),
+        olem=ECLCategoryData(
+            num_loans=len(olem_loans),
+            total_loan_value=olem_total,
+            provision_amount=olem_provision
+        ),
+        substandard=ECLCategoryData(
+            num_loans=len(substandard_loans),
+            total_loan_value=substandard_total,
+            provision_amount=substandard_provision
+        ),
+        doubtful=ECLCategoryData(
+            num_loans=len(doubtful_loans),
+            total_loan_value=doubtful_total,
+            provision_amount=doubtful_provision
+        ),
+        loss=ECLCategoryData(
+            num_loans=len(loss_loans),
+            total_loan_value=loss_total,
+            provision_amount=loss_provision
+        ),
+        summary_metrics=ECLSummaryMetrics(
+            pd=round(avg_pd, 1),
+            lgd=round(avg_lgd, 1),
+            ead=round(avg_ead_percentage, 1),
+            total_provision=round(total_provision, 2),
+            provision_percentage=round(provision_percentage, 1)
+        )
+    )
+    
+    return response
