@@ -155,11 +155,39 @@ class PortfolioWithSummaryResponse(BaseModel):
     
     class Config:
         from_attributes = True
-        
+
+# Calculation schemas
+
+class ECLCategoryData(BaseModel):
+    """Data for each delinquency category row in the ECL grid"""
+    num_loans: int
+    total_loan_value: float
+    provision_amount: float
+
+
+class ECLSummaryMetrics(BaseModel):
+    """Summary metrics for the ECL calculation"""
+    pd: float  
+    lgd: float 
+    ead: float 
+    total_provision: float  
+    provision_percentage: float  
+
+
+class ECLSummary(BaseModel):
+    """Response schema for the ECL calculation endpoint"""
+    portfolio_id: int
+    calculation_date: str
+    current: ECLCategoryData
+    olem: ECLCategoryData
+    substandard: ECLCategoryData
+    doubtful: ECLCategoryData
+    loss: ECLCategoryData
+    summary_metrics: ECLSummaryMetrics
+
+
 
 # Access request schemas
-
-
 class AccessRequestSubmit(BaseModel):
     email: EmailStr
     admin_email: Optional[EmailStr] = None
