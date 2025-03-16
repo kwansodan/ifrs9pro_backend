@@ -245,3 +245,74 @@ class Guarantee(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     portfolio = relationship("Portfolio", back_populates="guarantees")
+
+
+
+class ValuationMethod(str, PyEnum):
+    MARKET_VALUE = "market_value"
+    BOOK_VALUE = "book_value"
+    APPRAISAL = "appraisal"
+    PURCHASE_PRICE = "purchase_price"
+    OTHER = "other"
+
+
+class SecurityType(str, PyEnum):
+    CASH = "cash"
+    NON_CASH = "non_cash"
+
+
+class Security(Base):
+    __tablename__ = "securities"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    collateral_description = Column(Text, nullable=True)
+    collateral_value = Column(Numeric(precision=18, scale=2), nullable=False)
+    forced_sale_value = Column(Numeric(precision=18, scale=2), nullable=True)
+    method_of_valuation = Column(String, default=ValuationMethod.MARKET_VALUE)
+    cash_or_non_cash = Column(String, default=SecurityType.NON_CASH)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    client = relationship("Client", backref="securities")
+
+
+class DefaultDefinition(Base):
+    __tablename__ = "default_definitions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    clients_group = Column(String, nullable=True)
+    overdue_days_repr_default = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class ExtendingParty(str, PyEnum):
+    BANK = "bank"
+    CREDIT_UNION = "credit_union"
+    MICROFINANCE = "microfinance"
+    PRIVATE_LENDER = "private_lender"
+    OTHER = "other"
+
+
+class OtherLoans(Base):
+    __tablename__ = "other_loans"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    loan_amount = Column(Numeric(precision=18, scale=2), nullable=False)
+    extending_party = Column(String, default=ExtendingParty.BANK)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    client = relationship("Client", backref="other_loans")
+
+
+class MacroEcos(Base):
+    __tablename__ = "macro_ecos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    employment_rate = Column(Float, nullable=True)
+    inflation_rate = Column(Float, nullable=True)
+    gdp = Column(Numeric(precision=18, scale=2), nullable=True)
+    reference_date = Column(Date, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
