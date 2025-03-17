@@ -144,7 +144,7 @@ class Client(Base):
     __tablename__ = "clients"
 
     id = Column(Integer, primary_key=True, index=True)
-    portfolio_id = Column(Integer, ForeignKey("portfolios.id"), nullable=False) 
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id"), nullable=False)
     employee_id = Column(String, nullable=False)
     last_name = Column(String, nullable=False, index=True)
     other_names = Column(String, nullable=False)
@@ -205,7 +205,7 @@ class Loan(Base):
     team_leader = Column(String, nullable=True)
     loan_type = Column(String, nullable=False)
     loan_amount = Column(Numeric(precision=18, scale=2), nullable=False)
-    loan_term = Column(Integer, nullable=False)  
+    loan_term = Column(Integer, nullable=False)
     administrative_fees = Column(Numeric(precision=18, scale=2), default=0)
     total_interest = Column(Numeric(precision=18, scale=2), default=0)
     total_collectible = Column(Numeric(precision=18, scale=2), default=0)
@@ -245,7 +245,6 @@ class Guarantee(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     portfolio = relationship("Portfolio", back_populates="guarantees")
-
 
 
 class ValuationMethod(str, PyEnum):

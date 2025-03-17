@@ -123,23 +123,26 @@ class PortfolioList(BaseModel):
     class Config:
         from_attributes = True
 
+
 class OverviewModel(BaseModel):
     total_loans: int
     total_loan_value: float
     average_loan_amount: float
     total_customers: int
-    
+
     class Config:
         from_attributes = True
+
 
 class CustomerSummaryModel(BaseModel):
     individual_customers: int
     institutions: int
     mixed: int
     active_customers: int
-    
+
     class Config:
         from_attributes = True
+
 
 class PortfolioWithSummaryResponse(BaseModel):
     id: int
@@ -152,14 +155,17 @@ class PortfolioWithSummaryResponse(BaseModel):
     updated_at: Optional[datetime]
     overview: OverviewModel
     customer_summary: CustomerSummaryModel
-    
+
     class Config:
         from_attributes = True
 
-# Calculation schemas
+
+# ECL schemas
+
 
 class ECLCategoryData(BaseModel):
     """Data for each delinquency category row in the ECL grid"""
+
     num_loans: int
     total_loan_value: float
     provision_amount: float
@@ -167,15 +173,17 @@ class ECLCategoryData(BaseModel):
 
 class ECLSummaryMetrics(BaseModel):
     """Summary metrics for the ECL calculation"""
-    pd: float  
-    lgd: float 
-    ead: float 
-    total_provision: float  
-    provision_percentage: float  
+
+    pd: float
+    lgd: float
+    ead: float
+    total_provision: float
+    provision_percentage: float
 
 
 class ECLSummary(BaseModel):
     """Response schema for the ECL calculation endpoint"""
+
     portfolio_id: int
     calculation_date: str
     current: ECLCategoryData
@@ -185,6 +193,52 @@ class ECLSummary(BaseModel):
     loss: ECLCategoryData
     summary_metrics: ECLSummaryMetrics
 
+
+# Impairment schemas
+class ImpairmentCategory(BaseModel):
+    """Configuration for an impairment category"""
+
+    days_range: str  # Format: "0-30", "31-90", "360+" etc.
+    rate: float
+
+
+class ImpairmentCategoryData(BaseModel):
+    """Data for each impairment category row"""
+
+    days_range: str
+    rate: float
+    total_loan_value: float
+    provision_amount: float
+
+
+class ImpairmentSummaryMetrics(BaseModel):
+    """Summary metrics for the impairment calculation"""
+
+    total_loans: float
+    total_provision: float
+
+
+class LocalImpairmentSummary(BaseModel):
+    """Response schema for the local impairment calculation endpoint"""
+
+    portfolio_id: int
+    calculation_date: str
+    current: ImpairmentCategoryData
+    olem: ImpairmentCategoryData
+    substandard: ImpairmentCategoryData
+    doubtful: ImpairmentCategoryData
+    loss: ImpairmentCategoryData
+    summary_metrics: ImpairmentSummaryMetrics
+
+
+class ImpairmentConfig(BaseModel):
+    """Configuration for all impairment categories"""
+
+    current: ImpairmentCategory
+    olem: ImpairmentCategory
+    substandard: ImpairmentCategory
+    doubtful: ImpairmentCategory
+    loss: ImpairmentCategory
 
 
 # Access request schemas
@@ -219,6 +273,7 @@ class UserCreate(BaseModel):
     role: UserRole = UserRole.USER
     is_active: bool = True
     portfolio_id: Optional[int] = None
+
 
 class UserResponse(BaseModel):
     id: int

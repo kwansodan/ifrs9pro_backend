@@ -114,6 +114,7 @@ IFRS9Pro Team
     """
     return await send_email(email, subject, body)
 
+
 async def send_password_setup_email(email: str, token: str):
     invitation_url = f"{FRONTEND_BASE_URL}/password-reset/{token}"
     subject = "Set your password"
