@@ -56,8 +56,15 @@ from app.schemas import (
     ECLSummaryMetrics,
     LocalImpairmentSummary,
     ImpairmentConfig,
+    QualityIssue,
+    QualityIssueCreate,
+    QualityIssueUpdate,
+    QualityIssueComment,
+    QualityIssueCommentCreate,
+    QualityCheckSummary,
 )
 from app.auth.utils import get_current_active_user
+from app.utils.quality_checks import create_quality_issues_if_needed
 
 router = APIRouter(prefix="/portfolios", tags=["portfolios"])
 
@@ -121,14 +128,17 @@ def get_portfolios(
     return {"items": portfolios, "total": total}
 
 
+# Update your existing get_portfolio endpoint to include quality checks
+
 @router.get("/{portfolio_id}", response_model=PortfolioWithSummaryResponse)
 def get_portfolio(
     portfolio_id: int,
+    include_quality_issues: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
-    Retrieve a specific portfolio by ID including overview and customer summary.
+    Retrieve a specific portfolio by ID including overview, customer summary, and quality checks.
     """
     # Query the portfolio with joined loans and clients
     portfolio = (
@@ -174,6 +184,28 @@ def get_portfolio(
         )
     )
 
+    # Run quality checks and create issues if necessary
+    quality_counts = create_quality_issues_if_needed(db, portfolio_id)
+    
+    quality_check_summary = QualityCheckSummary(
+        duplicate_names=quality_counts["duplicate_names"],
+        duplicate_addresses=quality_counts["duplicate_addresses"],
+        missing_repayment_data=quality_counts["missing_repayment_data"],
+        total_issues=quality_counts["total_issues"],
+        high_severity_issues=quality_counts["high_severity_issues"],
+        open_issues=quality_counts["open_issues"]
+    )
+    
+    # Get quality issues if requested
+    quality_issues = []
+    if include_quality_issues:
+        quality_issues = (
+            db.query(QualityIssue)
+            .filter(QualityIssue.portfolio_id == portfolio_id)
+            .order_by(QualityIssue.severity.desc(), QualityIssue.created_at.desc())
+            .all()
+        )
+
     # Create response dictionary with portfolio data and summaries
     response = {
         "id": portfolio.id,
@@ -196,10 +228,11 @@ def get_portfolio(
             "mixed": mixed,
             "active_customers": active_customers,
         },
+        "quality_check": quality_check_summary,
+        "quality_issues": quality_issues if include_quality_issues else None
     }
 
     return response
-
 
 @router.put("/{portfolio_id}", response_model=PortfolioResponse)
 def update_portfolio(
@@ -877,3 +910,363 @@ def calculate_local_impairment(
     except ValueError as e:
         # Handle errors from invalid day range formats
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+# Quality issue routes
+
+@router.get("/{portfolio_id}/quality-issues", response_model=List[QualityIssue])
+def get_quality_issues(
+    portfolio_id: int,
+    status: Optional[str] = None,
+    issue_type: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Retrieve quality issues for a specific portfolio.
+    Optional filtering by status and issue type.
+    """
+    # Verify portfolio exists and belongs to current user
+    portfolio = (
+        db.query(Portfolio)
+        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .first()
+    )
+
+    if not portfolio:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
+        )
+
+    # Build query for quality issues
+    query = db.query(QualityIssue).filter(QualityIssue.portfolio_id == portfolio_id)
+    
+    # Apply filters if provided
+    if status:
+        query = query.filter(QualityIssue.status == status)
+    if issue_type:
+        query = query.filter(QualityIssue.issue_type == issue_type)
+    
+    # Order by severity (most severe first) and then by created date (newest first)
+    quality_issues = query.order_by(
+        QualityIssue.severity.desc(), QualityIssue.created_at.desc()
+    ).all()
+    
+    return quality_issues
+
+
+@router.get("/{portfolio_id}/quality-issues/{issue_id}", response_model=QualityIssue)
+def get_quality_issue(
+    portfolio_id: int,
+    issue_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Retrieve a specific quality issue by ID.
+    """
+    # Verify portfolio exists and belongs to current user
+    portfolio = (
+        db.query(Portfolio)
+        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .first()
+    )
+
+    if not portfolio:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
+        )
+    
+    # Get the quality issue
+    issue = (
+        db.query(QualityIssue)
+        .filter(QualityIssue.id == issue_id, QualityIssue.portfolio_id == portfolio_id)
+        .first()
+    )
+    
+    if not issue:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Quality issue not found"
+        )
+    
+    return issue
+
+
+@router.put("/{portfolio_id}/quality-issues/{issue_id}", response_model=QualityIssue)
+def update_quality_issue(
+    portfolio_id: int,
+    issue_id: int,
+    issue_update: QualityIssueUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Update a quality issue, including approving it (changing status to "approved").
+    """
+    # Verify portfolio exists and belongs to current user
+    portfolio = (
+        db.query(Portfolio)
+        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .first()
+    )
+
+    if not portfolio:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
+        )
+    
+    # Get the quality issue
+    issue = (
+        db.query(QualityIssue)
+        .filter(QualityIssue.id == issue_id, QualityIssue.portfolio_id == portfolio_id)
+        .first()
+    )
+    
+    if not issue:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Quality issue not found"
+        )
+    
+    # Update fields if provided
+    update_data = issue_update.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(issue, key, value)
+    
+    db.commit()
+    db.refresh(issue)
+    
+    return issue
+
+
+@router.post("/{portfolio_id}/quality-issues/{issue_id}/comments", response_model=QualityIssueComment)
+def add_comment_to_quality_issue(
+    portfolio_id: int,
+    issue_id: int,
+    comment_data: QualityIssueCommentCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Add a comment to a quality issue.
+    """
+    # Verify portfolio exists and belongs to current user
+    portfolio = (
+        db.query(Portfolio)
+        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .first()
+    )
+
+    if not portfolio:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
+        )
+    
+    # Get the quality issue
+    issue = (
+        db.query(QualityIssue)
+        .filter(QualityIssue.id == issue_id, QualityIssue.portfolio_id == portfolio_id)
+        .first()
+    )
+    
+    if not issue:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Quality issue not found"
+        )
+    
+    # Create new comment
+    new_comment = QualityIssueComment(
+        quality_issue_id=issue_id,
+        user_id=current_user.id,
+        comment=comment_data.comment
+    )
+    
+    db.add(new_comment)
+    db.commit()
+    db.refresh(new_comment)
+    
+    return new_comment
+
+
+@router.get("/{portfolio_id}/quality-issues/{issue_id}/comments", response_model=List[QualityIssueComment])
+def get_quality_issue_comments(
+    portfolio_id: int,
+    issue_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Get all comments for a quality issue.
+    """
+    # Verify portfolio exists and belongs to current user
+    portfolio = (
+        db.query(Portfolio)
+        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .first()
+    )
+
+    if not portfolio:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
+        )
+    
+    # Get the quality issue
+    issue = (
+        db.query(QualityIssue)
+        .filter(QualityIssue.id == issue_id, QualityIssue.portfolio_id == portfolio_id)
+        .first()
+    )
+    
+    if not issue:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Quality issue not found"
+        )
+    
+    # Get all comments for this issue, ordered by creation date
+    comments = (
+        db.query(QualityIssueComment)
+        .filter(QualityIssueComment.quality_issue_id == issue_id)
+        .order_by(QualityIssueComment.created_at)
+        .all()
+    )
+    
+    return comments
+
+
+@router.post("/{portfolio_id}/quality-issues/{issue_id}/approve", response_model=QualityIssue)
+def approve_quality_issue(
+    portfolio_id: int,
+    issue_id: int,
+    comment: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Approve a quality issue, changing its status to "approved".
+    Optionally add a comment about the approval.
+    """
+    # Verify portfolio exists and belongs to current user
+    portfolio = (
+        db.query(Portfolio)
+        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .first()
+    )
+
+    if not portfolio:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
+        )
+    
+    # Get the quality issue
+    issue = (
+        db.query(QualityIssue)
+        .filter(QualityIssue.id == issue_id, QualityIssue.portfolio_id == portfolio_id)
+        .first()
+    )
+    
+    if not issue:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Quality issue not found"
+        )
+    
+    # Update status to approved
+    issue.status = "approved"
+    
+    # Add comment if provided
+    if comment:
+        new_comment = QualityIssueComment(
+            quality_issue_id=issue_id,
+            user_id=current_user.id,
+            comment=f"Issue approved: {comment}"
+        )
+        db.add(new_comment)
+    
+    db.commit()
+    db.refresh(issue)
+    
+    return issue
+
+
+@router.post("/{portfolio_id}/approve-all-quality-issues", response_model=Dict)
+def approve_all_quality_issues(
+    portfolio_id: int,
+    comment: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Approve all open quality issues for a portfolio at once.
+    Optionally add the same comment to all issues.
+    """
+    # Verify portfolio exists and belongs to current user
+    portfolio = (
+        db.query(Portfolio)
+        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .first()
+    )
+
+    if not portfolio:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
+        )
+    
+    # Get all open quality issues
+    open_issues = (
+        db.query(QualityIssue)
+        .filter(QualityIssue.portfolio_id == portfolio_id, QualityIssue.status == "open")
+        .all()
+    )
+    
+    if not open_issues:
+        return {"message": "No open quality issues to approve", "count": 0}
+    
+    # Update all issues to approved
+    for issue in open_issues:
+        issue.status = "approved"
+        
+        # Add comment if provided
+        if comment:
+            new_comment = QualityIssueComment(
+                quality_issue_id=issue.id,
+                user_id=current_user.id,
+                comment=f"Batch approval: {comment}"
+            )
+            db.add(new_comment)
+    
+    db.commit()
+    
+    return {"message": "All quality issues approved", "count": len(open_issues)}
+
+
+# This endpoint triggers a re-check of quality issues
+@router.post("/{portfolio_id}/recheck-quality", response_model=QualityCheckSummary)
+def recheck_quality_issues(
+    portfolio_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Run quality checks again to find any new issues.
+    """
+    # Verify portfolio exists and belongs to current user
+    portfolio = (
+        db.query(Portfolio)
+        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .first()
+    )
+
+    if not portfolio:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
+        )
+    
+    # Run quality checks and create issues if necessary
+    quality_counts = create_quality_issues_if_needed(db, portfolio_id)
+    
+    return QualityCheckSummary(
+        duplicate_names=quality_counts["duplicate_names"],
+        duplicate_addresses=quality_counts["duplicate_addresses"],
+        missing_repayment_data=quality_counts["missing_repayment_data"],
+        total_issues=quality_counts["total_issues"],
+        high_severity_issues=quality_counts["high_severity_issues"],
+        open_issues=quality_counts["open_issues"]
+    )
