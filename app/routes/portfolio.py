@@ -128,17 +128,19 @@ def get_portfolios(
     return {"items": portfolios, "total": total}
 
 
-# Update your existing get_portfolio endpoint to include quality checks
+# Update the get_portfolio endpoint in your portfolios.py file
 
 @router.get("/{portfolio_id}", response_model=PortfolioWithSummaryResponse)
 def get_portfolio(
     portfolio_id: int,
     include_quality_issues: bool = False,
+    include_report_history: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
-    Retrieve a specific portfolio by ID including overview, customer summary, and quality checks.
+    Retrieve a specific portfolio by ID including overview, customer summary, quality checks,
+    and optionally report history.
     """
     # Query the portfolio with joined loans and clients
     portfolio = (
@@ -205,6 +207,16 @@ def get_portfolio(
             .order_by(QualityIssue.severity.desc(), QualityIssue.created_at.desc())
             .all()
         )
+    
+    # Get report history if requested
+    report_history = []
+    if include_report_history:
+        report_history = (
+            db.query(Report)
+            .filter(Report.portfolio_id == portfolio_id)
+            .order_by(Report.created_at.desc())
+            .all()
+        )
 
     # Create response dictionary with portfolio data and summaries
     response = {
@@ -229,7 +241,8 @@ def get_portfolio(
             "active_customers": active_customers,
         },
         "quality_check": quality_check_summary,
-        "quality_issues": quality_issues if include_quality_issues else None
+        "quality_issues": quality_issues if include_quality_issues else None,
+        "report_history": report_history if include_report_history else None
     }
 
     return response

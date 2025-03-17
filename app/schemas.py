@@ -1,10 +1,10 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, List, Dict
+from typing import List, Dict, Any, Optional
 from datetime import datetime, date
 from enum import Enum
 
-
 # Auth schemas
+
 class RequestStatus(str, Enum):
     PENDING = "pending"
     APPROVED = "approved"
@@ -91,6 +91,79 @@ class QualityCheckSummary(BaseModel):
     total_issues: int
     high_severity_issues: int
     open_issues: int
+
+
+# Report schemas
+
+class ReportTypeEnum(str, Enum):
+    COLLATERAL_SUMMARY = "collateral_summary"
+    GUARANTEE_SUMMARY = "guarantee_summary"
+    INTEREST_RATE_SUMMARY = "interest_rate_summary"
+    REPAYMENT_SUMMARY = "repayment_summary"
+    ASSUMPTIONS_SUMMARY = "assumptions_summary"
+    AMORTISED_LOAN_BALANCES = "amortised_loan_balances"
+    PROBABILITY_DEFAULT = "probability_default"
+    EXPOSURE_DEFAULT = "exposure_default"
+    LOSS_GIVEN_DEFAULT = "loss_given_default"
+
+
+class ReportBase(BaseModel):
+    report_type: ReportTypeEnum
+    report_date: date
+    report_name: str
+
+
+class ReportCreate(ReportBase):
+    report_data: Dict[str, Any]
+    portfolio_id: int
+
+
+class ReportUpdate(BaseModel):
+    report_name: Optional[str] = None
+    report_data: Optional[Dict[str, Any]] = None
+
+
+class ReportInDB(ReportBase):
+    id: int
+    portfolio_id: int
+    created_at: datetime
+    created_by: int
+    report_data: Dict[str, Any]
+
+    class Config:
+        from_attributes = True
+
+
+class ReportResponse(ReportInDB):
+    pass
+
+
+class ReportHistoryItem(BaseModel):
+    id: int
+    report_type: str
+    report_date: date
+    report_name: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ReportHistoryList(BaseModel):
+    items: List[ReportHistoryItem]
+    total: int
+
+class ReportRequest(BaseModel):
+    report_date: date
+    report_type: ReportTypeEnum
+
+
+class ReportSaveRequest(BaseModel):
+    report_date: date
+    report_type: ReportTypeEnum
+    report_name: str
+    report_data: Dict[str, Any]
+
 
 
 # Portfolio schemas
@@ -203,13 +276,15 @@ class PortfolioWithSummaryResponse(BaseModel):
     funding_source: str
     created_at: datetime
     updated_at: Optional[datetime] = None
-    overview: Dict
-    customer_summary: Dict
+    overview: Dict[str, Any]
+    customer_summary: Dict[str, Any]
     quality_check: QualityCheckSummary
     quality_issues: Optional[List[QualityIssue]] = None
+    report_history: Optional[List[ReportHistoryItem]] = None
     
     class Config:
         from_attributes = True
+
 
 
 # ECL schemas
@@ -351,3 +426,5 @@ class UserUpdate(BaseModel):
     recovery_email: Optional[EmailStr] = None
     role: Optional[UserRole] = None
     is_active: Optional[bool] = None
+
+
