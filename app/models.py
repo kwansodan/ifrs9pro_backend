@@ -9,12 +9,14 @@ from sqlalchemy import (
     Date,
     Numeric,
     Float,
+    JSON,
 )
-from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
 from enum import Enum as PyEnum
 from app.database import Base
 from sqlalchemy.orm import relationship
+from datetime import datetime
+
 
 
 class RequestStatus(str, PyEnum):
@@ -46,6 +48,7 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     portfolios = relationship("Portfolio", back_populates="user")
+    quality_comments = relationship("QualityIssueComment", back_populates="user")
 
 
 class AccessRequest(Base):
@@ -107,6 +110,7 @@ class Portfolio(Base):
     loans = relationship("Loan", back_populates="portfolio")
     clients = relationship("Client", back_populates="portfolio")
     guarantees = relationship("Guarantee", back_populates="portfolio")
+    quality_issues = relationship("QualityIssue", back_populates="portfolio", cascade="all, delete-orphan")
 
 
 class ClientType(str, PyEnum):
@@ -315,3 +319,37 @@ class MacroEcos(Base):
     reference_date = Column(Date, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+class QualityIssue(Base):
+    __tablename__ = "quality_issues"
+
+    id = Column(Integer, primary_key=True, index=True)
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="CASCADE"))
+    issue_type = Column(String(50), nullable=False)  # duplicate_name, duplicate_address, missing_data
+    description = Column(Text, nullable=False)
+    affected_records = Column(JSON, nullable=False)  # Store IDs and info about affected records
+    severity = Column(String(20), nullable=False)  # low, medium, high
+    status = Column(String(20), default="open")  # open, approved, resolved
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, onupdate=func.now())
+    
+    # Relationships
+    portfolio = relationship("Portfolio", back_populates="quality_issues")
+    comments = relationship("QualityIssueComment", back_populates="quality_issue", cascade="all, delete-orphan")
+
+class QualityIssueComment(Base):
+    __tablename__ = "quality_issue_comments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    quality_issue_id = Column(Integer, ForeignKey("quality_issues.id", ondelete="CASCADE"))
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    comment = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=func.now())
+    
+    # Relationships
+    quality_issue = relationship("QualityIssue", back_populates="comments")
+    user = relationship("User", back_populates="quality_comments")
+
+
+
+

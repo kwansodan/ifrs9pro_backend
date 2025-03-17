@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, List
+from typing import Optional, List, Dict
 from datetime import datetime, date
 from enum import Enum
 
@@ -41,6 +41,56 @@ class TokenData(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+
+
+# Quality issue schemas
+
+class QualityIssue(BaseModel):
+    id: int
+    portfolio_id: int
+    issue_type: str  
+    description: str
+    affected_records: List[Dict]  
+    severity: str  
+    status: str  
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
+
+class QualityIssueCreate(BaseModel):
+    issue_type: str
+    description: str
+    affected_records: List[Dict]
+    severity: str = "medium"
+
+class QualityIssueComment(BaseModel):
+    id: int
+    quality_issue_id: int
+    user_id: int
+    comment: str
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+class QualityIssueCommentCreate(BaseModel):
+    comment: str
+
+class QualityIssueUpdate(BaseModel):
+    status: Optional[str] = None
+    description: Optional[str] = None
+    severity: Optional[str] = None
+
+class QualityCheckSummary(BaseModel):
+    duplicate_names: int
+    duplicate_addresses: int
+    missing_repayment_data: int
+    total_issues: int
+    high_severity_issues: int
+    open_issues: int
 
 
 # Portfolio schemas
@@ -146,16 +196,18 @@ class CustomerSummaryModel(BaseModel):
 
 class PortfolioWithSummaryResponse(BaseModel):
     id: int
-    name: Optional[str]
-    description: Optional[str]
-    asset_type: Optional[str]
-    customer_type: Optional[str]
-    funding_source: Optional[str]
+    name: str
+    description: Optional[str] = None
+    asset_type: str
+    customer_type: str
+    funding_source: str
     created_at: datetime
-    updated_at: Optional[datetime]
-    overview: OverviewModel
-    customer_summary: CustomerSummaryModel
-
+    updated_at: Optional[datetime] = None
+    overview: Dict
+    customer_summary: Dict
+    quality_check: QualityCheckSummary
+    quality_issues: Optional[List[QualityIssue]] = None
+    
     class Config:
         from_attributes = True
 
@@ -241,6 +293,8 @@ class ImpairmentConfig(BaseModel):
     loss: ImpairmentCategory
 
 
+
+        
 # Access request schemas
 class AccessRequestSubmit(BaseModel):
     email: EmailStr
@@ -262,6 +316,8 @@ class AccessRequestResponse(BaseModel):
 class AccessRequestUpdate(BaseModel):
     status: RequestStatus
     role: Optional[UserRole] = None
+
+
 
 
 # User management schemas
