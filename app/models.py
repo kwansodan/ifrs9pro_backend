@@ -10,6 +10,7 @@ from sqlalchemy import (
     Numeric,
     Float,
     JSON,
+    Table,
 )
 from sqlalchemy.sql import func
 from enum import Enum as PyEnum
@@ -48,7 +49,7 @@ class User(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     portfolios = relationship("Portfolio", back_populates="user")
     quality_comments = relationship("QualityIssueComment", back_populates="user")
-
+    feedback = relationship("Feedback", back_populates="user")
 
 class AccessRequest(Base):
     __tablename__ = "access_requests"
@@ -361,3 +362,43 @@ class Report(Base):
     portfolio = relationship("Portfolio", back_populates="reports")
     user = relationship("User")
 
+
+
+# Feedback
+
+class FeedbackStatus(str, PyEnum):
+    SUBMITTED = "submitted"
+    OPEN = "open"
+    CLOSED = "closed"
+    RETURNED = "returned"
+    IN_DEVELOPMENT = "in development"
+    COMPLETED = "completed"
+
+
+# Many-to-many association table for users who liked feedback
+feedback_likes = Table(
+    "feedback_likes",
+    Base.metadata,
+    Column("user_id", Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+    Column("feedback_id", Integer, ForeignKey("feedback.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
+class Feedback(Base):
+    __tablename__ = "feedback"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    status = Column(String, default=FeedbackStatus.SUBMITTED)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    user = relationship("User", back_populates="feedback")
+    liked_by = relationship(
+        "User", 
+        secondary=feedback_likes,
+        backref="liked_feedback"
+    )
