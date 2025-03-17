@@ -427,4 +427,60 @@ class UserUpdate(BaseModel):
     role: Optional[UserRole] = None
     is_active: Optional[bool] = None
 
+# Feedback schemas
 
+class FeedbackStatusEnum(str, Enum):
+    SUBMITTED = "submitted"
+    OPEN = "open"
+    CLOSED = "closed"
+    RETURNED = "returned"
+    IN_DEVELOPMENT = "in development"
+    COMPLETED = "completed"
+
+
+class FeedbackBase(BaseModel):
+    title: str
+    description: str
+
+
+class FeedbackCreate(FeedbackBase):
+    pass
+
+
+class FeedbackUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+
+
+class FeedbackStatusUpdate(BaseModel):
+    status: FeedbackStatusEnum
+
+
+class FeedbackLikeResponse(BaseModel):
+    id: int
+    email: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class FeedbackResponse(FeedbackBase):
+    id: int
+    user_id: int
+    status: str
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    like_count: int
+    is_liked_by_user: bool = False
+    
+    class Config:
+        from_attributes = True
+
+
+class FeedbackDetailResponse(FeedbackResponse):
+    liked_by: List[FeedbackLikeResponse] = []
+    
+    class Config:
+        from_attributes = True

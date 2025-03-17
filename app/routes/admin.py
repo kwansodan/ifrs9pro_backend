@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import AccessRequest, User
+from app.models import AccessRequest, User, Feedback
 from app.schemas import (
     AccessRequestSubmit,
     AccessRequestResponse,
@@ -27,12 +27,17 @@ from app.auth.utils import (
     is_admin,
     decode_token,
 )
+from app.schemas import (
+    FeedbackStatusUpdate,
+    FeedbackResponse,
+    FeedbackDetailResponse,
+)
+
+
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 # Handle access requests
-
-
 @router.get("/requests", response_model=List[AccessRequestResponse])
 async def get_access_requests(
     db: Session = Depends(get_db), current_user: User = Depends(is_admin)
@@ -235,3 +240,106 @@ async def delete_user(
     db.commit()
 
     return None
+
+
+
+
+# Feedback routes
+@router.get("/feedback", response_model=List[FeedbackResponse])
+async def admin_get_all_feedback(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(is_admin),
+):
+    """
+    Admin endpoint to get all feedback entries
+    """
+    feedback_list = db.query(Feedback).all()
+    
+    # Prepare response with like count
+    response_data = []
+    for feedback in feedback_list:
+        liked_by_current_user = current_user in feedback.liked_by
+        like_count = len(feedback.liked_by)
+        
+        feedback_response = FeedbackResponse.from_orm(feedback)
+        feedback_response.like_count = like_count
+        feedback_response.is_liked_by_user = liked_by_current_user
+        
+        response_data.append(feedback_response)
+    
+    return response_data
+
+
+@router.put("/feedback/{feedback_id}/status", response_model=FeedbackResponse)
+async def update_feedback_status(
+    feedback_id: int,
+    status_update: FeedbackStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(is_admin),
+):
+    """
+    Admin endpoint to update feedback status
+    """
+    feedback = db.query(Feedback).filter(Feedback.id == feedback_id).first()
+    
+    if not feedback:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Feedback not found"
+        )
+    
+    # Update status
+    feedback.status = status_update.status.value
+    db.commit()
+    db.refresh(feedback)
+    
+    # Prepare response
+    liked_by_current_user = current_user in feedback.liked_by
+    like_count = len(feedback.liked_by)
+    
+    feedback_response = FeedbackResponse.from_orm(feedback)
+    feedback_response.like_count = like_count
+    feedback_response.is_liked_by_user = liked_by_current_user
+    
+    return feedback_response
+
+
+@router.get("/feedback/stats", response_model=dict)
+async def get_feedback_stats(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(is_admin),
+):
+    """
+    Admin endpoint to get feedback statistics
+    """
+    # Get total feedback count
+    total_count = db.query(Feedback).count()
+    
+    # Get counts by status
+    status_counts = {}
+    for status in ["submitted", "open", "closed", "returned", "in development", "completed"]:
+        count = db.query(Feedback).filter(Feedback.status == status).count()
+        status_counts[status] = count
+    
+    # Get most liked feedback
+    most_liked = (
+        db.query(Feedback)
+        .join(Feedback.liked_by)
+        .group_by(Feedback.id)
+        .order_by(func.count().desc())
+        .limit(5)
+        .all()
+    )
+    
+    most_liked_data = []
+    for feedback in most_liked:
+        most_liked_data.append({
+            "id": feedback.id,
+            "title": feedback.title,
+            "likes": len(feedback.liked_by)
+        })
+    
+    return {
+        "total_count": total_count,
+        "status_counts": status_counts,
+        "most_liked": most_liked_data
+    }
