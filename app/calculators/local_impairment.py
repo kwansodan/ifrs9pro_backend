@@ -100,8 +100,11 @@ def calculate_category_data(
     return ImpairmentCategoryData(
         days_range=category_config.days_range,
         rate=category_config.rate,
-        total_loan_value=total_value,
-        provision_amount=provision,
+
+
+        total_loan_value=round(total_value, 2),
+        provision_amount=round(provision, 2),
+
     )
 
 
