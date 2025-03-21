@@ -112,7 +112,7 @@ def calculate_exposure_at_default_percentage(loan, reporting_date):
     return (loan.outstanding_loan_balance / loan.loan_amount) * 100
 
 
-def calculate_marginal_ecl(loan, pd, lgd, eir, reporting_date):
+def calculate_marginal_ecl(loan, ead_percentage, pd, lgd):
     """
     Calculate the marginal Expected Credit Loss (ECL) for a loan.
 
@@ -122,41 +122,21 @@ def calculate_marginal_ecl(loan, pd, lgd, eir, reporting_date):
         loan: The loan object
         pd: Probability of Default as a percentage (0-100)
         lgd: Loss Given Default as a percentage (0-100)
-        eir: Effective Interest Rate as a decimal (e.g., 0.12 for 12%)
-        reporting_date: The date for which ECL is being calculated
 
     Returns:
         Decimal: The calculated marginal ECL amount
     """
-    # Default to zero if loan balance is missing
-    if (
-        not loan
-        or not hasattr(loan, "outstanding_loan_balance")
-        or loan.outstanding_loan_balance is None
-    ):
-        return Decimal("0.0")
-
-    # Get the outstanding balance as Exposure At Default (EAD)
-    ead = loan.outstanding_loan_balance
-
+    
+    ead_value = loan.outstanding_loan_balance * (ead_percentage / 100)
+    
     # Convert percentage values to decimals
     pd_decimal = Decimal(str(pd / 100.0))
     lgd_decimal = Decimal(str(lgd / 100.0))
 
-    # Calculate time period for discount factor
-    # Default to 1 year if maturity_period is missing
-    if hasattr(loan, "maturity_period") and loan.maturity_period:
-        maturity_date = loan.maturity_period
-        days_to_maturity = (maturity_date - reporting_date).days
-        years_to_maturity = max(0, days_to_maturity / 365.0)
-    else:
-        years_to_maturity = 1.0
-
     # Convert eir to Decimal
-    eir_decimal = Decimal(str(eir))
 
     # Calculate marginal ECL
-    mecl = ead * pd_decimal * lgd_decimal 
+    mecl = ead_value * pd_decimal * lgd_decimal 
 
     return mecl
 

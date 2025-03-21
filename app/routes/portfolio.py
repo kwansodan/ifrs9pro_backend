@@ -795,7 +795,7 @@ def calculate_ecl(
         ead_percentage = calculate_exposure_at_default_percentage(loan, reporting_date)
 
         # Calculate ECL for the loan
-        ecl = calculate_marginal_ecl(loan, pd, lgd, eir, reporting_date)
+        ecl = calculate_marginal_ecl(loan, ead_percentage, pd, lgd)
 
         # Update summary metrics
         total_lgd += lgd
