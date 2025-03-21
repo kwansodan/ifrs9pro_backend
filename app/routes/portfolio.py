@@ -232,8 +232,8 @@ def get_portfolio(
         "updated_at": portfolio.updated_at,
         "overview": {
             "total_loans": total_loans,
-            "total_loan_value": total_loan_value,
-            "average_loan_amount": average_loan_amount,
+            "total_loan_value": round(total_loan_value,2),
+            "average_loan_amount": round(average_loan_amount, 2),
             "total_customers": total_customers,
         },
         "customer_summary": {
@@ -315,7 +315,6 @@ def delete_portfolio(
     db.commit()
 
     return None
-
 
 @router.post("/{portfolio_id}/ingest", status_code=status.HTTP_200_OK)
 async def ingest_portfolio_data(
@@ -418,16 +417,28 @@ async def ingest_portfolio_data(
             df = df.rename(columns=column_mapping)
 
             # Convert date columns to appropriate format
-            date_columns = ["loan_issue_date", "maturity_period"]
+            date_columns = ["loan_issue_date"]
             for col in date_columns:
                 if col in df.columns:
                     df[col] = pd.to_datetime(df[col], errors="coerce")
 
             # Special handling for period columns (they appear to be in Month-YY format)
-            period_columns = ["deduction_start_period", "submission_period"]
+            # Use last day of the month for period columns like "Nov-21", "Mar-22", etc.
+            # For period columns like "deduction_start_period", "submission_period", "maturity_period"
+            period_columns = ["deduction_start_period", "submission_period", "maturity_period"]
             for col in period_columns:
                 if col in df.columns:
-                    df[col] = pd.to_datetime(df[col], errors="coerce", format="%b-%y")
+                    # Step 1: Parse the period strings (e.g., "Nov-21") to datetime
+                    df[col] = pd.to_datetime(df[col], format="%b-%y", errors="coerce")
+        
+                    # Step 2: Calculate the last day of each month
+                    df[col] = df[col].apply(
+                        lambda x: pd.NaT if pd.isna(x) else (
+                            # Get the first day of next month and subtract one day
+                            (pd.Timestamp(year=x.year, month=x.month, day=1) + 
+                             pd.offsets.MonthEnd(1))
+                        )
+                    )
 
             # Convert boolean columns
             boolean_columns = ["paid", "cancelled"]
@@ -661,7 +672,6 @@ async def ingest_portfolio_data(
             }
 
     return {"portfolio_id": portfolio_id, "results": results}
-
 
 @router.post("/{portfolio_id}/calculate-ecl", response_model=ECLSummary)
 def calculate_ecl(
