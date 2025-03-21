@@ -5,11 +5,12 @@ from fastapi import (
     status,
     Body,
 )
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from datetime import date, datetime
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel
-
+import base64
+from io import BytesIO
 from app.database import get_db
 from app.models import Portfolio, User, Report
 from app.auth.utils import get_current_active_user
@@ -23,6 +24,7 @@ from app.utils.report_generators import (
     generate_probability_default_report,
     generate_exposure_default_report,
     generate_loss_given_default_report,
+    generate_report_pdf,
 )
 from app.schemas import (
     ReportTypeEnum,
@@ -39,7 +41,6 @@ from app.schemas import (
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
-
 @router.post("/{portfolio_id}/generate", status_code=status.HTTP_200_OK)
 async def generate_report(
     portfolio_id: int,
@@ -50,6 +51,7 @@ async def generate_report(
     """
     Generate a report for a portfolio based on the report type.
     This endpoint does not save the report to the database.
+    Returns both JSON report data and PDF bytes as base64.
     """
     # Verify portfolio exists and belongs to current user
     portfolio = (
@@ -136,12 +138,32 @@ async def generate_report(
                 detail=f"Unsupported report type: {report_request.report_type}"
             )
 
-        # Return the generated report
+        # Generate the PDF from the report data
+        pdf_bytes = generate_report_pdf(
+            db=db,
+            portfolio_id=portfolio_id,
+            report_type=report_request.report_type.value,
+            report_date=report_request.report_date,
+            report_data=report_data
+        )
+        
+        # Encode the PDF as base64
+        pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
+        
+        # Create a file name for the PDF
+        report_name = f"{portfolio.name.replace(' ', '_')}_{report_request.report_type.value}_{report_request.report_date}.pdf"
+        
+        # Return both the data and PDF in the response
         return {
             "portfolio_id": portfolio_id,
             "report_type": report_request.report_type,
             "report_date": report_request.report_date,
-            "data": report_data
+            "data": report_data,
+            "pdf": {
+                "filename": report_name,
+                "content_type": "application/pdf",
+                "content": pdf_base64
+            }
         }
 
     except Exception as e:
@@ -149,7 +171,6 @@ async def generate_report(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error generating report: {str(e)}"
         )
-
 
 @router.post("/{portfolio_id}/save", response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
 async def save_report(
@@ -280,6 +301,8 @@ async def get_report(
         .filter(Report.id == report_id, Report.portfolio_id == portfolio_id)
         .first()
     )
+
+    
     
     if not report:
         raise HTTPException(
@@ -328,3 +351,64 @@ async def delete_report(
     db.commit()
     
     return None
+
+@router.get("/{portfolio_id}/report/{report_id}/download", status_code=status.HTTP_200_OK)
+async def download_report_pdf(
+    portfolio_id: int,
+    report_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Download a saved report as PDF.
+    Returns a streaming response with the PDF file for download.
+    """
+    # Verify portfolio exists and belongs to current user
+    portfolio = (
+        db.query(Portfolio)
+        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .first()
+    )
+
+    if not portfolio:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
+        )
+    
+    # Get the report
+    report = (
+        db.query(Report)
+        .filter(Report.id == report_id, Report.portfolio_id == portfolio_id)
+        .first()
+    )
+    
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Report not found"
+        )
+    
+    try:
+        # Generate the PDF from the saved report data
+        pdf_bytes = generate_report_pdf(
+            db=db,
+            portfolio_id=portfolio_id,
+            report_type=report.report_type,
+            report_date=report.report_date,
+            report_data=report.report_data
+        )
+        
+        # Create a file name for the PDF
+        report_name = f"{portfolio.name.replace(' ', '_')}_{report.report_type}_{report.report_date}.pdf"
+        
+        # Return the PDF as a downloadable file
+        return StreamingResponse(
+            BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename={report_name}"}
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generating PDF report: {str(e)}"
+        )

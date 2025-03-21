@@ -5,6 +5,9 @@ import pandas as pd
 from decimal import Decimal
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Any, Optional
+from datetime import date
+from app.models import Portfolio, Report
+from app.utils.pdf_generator import create_report_pdf
 
 from app.models import (
     Portfolio,
@@ -865,3 +868,42 @@ def generate_loss_given_default_report(
         "total_loans_analyzed": len(loans),
         "reporting_date": report_date.isoformat()
     }
+
+
+
+def get_portfolio_name(db: Session, portfolio_id: int) -> str:
+    """Get the portfolio name from the database"""
+    portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
+    return portfolio.name if portfolio else f"Portfolio {portfolio_id}"
+
+def generate_report_pdf(
+    db: Session,
+    portfolio_id: int,
+    report_type: str,
+    report_date: date,
+    report_data: Dict[str, Any]
+) -> bytes:
+    """
+    Generate a PDF for a report.
+    
+    Args:
+        db: Database session
+        portfolio_id: ID of the portfolio
+        report_type: Type of the report
+        report_date: Date of the report
+        report_data: Data for the report
+    
+    Returns:
+        bytes: PDF file as bytes
+    """
+    portfolio_name = get_portfolio_name(db, portfolio_id)
+    
+    # Generate the PDF
+    pdf_buffer = create_report_pdf(
+        portfolio_name=portfolio_name,
+        report_type=report_type,
+        report_date=report_date,
+        report_data=report_data,
+    )
+    
+    return pdf_buffer.getvalue()
