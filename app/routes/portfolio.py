@@ -26,6 +26,7 @@ from app.calculators.ecl import (
     calculate_probability_of_default,
     calculate_loss_given_default,
     calculate_marginal_ecl,
+    is_in_range,
 )
 from app.calculators.local_impairment import (
     parse_days_range,
@@ -62,6 +63,7 @@ from app.schemas import (
     QualityIssueComment,
     QualityIssueCommentCreate,
     QualityCheckSummary,
+    ECLConfig,
 )
 from app.auth.utils import get_current_active_user
 from app.utils.quality_checks import create_quality_issues_if_needed
@@ -661,13 +663,24 @@ async def ingest_portfolio_data(
     return {"portfolio_id": portfolio_id, "results": results}
 
 
-@router.get("/{portfolio_id}/calculate-ecl", response_model=ECLSummary)
+@router.post("/{portfolio_id}/calculate-ecl", response_model=ECLSummary)
 def calculate_ecl(
     portfolio_id: int,
+    config: ECLConfig = Body(...),
     reporting_date: Optional[date] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    """
+    Calculate ECL based on frontend-provided configuration for NDIA day ranges.
+
+    Expects a configuration object with day ranges for each category:
+    - Current: E.g., "0-30" days
+    - OLEM (On Lender's Monitoring): E.g., "31-120" days
+    - Substandard: E.g., "121-180" days
+    - Doubtful: E.g., "181-240" days
+    - Loss: E.g., "240+" days
+    """
     # Verify portfolio exists and belongs to current user
     portfolio = (
         db.query(Portfolio)
@@ -709,12 +722,17 @@ def calculate_ecl(
                     client_securities[client.employee_id] = []
                 client_securities[client.employee_id].append(security)
 
-    # Categorize loans by NDIA (Stage 1, 2, 3)
-    # Based on IFRS 9 staging
-    # Stage 1: 0-120 days (Current + OLEM)
-    # Stage 2: 120-240 days (Substandard + Some Doubtful)
-    # Stage 3: 240+ days (Most Doubtful + Loss)
+    # Parse day ranges from config
+    try:
+        current_range = parse_days_range(config.current.days_range)
+        olem_range = parse_days_range(config.olem.days_range)
+        substandard_range = parse_days_range(config.substandard.days_range)
+        doubtful_range = parse_days_range(config.doubtful.days_range)
+        loss_range = parse_days_range(config.loss.days_range)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
+    # Initialize loan categories and totals
     current_loans = []
     olem_loans = []
     substandard_loans = []
@@ -785,24 +803,24 @@ def calculate_ecl(
         total_ead_percentage += ead_percentage
         total_loans += 1
 
-        # Categorize loan by NDIA
-        if ndia < 30:  # Current: 0-30 days
+        # Categorize loan by NDIA using the provided configuration
+        if is_in_range(ndia, current_range):
             current_loans.append(loan)
             current_total += loan.outstanding_loan_balance or 0
             current_provision += ecl
-        elif ndia < 120:  # OLEM: 31-120 days
+        elif is_in_range(ndia, olem_range):
             olem_loans.append(loan)
             olem_total += loan.outstanding_loan_balance or 0
             olem_provision += ecl
-        elif ndia < 180:  # Substandard: 121-180 days
+        elif is_in_range(ndia, substandard_range):
             substandard_loans.append(loan)
             substandard_total += loan.outstanding_loan_balance or 0
             substandard_provision += ecl
-        elif ndia < 240:  # Doubtful: 181-240 days
+        elif is_in_range(ndia, doubtful_range):
             doubtful_loans.append(loan)
             doubtful_total += loan.outstanding_loan_balance or 0
             doubtful_provision += ecl
-        else:  # Loss: 240+ days
+        elif is_in_range(ndia, loss_range):
             loss_loans.append(loan)
             loss_total += loan.outstanding_loan_balance or 0
             loss_provision += ecl
@@ -835,28 +853,28 @@ def calculate_ecl(
         calculation_date=reporting_date.strftime("%Y-%m-%d"),
         current=ECLCategoryData(
             num_loans=len(current_loans),
-            total_loan_value=current_total,
-            provision_amount=current_provision,
+            total_loan_value=round(current_total,2),
+            provision_amount=round(current_provision,2),
         ),
         olem=ECLCategoryData(
             num_loans=len(olem_loans),
-            total_loan_value=olem_total,
-            provision_amount=olem_provision,
+            total_loan_value=round(olem_total,2),
+            provision_amount=round(olem_provision,2),
         ),
         substandard=ECLCategoryData(
             num_loans=len(substandard_loans),
-            total_loan_value=substandard_total,
-            provision_amount=substandard_provision,
+            total_loan_value=round(substandard_total,2),
+            provision_amount=round(substandard_provision,2),
         ),
         doubtful=ECLCategoryData(
             num_loans=len(doubtful_loans),
-            total_loan_value=doubtful_total,
-            provision_amount=doubtful_provision,
+            total_loan_value=round(doubtful_total, 2),
+            provision_amount=round(doubtful_provision, 2),
         ),
         loss=ECLCategoryData(
             num_loans=len(loss_loans),
-            total_loan_value=loss_total,
-            provision_amount=loss_provision,
+            total_loan_value=round(loss_total,2),
+            provision_amount=round(loss_provision,2),
         ),
         summary_metrics=ECLSummaryMetrics(
             pd=round(avg_pd, 1),
@@ -868,7 +886,6 @@ def calculate_ecl(
     )
 
     return response
-
 
 @router.post(
     "/{portfolio_id}/calculate-local-impairment", response_model=LocalImpairmentSummary

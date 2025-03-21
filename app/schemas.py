@@ -484,3 +484,16 @@ class FeedbackDetailResponse(FeedbackResponse):
     
     class Config:
         from_attributes = True
+
+
+# ECL schemas
+
+class DaysRangeConfig(BaseModel):
+    days_range: str
+
+class ECLConfig(BaseModel):
+    current: DaysRangeConfig
+    olem: DaysRangeConfig
+    substandard: DaysRangeConfig
+    doubtful: DaysRangeConfig
+    loss: DaysRangeConfig

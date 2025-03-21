@@ -1,4 +1,5 @@
 from decimal import Decimal
+from typing import Optional, Tuple
 
 
 def calculate_effective_interest_rate(loan_amount, monthly_installment, loan_term):
@@ -95,7 +96,7 @@ def calculate_probability_of_default(loan, ndia):
         pd = 30.0  # 30%
     else:  # Stage 3
         # Credit impaired
-        pd = 75.0  # 75%
+        pd = 75.0  # 
 
     return pd
 
@@ -115,7 +116,7 @@ def calculate_marginal_ecl(loan, pd, lgd, eir, reporting_date):
     """
     Calculate the marginal Expected Credit Loss (ECL) for a loan.
 
-    Marginal ECL = EAD * PD * LGD * Discount Factor
+    Marginal ECL = EAD * PD * LGD
 
     Args:
         loan: The loan object
@@ -154,16 +155,17 @@ def calculate_marginal_ecl(loan, pd, lgd, eir, reporting_date):
     # Convert eir to Decimal
     eir_decimal = Decimal(str(eir))
 
-    # Calculate present value factor
-    # Use (1 + EIR)^-t formula
-    if eir_decimal > Decimal("0"):
-        pv_factor = Decimal("1.0") / (
-            (Decimal("1.0") + eir_decimal) ** Decimal(str(years_to_maturity))
-        )
-    else:
-        pv_factor = Decimal("1.0")
-
     # Calculate marginal ECL
-    mecl = ead * pd_decimal * lgd_decimal * pv_factor
+    mecl = ead * pd_decimal * lgd_decimal 
 
     return mecl
+
+def is_in_range(value: int, range_tuple: Tuple[int, Optional[int]]) -> bool:
+    """
+    Check if a value is within the specified range.
+    """
+    min_val, max_val = range_tuple
+    if max_val is None:
+        return value >= min_val
+    else:
+        return min_val <= value <= max_val
