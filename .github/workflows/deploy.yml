@@ -1,27 +1,28 @@
 name: CI/CD with Nix and Poetry
-
 on:
   push:
     branches:
       - main  
-
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-
+      
       - name: Install Nix
         uses: cachix/install-nix-action@v22
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
-
+      
       - name: Enter Nix Shell and Install Dependencies
         run: nix-shell --run "poetry install --no-interaction --no-ansi"
-
+      
+      # generate requirements.txt from Poetry
+      - name: Generate requirements.txt
+        run: nix-shell --run "poetry export -f requirements.txt --output requirements.txt --without-hashes"
+      
       - name: Deploy to Azure App Service
         uses: azure/webapps-deploy@v3
         with:
