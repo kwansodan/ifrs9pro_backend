@@ -1,28 +1,151 @@
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
+from typing import Optional, Tuple
 
-def calculate_ecl(outstanding_balance: Decimal, pd: Decimal, lgd: Decimal) -> Decimal:
+
+def calculate_effective_interest_rate(loan_amount, monthly_installment, loan_term):
+    """Calculate the effective interest rate using IRR (Internal Rate of Return)"""
+    if not loan_amount or not monthly_installment or not loan_term or loan_term <= 0:
+        return 0
+
+    try:
+        # Set up cash flows: initial loan amount (negative) followed by monthly payments
+        cash_flows = [-loan_amount] + [monthly_installment] * loan_term
+        # Calculate monthly EIR
+        monthly_eir = np.irr(cash_flows)
+        # Convert to annual rate
+        annual_eir = (1 + monthly_eir) ** 12 - 1
+        return annual_eir * 100  # Convert to percentage
+    except:
+        # Fallback calculation if IRR fails to converge
+        return 0
+
+
+def calculate_loss_given_default(loan, client_securities):
     """
-    Calculate the Expected Credit Loss (ECL) for a loan.
+    Calculate the Loss Given Default (LGD) for a loan based on client's securities.
+
+    LGD represents the percentage of exposure that would be lost in case of default
+    after all recovery efforts and liquidation of collateral.
 
     Args:
-        outstanding_balance (Decimal): The outstanding loan balance (EAD).
-        pd (Decimal): Probability of Default (0 to 1).
-        lgd (Decimal): Loss Given Default (0 to 1).
+        loan: The loan object
+        client_securities: List of security objects linked to the client
 
     Returns:
-        Decimal: Expected Credit Loss amount.
+        float: LGD value as a percentage (0-100)
     """
-    if not (Decimal("0") <= pd <= Decimal("1")):
-        raise ValueError("PD must be between 0 and 1")
-    if not (Decimal("0") <= lgd <= Decimal("1")):
-        raise ValueError("LGD must be between 0 and 1")
+    # Default LGD if no securities or loan data is missing
+    default_lgd = 65.0  # Industry average for unsecured loans
+
+    if (
+        not loan
+        or not hasattr(loan, "outstanding_loan_balance")
+        or not loan.outstanding_loan_balance
+    ):
+        return default_lgd
+
+    # Total outstanding loan amount
+    outstanding_amount = float(loan.outstanding_loan_balance)
+
+    if outstanding_amount <= 0:
+        return 0.0  # No loss if no outstanding amount
+
+    # Calculate total recoverable value from securities
+    total_recoverable = 0.0
+
+    if client_securities:
+        for security in client_securities:
+            # Use forced sale value if available, otherwise apply a haircut to collateral value
+            if security.forced_sale_value:
+                recoverable = float(security.forced_sale_value)
+            elif security.collateral_value:
+                # Apply a standard haircut of 30% to the collateral value
+                haircut = 0.7  # 30% reduction
+                recoverable = float(security.collateral_value) * haircut
+            else:
+                recoverable = 0.0
+
+            # Add to total recoverable value
+            total_recoverable += recoverable
+
+    # Calculate LGD based on the outstanding amount and recoverable value
+    if total_recoverable >= outstanding_amount:
+        # Full recovery possible
+        lgd = 0.0
+    else:
+        # Partial recovery
+        loss_amount = outstanding_amount - total_recoverable
+        lgd = (loss_amount / outstanding_amount) * 100.0
+
+    # Apply floor and cap to LGD
+    lgd = max(0.0, min(100.0, lgd))
+
+    return lgd
+
+
+def calculate_probability_of_default(loan, ndia):
+    """
+    Calculate Probability of Default based on NDIA (Number of Days in Arrears)
+    """
+    # IFRS 9 staging
+    if ndia < 120:  # Stage 1
+        # Low risk
+        pd = 5.0  # 5% (base rate for performing loans)
+    elif ndia < 240:  # Stage 2
+        # Significant increase in credit risk
+        pd = 30.0  # 30%
+    else:  # Stage 3
+        # Credit impaired
+        pd = 75.0  # 
+
+    return pd
+
+
+def calculate_exposure_at_default_percentage(loan, reporting_date):
+    """
+    Calculate Exposure at Default as a percentage
+    EAD% = Outstanding Balance / Original Loan Amount
+    """
+    if not loan.loan_amount or loan.loan_amount == 0:
+        return 100  # If no original amount, assume 100% exposure
+
+    return (loan.outstanding_loan_balance / loan.loan_amount) * 100
+
+
+def calculate_marginal_ecl(loan, ead_percentage, pd, lgd):
+    """
+    Calculate the marginal Expected Credit Loss (ECL) for a loan.
+
+    Marginal ECL = EAD * PD * LGD
+
+    Args:
+        loan: The loan object
+        pd: Probability of Default as a percentage (0-100)
+        lgd: Loss Given Default as a percentage (0-100)
+
+    Returns:
+        Decimal: The calculated marginal ECL amount
+    """
     
-    # Exposure at Default (EAD) is the outstanding balance
-    ead = outstanding_balance
+    ead_value = loan.outstanding_loan_balance * (ead_percentage / 100)
+    
+    # Convert percentage values to decimals
+    pd_decimal = Decimal(str(pd / 100.0))
+    lgd_decimal = Decimal(str(lgd / 100.0))
 
-    # Calculate ECL
-    ecl = pd * lgd * ead
+    # Convert eir to Decimal
 
-    # Round to 2 decimal places
-    return ecl.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    # Calculate marginal ECL
+    mecl = ead_value * pd_decimal * lgd_decimal 
 
+    return mecl
+
+def is_in_range(value: int, range_tuple: Tuple[int, Optional[int]]) -> bool:
+    """
+    Check if a value is within the specified range.
+    """
+    min_val, max_val = range_tuple
+    if max_val is None:
+        return value >= min_val
+    else:
+        return min_val <= value <= max_val
