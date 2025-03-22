@@ -1,6 +1,7 @@
 import os
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from sqlalchemy.orm import Session
 from app.database import get_db, init_db
 from app.routes import auth, portfolio, admin, reports
@@ -20,6 +21,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Redirect to https
+app.add_middleware(HTTPSRedirectMiddleware)
 
 # Register routers
 app.include_router(auth.router)
@@ -70,5 +74,10 @@ async def startup_event():
 
 if __name__ == "__main__":
     import uvicorn
-
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(
+        app, 
+        host="0.0.0.0", 
+        port=8000,
+        forwarded_allow_ips="*",      
+        proxy_headers=True            
+    )
