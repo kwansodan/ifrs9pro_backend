@@ -13,6 +13,9 @@ init_db()
 
 app = FastAPI()
 
+# Redirect to https
+app.add_middleware(HTTPSRedirectMiddleware)
+
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
@@ -22,8 +25,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Redirect to https
-app.add_middleware(HTTPSRedirectMiddleware)
 
 # Register routers
 app.include_router(auth.router)
