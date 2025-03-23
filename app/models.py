@@ -101,7 +101,7 @@ class Portfolio(Base):
     funding_source = Column(String, nullable=True)
     data_source = Column(String, nullable=True)
     repayment_source = Column(Boolean, default=False)
-    credit_source = Column(String, nullable=True)
+    credit_risk_reserve = Column(String, nullable=True)
     loan_assets = Column(String, nullable=True)
     ecl_impairment_account = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

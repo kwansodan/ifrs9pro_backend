@@ -214,7 +214,7 @@ class PortfolioUpdate(BaseModel):
     funding_source: Optional[FundingSource] = None
     data_source: Optional[DataSource] = None
     repayment_source: Optional[bool] = None
-    credit_source: Optional[str] = None
+    credit_risk_reserve: Optional[str] = None
     loan_assets: Optional[str] = None
     ecl_impairment_account: Optional[str] = None
 
@@ -228,7 +228,7 @@ class PortfolioResponse(BaseModel):
     funding_source: str
     data_source: str
     repayment_source: bool
-    credit_source: Optional[str] = None
+    credit_risk_reserve: Optional[str] = None
     loan_assets: Optional[str] = None
     ecl_impairment_account: Optional[str] = None
     user_id: int
