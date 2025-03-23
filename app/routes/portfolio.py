@@ -684,12 +684,10 @@ def calculate_ecl(
     """
     Calculate ECL based on frontend-provided configuration for NDIA day ranges.
 
-    Expects a configuration object with day ranges for each category:
-    - Current: E.g., "0-30" days
-    - OLEM (On Lender's Monitoring): E.g., "31-120" days
-    - Substandard: E.g., "121-180" days
-    - Doubtful: E.g., "181-240" days
-    - Loss: E.g., "240+" days
+    Expects a configuration object with day ranges for each stage:
+    - Stage 1: E.g., "0-120" days
+    - Stage 2: E.g., "121-240" days
+    - Stage 3: E.g., "240+" days
     """
     # Verify portfolio exists and belongs to current user
     portfolio = (
@@ -734,34 +732,26 @@ def calculate_ecl(
 
     # Parse day ranges from config
     try:
-        current_range = parse_days_range(config.current.days_range)
-        olem_range = parse_days_range(config.olem.days_range)
-        substandard_range = parse_days_range(config.substandard.days_range)
-        doubtful_range = parse_days_range(config.doubtful.days_range)
-        loss_range = parse_days_range(config.loss.days_range)
+        stage_1_range = parse_days_range(config.stage_1.days_range)
+        stage_2_range = parse_days_range(config.stage_2.days_range)
+        stage_3_range = parse_days_range(config.stage_3.days_range)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     # Initialize loan categories and totals
-    current_loans = []
-    olem_loans = []
-    substandard_loans = []
-    doubtful_loans = []
-    loss_loans = []
+    stage_1_loans = []
+    stage_2_loans = []
+    stage_3_loans = []
 
     # Calculate totals for each category
-    current_total = 0
-    olem_total = 0
-    substandard_total = 0
-    doubtful_total = 0
-    loss_total = 0
+    stage_1_total = 0
+    stage_2_total = 0
+    stage_3_total = 0
 
     # Calculate provisions for each category
-    current_provision = 0
-    olem_provision = 0
-    substandard_provision = 0
-    doubtful_provision = 0
-    loss_provision = 0
+    stage_1_provision = 0
+    stage_2_provision = 0
+    stage_3_provision = 0
 
     # Summary metrics
     total_lgd = 0
@@ -814,26 +804,18 @@ def calculate_ecl(
         total_loans += 1
 
         # Categorize loan by NDIA using the provided configuration
-        if is_in_range(ndia, current_range):
-            current_loans.append(loan)
-            current_total += loan.outstanding_loan_balance or 0
-            current_provision += ecl
-        elif is_in_range(ndia, olem_range):
-            olem_loans.append(loan)
-            olem_total += loan.outstanding_loan_balance or 0
-            olem_provision += ecl
-        elif is_in_range(ndia, substandard_range):
-            substandard_loans.append(loan)
-            substandard_total += loan.outstanding_loan_balance or 0
-            substandard_provision += ecl
-        elif is_in_range(ndia, doubtful_range):
-            doubtful_loans.append(loan)
-            doubtful_total += loan.outstanding_loan_balance or 0
-            doubtful_provision += ecl
-        elif is_in_range(ndia, loss_range):
-            loss_loans.append(loan)
-            loss_total += loan.outstanding_loan_balance or 0
-            loss_provision += ecl
+        if is_in_range(ndia, stage_1_range):
+            stage_1_loans.append(loan)
+            stage_1_total += loan.outstanding_loan_balance or 0
+            stage_1_provision += ecl
+        elif is_in_range(ndia, stage_2_range):
+            stage_2_loans.append(loan)
+            stage_2_total += loan.outstanding_loan_balance or 0
+            stage_2_provision += ecl
+        elif is_in_range(ndia, stage_3_range):
+            stage_3_loans.append(loan)
+            stage_3_total += loan.outstanding_loan_balance or 0
+            stage_3_provision += ecl
 
     # Calculate averages for summary metrics
     avg_lgd = total_lgd / total_loans if total_loans > 0 else 0
@@ -841,16 +823,8 @@ def calculate_ecl(
     avg_ead_percentage = total_ead_percentage / total_loans if total_loans > 0 else 0
 
     # Calculate total loan value and provision amount
-    total_loan_value = (
-        current_total + olem_total + substandard_total + doubtful_total + loss_total
-    )
-    total_provision = (
-        current_provision
-        + olem_provision
-        + substandard_provision
-        + doubtful_provision
-        + loss_provision
-    )
+    total_loan_value = stage_1_total + stage_2_total + stage_3_total
+    total_provision = stage_1_provision + stage_2_provision + stage_3_provision
 
     # Calculate provision percentage
     provision_percentage = (
@@ -861,30 +835,20 @@ def calculate_ecl(
     response = ECLSummary(
         portfolio_id=portfolio_id,
         calculation_date=reporting_date.strftime("%Y-%m-%d"),
-        current=ECLCategoryData(
-            num_loans=len(current_loans),
-            total_loan_value=round(current_total,2),
-            provision_amount=round(current_provision,2),
+        stage_1=ECLCategoryData(
+            num_loans=len(stage_1_loans),
+            total_loan_value=round(stage_1_total, 2),
+            provision_amount=round(stage_1_provision, 2),
         ),
-        olem=ECLCategoryData(
-            num_loans=len(olem_loans),
-            total_loan_value=round(olem_total,2),
-            provision_amount=round(olem_provision,2),
+        stage_2=ECLCategoryData(
+            num_loans=len(stage_2_loans),
+            total_loan_value=round(stage_2_total, 2),
+            provision_amount=round(stage_2_provision, 2),
         ),
-        substandard=ECLCategoryData(
-            num_loans=len(substandard_loans),
-            total_loan_value=round(substandard_total,2),
-            provision_amount=round(substandard_provision,2),
-        ),
-        doubtful=ECLCategoryData(
-            num_loans=len(doubtful_loans),
-            total_loan_value=round(doubtful_total, 2),
-            provision_amount=round(doubtful_provision, 2),
-        ),
-        loss=ECLCategoryData(
-            num_loans=len(loss_loans),
-            total_loan_value=round(loss_total,2),
-            provision_amount=round(loss_provision,2),
+        stage_3=ECLCategoryData(
+            num_loans=len(stage_3_loans),
+            total_loan_value=round(stage_3_total, 2),
+            provision_amount=round(stage_3_provision, 2),
         ),
         summary_metrics=ECLSummaryMetrics(
             pd=round(avg_pd, 1),
@@ -896,7 +860,6 @@ def calculate_ecl(
     )
 
     return response
-
 @router.post(
     "/{portfolio_id}/calculate-local-impairment", response_model=LocalImpairmentSummary
 )

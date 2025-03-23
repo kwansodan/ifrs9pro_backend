@@ -313,11 +313,9 @@ class ECLSummary(BaseModel):
 
     portfolio_id: int
     calculation_date: str
-    current: ECLCategoryData
-    olem: ECLCategoryData
-    substandard: ECLCategoryData
-    doubtful: ECLCategoryData
-    loss: ECLCategoryData
+    stage_1: ECLCategoryData
+    stage_2: ECLCategoryData
+    stage_3: ECLCategoryData
     summary_metrics: ECLSummaryMetrics
 
 
@@ -492,8 +490,6 @@ class DaysRangeConfig(BaseModel):
     days_range: str
 
 class ECLConfig(BaseModel):
-    current: DaysRangeConfig
-    olem: DaysRangeConfig
-    substandard: DaysRangeConfig
-    doubtful: DaysRangeConfig
-    loss: DaysRangeConfig
+    stage_1: DaysRangeConfig
+    stage_2: DaysRangeConfig
+    stage_3: DaysRangeConfig
