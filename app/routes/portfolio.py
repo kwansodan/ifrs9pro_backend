@@ -322,7 +322,6 @@ async def ingest_portfolio_data(
     loan_details: Optional[UploadFile] = File(None),
     loan_guarantee_data: Optional[UploadFile] = File(None),
     loan_collateral_data: Optional[UploadFile] = File(None),
-    historical_repayments_data: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -333,7 +332,6 @@ async def ingest_portfolio_data(
     - loan_details: Primary loan information
     - loan_guarantee_data: Information about loan guarantees
     - loan_collateral_data: Information about loan collateral
-    - historical_repayments_data: Historical repayment data
     """
     # Check if at least one file is provided
     if not any(
@@ -341,7 +339,6 @@ async def ingest_portfolio_data(
             loan_details,
             loan_guarantee_data,
             loan_collateral_data,
-            historical_repayments_data,
         ]
     ):
         raise HTTPException(
