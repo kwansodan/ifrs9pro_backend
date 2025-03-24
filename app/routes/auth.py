@@ -12,6 +12,8 @@ from app.schemas import (
     PasswordSetup,
     Token,
     LoginRequest,
+    LoginResponse
+    
 )
 from app.auth.utils import (
     create_email_verification_token,
@@ -287,7 +289,7 @@ async def set_password(
         raise HTTPException(status_code=400, detail=f"Error setting password: {str(e)}")
 
 
-@router.post("/login", response_model=dict)
+@router.post("/login", response_model=LoginResponse)
 async def login(request: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == request.email).first()
 
@@ -319,6 +321,8 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
 
     # Decode the token for sending back user info
     decoded_token = decode_token(access_token)
+    access_request = db.query(AccessRequest).filter(AccessRequest.email == user.email).first()
+    
 
     return {
         "access_token": access_token,
@@ -332,5 +336,6 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
             "recovery_email": user.recovery_email,
             "role": user.role,
             "is_active": user.is_active,
+            "access_request_status": access_request.status,
         },
     }

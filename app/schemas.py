@@ -18,7 +18,22 @@ class UserRole(str, Enum):
     REVIEWER = "reviewer"
     USER = "user"
 
+class UserModel(BaseModel):
+    id: int
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: EmailStr
+    recovery_email: Optional[EmailStr] = None
+    role: UserRole
+    is_active: bool
+    access_request_status: RequestStatus
 
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = Field(default="bearer", pattern="^bearer$")
+    expires_in: int = Field(gt=0)
+    user: UserModel
+    
 class EmailVerificationRequest(BaseModel):
     email: EmailStr
 
