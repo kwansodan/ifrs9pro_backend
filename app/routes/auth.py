@@ -39,7 +39,6 @@ router = APIRouter(tags=["auth"])
 
 VALID_ADMIN_EMAILS = os.getenv("VALID_ADMIN_EMAILS", "admin@example.com").split(",")
 
-
 @router.post("/request-access")
 async def request_access(
     request_data: EmailVerificationRequest, db: Session = Depends(get_db)
@@ -66,8 +65,15 @@ async def request_access(
                 status_code=409, detail="Access request already submitted"
             )
         else:
-            # Check if token is expired
-            is_expired = existing_request.token_expiry < datetime.utcnow()
+            # Check if token is expired - ensure both are timezone-naive for comparison
+            current_time = datetime.utcnow()
+            token_expiry = existing_request.token_expiry
+            
+            # Convert to naive datetime if token_expiry is timezone-aware
+            if token_expiry.tzinfo is not None:
+                token_expiry = token_expiry.replace(tzinfo=None)
+                
+            is_expired = token_expiry < current_time
             
             # Generate a new token if expired
             if is_expired:
