@@ -26,7 +26,7 @@ class UserModel(BaseModel):
     recovery_email: Optional[EmailStr] = None
     role: UserRole
     is_active: bool
-    access_request_status: RequestStatus
+    access_request_status: Optional[RequestStatus] = None
 
 class LoginResponse(BaseModel):
     access_token: str
