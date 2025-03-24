@@ -139,6 +139,8 @@ def calculate_exposure_at_default_percentage(loan, reporting_date):
     
     EAD% = (Bt + Accumulated Arrears) / P * 100
     """
+    if not loan.loan_amount or loan.loan_amount <= 0:
+        return 100  # If no original amount, assume 100% exposure
     
     original_amount = loan.loan_amount
     
@@ -154,19 +156,20 @@ def calculate_exposure_at_default_percentage(loan, reporting_date):
     loan_term_months = loan.loan_term
     
     # Calculate months elapsed from loan issue date to reporting date
-    issue_date = loan.disbursement_date
+    issue_date = loan.loan_issue_date
     months_elapsed = (reporting_date.year - issue_date.year) * 12 + (reporting_date.month - issue_date.month)
 
     # Ensure months_elapsed is not negative or greater than loan term
     months_elapsed = max(0, min(months_elapsed, loan_term_months))
     
-    
-    numerator = (1 + monthly_rate) ** loan_term_months - (1 + monthly_rate) ** months_elapsed
-    denominator = (1 + monthly_rate) ** loan_term_months - 1
-    theoretical_balance = original_amount * (numerator / denominator)
+    theoretical_balance = 0
+    if monthly_rate > 0:
+        numerator = (1 + monthly_rate) ** loan_term_months - (1 + monthly_rate) ** months_elapsed
+        denominator = (1 + monthly_rate) ** loan_term_months - 1
+        theoretical_balance = original_amount * (numerator / denominator)
 
-    
-    theoretical_balance += loan.accumulated_arrears
+    if hasattr(loan, 'accumulated_arrears') and loan.accumulated_arrears:
+        theoretical_balance += loan.accumulated_arrears
     
     ead_percentage = (theoretical_balance / original_amount) * 100
     

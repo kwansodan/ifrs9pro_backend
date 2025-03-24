@@ -468,16 +468,12 @@ class FeedbackDetailResponse(FeedbackResponse):
 # ECL schemas
 
 class DaysRangeConfig(BaseModel):
-    days_range: str
+    days_range: str = Field(..., example="0-30")
 
 class ECLConfig(BaseModel):
     stage_1: DaysRangeConfig
     stage_2: DaysRangeConfig
     stage_3: DaysRangeConfig
-
-class DaysRangeConfig(BaseModel):
-    days_range: str = Field(..., example="0-30")
-    provision_rate: Optional[float] = Field(None, example=0.01)
 
 class ECLStagingConfig(BaseModel):
     stage_1: DaysRangeConfig
@@ -499,7 +495,7 @@ class LGDInput(BaseModel):
 class EADInput(BaseModel):
     loan_amount: float
     outstanding_balance: float
-    disbursement_date: date
+    loan_issue_date: date
     maturity_date: date
     reporting_date: date
 
@@ -517,8 +513,14 @@ class LoanStageInfo(BaseModel):
     loan_id: int
     employee_id: str
     stage: str
+    outstanding_loan_balance: float
     ndia: int
-
+    loan_issue_date: date
+    loan_amount: float
+    monthly_installment: float
+    loan_term: int
+    accumulated_arrears: float
+    
 class StagingResponse(BaseModel):
     loans: List[LoanStageInfo]
 
@@ -563,16 +565,10 @@ class CalculatorResponse(BaseModel):
     result: float
     input_data: dict
 
-class LoanWithStage(BaseModel):
-    loan_id: int
-    employee_id: str
-    stage: str
-    outstanding_balance: float
-    ndia: int
-
+    
 class StagedLoans(BaseModel):
     portfolio_id: int
-    loans: List[LoanWithStage]
+    loans: List[LoanStageInfo]
 
 
 class ProvisionRateConfig(BaseModel):
