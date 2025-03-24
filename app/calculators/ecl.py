@@ -1,6 +1,5 @@
 from decimal import Decimal
-from typing import Optional, Tuple
-
+from typing import Optional, Tuple, List, Union, Dict, Any
 
 def calculate_effective_interest_rate(loan_amount, monthly_installment, loan_term):
     """Calculate the effective interest rate using IRR (Internal Rate of Return)"""
@@ -20,68 +19,91 @@ def calculate_effective_interest_rate(loan_amount, monthly_installment, loan_ter
         return 0
 
 
-def calculate_loss_given_default(loan, client_securities):
+
+
+def calculate_loss_given_default(
+    loan: Union[Dict[str, Any], Any], 
+    client_securities: List[Union[Dict[str, Any], Any]]
+) -> float:
     """
     Calculate the Loss Given Default (LGD) for a loan based on client's securities.
-
-    LGD represents the percentage of exposure that would be lost in case of default
-    after all recovery efforts and liquidation of collateral.
-
+    Uses different calculations for cash and non-cash securities.
+    
+    For cash securities: LGD = ((Outstanding loan balance - collateral value) / Outstanding loan balance) × 100
+    For non-cash securities: LGD = ((Outstanding loan balance - forced sale value) / Outstanding loan balance) × 100
+    
     Args:
-        loan: The loan object
+        loan: The loan object or dictionary
         client_securities: List of security objects linked to the client
-
+        
     Returns:
         float: LGD value as a percentage (0-100)
     """
     # Default LGD if no securities or loan data is missing
     default_lgd = 65.0  # Industry average for unsecured loans
-
-    if (
-        not loan
-        or not hasattr(loan, "outstanding_loan_balance")
-        or not loan.outstanding_loan_balance
-    ):
-        return default_lgd
-
-    # Total outstanding loan amount
-    outstanding_amount = float(loan.outstanding_loan_balance)
-
+    
+    # Extract outstanding loan balance
+    if isinstance(loan, dict):
+        outstanding_amount = float(loan.get("outstanding_loan_balance", 0))
+    else:
+        if (not loan or not hasattr(loan, "outstanding_loan_balance") 
+            or not loan.outstanding_loan_balance):
+            return default_lgd
+        outstanding_amount = float(loan.outstanding_loan_balance)
+    
     if outstanding_amount <= 0:
         return 0.0  # No loss if no outstanding amount
-
-    # Calculate total recoverable value from securities
-    total_recoverable = 0.0
-
+        
+    # Total values for calculation
+    total_cash_collateral = 0.0
+    total_non_cash_forced_sale = 0.0
+    
     if client_securities:
         for security in client_securities:
-            # Use forced sale value if available, otherwise apply a haircut to collateral value
-            if security.forced_sale_value:
-                recoverable = float(security.forced_sale_value)
-            elif security.collateral_value:
-                # Apply a standard haircut of 30% to the collateral value
-                haircut = 0.7  # 30% reduction
-                recoverable = float(security.collateral_value) * haircut
+            # Extract security type and values
+            if isinstance(security, dict):
+                cash_or_non_cash = security.get("cash_or_non_cash", "non-cash")
+                collateral_value = security.get("collateral_value", 0)
+                forced_sale_value = security.get("forced_sale_value", 0)
             else:
-                recoverable = 0.0
-
-            # Add to total recoverable value
-            total_recoverable += recoverable
-
-    # Calculate LGD based on the outstanding amount and recoverable value
-    if total_recoverable >= outstanding_amount:
-        # Full recovery possible
+                cash_or_non_cash = getattr(security, "cash_or_non_cash", "non-cash")
+                collateral_value = getattr(security, "collateral_value", 0)
+                forced_sale_value = getattr(security, "forced_sale_value", 0)
+            
+            # Convert to float if not None, otherwise set to 0
+            collateral_value = float(collateral_value) if collateral_value else 0.0
+            forced_sale_value = float(forced_sale_value) if forced_sale_value else 0.0
+                
+            # Process differently based on cash or non-cash security
+            if cash_or_non_cash and cash_or_non_cash.lower() == "cash":
+                # For cash securities, use collateral value
+                total_cash_collateral += collateral_value
+            else:
+                # For non-cash securities, use forced sale value
+                total_non_cash_forced_sale += forced_sale_value
+    
+    # Calculate the remaining balance after applying cash securities
+    remaining_after_cash = outstanding_amount - total_cash_collateral
+    
+    # Calculate LGD based on the outstanding amount and recoverable values
+    if remaining_after_cash <= 0:
+        # Fully covered by cash securities
         lgd = 0.0
     else:
-        # Partial recovery
-        loss_amount = outstanding_amount - total_recoverable
-        lgd = (loss_amount / outstanding_amount) * 100.0
-
+        # Apply non-cash securities to remaining balance
+        final_remaining = remaining_after_cash - total_non_cash_forced_sale
+        
+        if final_remaining <= 0:
+            # Fully covered by combined securities
+            lgd = 0.0
+        else:
+            # Calculate LGD based on remaining balance
+            lgd = (final_remaining / outstanding_amount) * 100.0
+        
     # Apply floor and cap to LGD
     lgd = max(0.0, min(100.0, lgd))
-
+    
     return lgd
-
 
 def calculate_probability_of_default(loan, ndia):
     """
@@ -104,13 +126,55 @@ def calculate_probability_of_default(loan, ndia):
 def calculate_exposure_at_default_percentage(loan, reporting_date):
     """
     Calculate Exposure at Default as a percentage
-    EAD% = Outstanding Balance / Original Loan Amount
+    
+    Formula:
+    Bt = P * ((1+r)^n - (1+r)^t)/((1+r)^n - 1)
+    
+    Where:
+    Bt = Loan Balance at month t
+    P = Original loan amount (Principal)
+    r = Monthly interest rate (Annual rate/12)
+    n = Total number of months in the loan term
+    t = number of months from loan start to specified date
+    
+    EAD% = (Bt + Accumulated Arrears) / P * 100
     """
-    if not loan.loan_amount or loan.loan_amount == 0:
+    if not loan.loan_amount or loan.loan_amount <= 0:
         return 100  # If no original amount, assume 100% exposure
+    
+    original_amount = loan.loan_amount
+    
+    # Get effective interest rate (annual) and convert to monthly
+    annual_rate = calculate_effective_interest_rate(
+        loan_amount=loan.loan_amount,
+        monthly_installment=loan.monthly_installment,
+        loan_term=loan.loan_term
+    )
+    monthly_rate = annual_rate / 12
+    
+    # Get loan term in months
+    loan_term_months = loan.loan_term
+    
+    # Calculate months elapsed from loan issue date to reporting date
+    issue_date = loan.loan_issue_date
+    months_elapsed = (reporting_date.year - issue_date.year) * 12 + (reporting_date.month - issue_date.month)
 
-    return (loan.outstanding_loan_balance / loan.loan_amount) * 100
+    # Ensure months_elapsed is not negative or greater than loan term
+    months_elapsed = max(0, min(months_elapsed, loan_term_months))
+    
+    theoretical_balance = 0
+    if monthly_rate > 0:
+        numerator = (1 + monthly_rate) ** loan_term_months - (1 + monthly_rate) ** months_elapsed
+        denominator = (1 + monthly_rate) ** loan_term_months - 1
+        theoretical_balance = original_amount * (numerator / denominator)
 
+    if hasattr(loan, 'accumulated_arrears') and loan.accumulated_arrears:
+        theoretical_balance += loan.accumulated_arrears
+    
+    ead_percentage = (theoretical_balance / original_amount) * 100
+    
+    # Ensure EAD% is between 0 and 100
+    return max(0, min(100, ead_percentage))
 
 def calculate_marginal_ecl(loan, ead_percentage, pd, lgd):
     """
