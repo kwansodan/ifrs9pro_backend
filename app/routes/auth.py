@@ -323,6 +323,9 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
     decoded_token = decode_token(access_token)
     access_request = db.query(AccessRequest).filter(AccessRequest.email == user.email).first()
     
+    access_request_status = None
+    if access_request is not None:
+        access_request_status = access_request.status
 
     return {
         "access_token": access_token,
@@ -336,6 +339,7 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
             "recovery_email": user.recovery_email,
             "role": user.role,
             "is_active": user.is_active,
-            "access_request_status": access_request.status,
-        },
+            "access_request_status": access_request_status,
+        }
+        
     }
