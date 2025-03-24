@@ -47,8 +47,8 @@ async def request_access(
     # Check if user already exists
     existing_user = db.query(User).filter(User.email == request_data.email).first()
     if existing_user:
-        raise HTTPException(status_code=400, detail="Email already registered")
-
+        raise HTTPException(status_code=409, detail="Email already registered")
+    
     # Check for existing pending request
     existing_request = (
         db.query(AccessRequest)
@@ -58,18 +58,30 @@ async def request_access(
         )
         .first()
     )
-
+    
     if existing_request:
+        # Check if the existing request has a verified email
         if existing_request.is_email_verified:
             raise HTTPException(
-                status_code=400, detail="Access request already submitted"
+                status_code=409, detail="Access request already submitted"
             )
         else:
+            # Check if token is expired
+            is_expired = existing_request.token_expiry < datetime.utcnow()
+            
+            # Generate a new token if expired
+            if is_expired:
+                token = create_email_verification_token(request_data.email)
+                existing_request.token = token
+                existing_request.token_expiry = datetime.utcnow() + timedelta(hours=24)
+                db.commit()
+            else:
+                token = existing_request.token
+                
             # Resend verification email
-            token = create_email_verification_token(request_data.email)
             await send_verification_email(request_data.email, token)
             return {"message": "Verification email sent"}
-
+    
     # Create new access request
     token = create_email_verification_token(request_data.email)
     new_request = AccessRequest(
@@ -77,15 +89,12 @@ async def request_access(
         token=token,
         token_expiry=datetime.utcnow() + timedelta(hours=24),
     )
-
     db.add(new_request)
     db.commit()
-
+    
     # Send verification email
     await send_verification_email(request_data.email, token)
-
     return {"message": "Verification email sent"}
-
 
 @router.get("/verify-email/{token}")
 async def verify_email(token: str, db: Session = Depends(get_db)):
