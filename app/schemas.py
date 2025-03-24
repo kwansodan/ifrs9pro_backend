@@ -298,25 +298,6 @@ class ECLCategoryData(BaseModel):
     provision_amount: float
 
 
-class ECLSummaryMetrics(BaseModel):
-    """Summary metrics for the ECL calculation"""
-
-    pd: float
-    lgd: float
-    ead: float
-    total_provision: float
-    provision_percentage: float
-
-
-class ECLSummary(BaseModel):
-    """Response schema for the ECL calculation endpoint"""
-
-    portfolio_id: int
-    calculation_date: str
-    stage_1: ECLCategoryData
-    stage_2: ECLCategoryData
-    stage_3: ECLCategoryData
-    summary_metrics: ECLSummaryMetrics
 
 
 # Impairment schemas
@@ -493,3 +474,153 @@ class ECLConfig(BaseModel):
     stage_1: DaysRangeConfig
     stage_2: DaysRangeConfig
     stage_3: DaysRangeConfig
+
+class DaysRangeConfig(BaseModel):
+    days_range: str = Field(..., example="0-30")
+    provision_rate: Optional[float] = Field(None, example=0.01)
+
+class ECLStagingConfig(BaseModel):
+    stage_1: DaysRangeConfig
+    stage_2: DaysRangeConfig
+    stage_3: DaysRangeConfig
+
+class LocalImpairmentConfig(BaseModel):
+    current: DaysRangeConfig
+    olem: DaysRangeConfig
+    substandard: DaysRangeConfig
+    doubtful: DaysRangeConfig
+    loss: DaysRangeConfig
+
+class LGDInput(BaseModel):
+    loan_amount: float
+    outstanding_balance: float
+    securities: List[dict] = []
+
+class EADInput(BaseModel):
+    loan_amount: float
+    outstanding_balance: float
+    disbursement_date: date
+    maturity_date: date
+    reporting_date: date
+
+class PDInput(BaseModel):
+    ndia: int
+    loan_type: Optional[str] = None
+
+class EIRInput(BaseModel):
+    loan_amount: float
+    monthly_installment: float
+    loan_term: int 
+
+
+class LoanStageInfo(BaseModel):
+    loan_id: int
+    employee_id: str
+    stage: str
+    ndia: int
+
+class StagingResponse(BaseModel):
+    loans: List[LoanStageInfo]
+
+class CategoryData(BaseModel):
+    num_loans: int
+    total_loan_value: float
+    provision_amount: float
+
+class ECLSummaryMetrics(BaseModel):
+    pd: float
+    lgd: float
+    ead: float
+    total_provision: float
+    provision_percentage: float
+
+class ECLSummary(BaseModel):
+    portfolio_id: int
+    calculation_date: str
+    stage_1: CategoryData
+    stage_2: CategoryData
+    stage_3: CategoryData
+    summary_metrics: ECLSummaryMetrics
+
+class LocalImpairmentCategoryData(BaseModel):
+    num_loans: int
+    total_loan_value: float
+    provision_amount: float
+    provision_rate: float
+
+class LocalImpairmentSummary(BaseModel):
+    portfolio_id: int
+    calculation_date: str
+    current: LocalImpairmentCategoryData
+    olem: LocalImpairmentCategoryData
+    substandard: LocalImpairmentCategoryData
+    doubtful: LocalImpairmentCategoryData
+    loss: LocalImpairmentCategoryData
+    total_provision: float
+    provision_percentage: float
+
+class CalculatorResponse(BaseModel):
+    result: float
+    input_data: dict
+
+class LoanWithStage(BaseModel):
+    loan_id: int
+    employee_id: str
+    stage: str
+    outstanding_balance: float
+    ndia: int
+
+class StagedLoans(BaseModel):
+    portfolio_id: int
+    loans: List[LoanWithStage]
+
+
+class ProvisionRateConfig(BaseModel):
+    current: float = Field(..., example=0.01)
+    olem: float = Field(..., example=0.03)
+    substandard: float = Field(..., example=0.2)
+    doubtful: float = Field(..., example=0.5)
+    loss: float = Field(..., example=1.0)
+
+class ECLComponentConfig(BaseModel):
+    pd_factors: Dict[str, float] = Field(
+        default_factory=lambda: {"stage_1": 0.01, "stage_2": 0.1, "stage_3": 0.5}
+    )
+    lgd_factors: Dict[str, float] = Field(
+        default_factory=lambda: {"stage_1": 0.1, "stage_2": 0.3, "stage_3": 0.6}
+    )
+    ead_factors: Dict[str, float] = Field(
+        default_factory=lambda: {"stage_1": 0.9, "stage_2": 0.95, "stage_3": 1.0}
+    )
+
+class CategoryData(BaseModel):
+    num_loans: int
+    total_loan_value: float
+    provision_amount: float
+    provision_rate: float
+
+class LocalImpairmentSummary(BaseModel):
+    portfolio_id: int
+    calculation_date: str
+    current: CategoryData
+    olem: CategoryData
+    substandard: CategoryData
+    doubtful: CategoryData
+    loss: CategoryData
+    total_provision: float
+    provision_percentage: float
+
+class ECLSummaryMetrics(BaseModel):
+    avg_pd: float
+    avg_lgd: float
+    avg_ead: float
+    total_provision: float
+    provision_percentage: float
+
+class ECLSummary(BaseModel):
+    portfolio_id: int
+    calculation_date: str
+    stage_1: CategoryData
+    stage_2: CategoryData
+    stage_3: CategoryData
+    summary_metrics: ECLSummaryMetrics
