@@ -149,23 +149,21 @@ async def submit_admin_request(
     )
     if not access_request:
         raise HTTPException(status_code=404, detail="Verified email request not found")
-
+    
     # Update the admin email if provided
     if request_data.admin_email:
         access_request.admin_email = request_data.admin_email
-
         # Check if admin email belongs to a valid admin user
         admin_user = (
             db.query(User)
-            .filter(User.email == request_data.admin_email, User.is_admin == True)
+            .filter(User.email == request_data.admin_email, User.role == UserRole.ADMIN)
             .first()
         )
-
         # If admin user is valid, notify them
         if admin_user:
             db.commit()
             await send_admin_notification(request_data.admin_email, request_data.email)
-
+    
     db.commit()
     return AccessRequestResponse(
         id=access_request.id,
@@ -175,6 +173,7 @@ async def submit_admin_request(
         created_at=access_request.created_at,
         is_email_verified=access_request.is_email_verified,
     )
+
 
 
 @router.get("/admin/requests", response_model=List[AccessRequestResponse])
