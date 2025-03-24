@@ -820,15 +820,27 @@ def stage_loans_local_impairment(
             stage = "Doubtful"
         elif is_in_range(ndia, loss_range):
             stage = "Loss"
-        else:
-            stage = "Unclassified"
             
+        outstanding_loan_balance = loan.outstanding_loan_balance
+        ndia = int(loan.ndia)
+        loan_issue_date = loan.loan_issue_date
+        accumulated_arrears = loan.accumulated_arrears
+        loan_amount = loan.loan_amount
+        monthly_installment = loan.monthly_installment
+        loan_term = loan.loan_term
+        
         staged_loans.append(
             LoanStageInfo(
                 loan_id=loan.id,
                 employee_id=loan.employee_id,
                 stage=stage,
-                ndia=ndia
+                outstanding_loan_balance=outstanding_loan_balance,
+                ndia=ndia,
+                loan_issue_date=loan_issue_date,
+                loan_amount=loan_amount,
+                monthly_installment=monthly_installment,
+                loan_term=loan_term,
+                accumulated_arrears=accumulated_arrears,
             )
         )
         
