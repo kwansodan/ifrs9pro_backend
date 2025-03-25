@@ -215,7 +215,7 @@ class PortfolioCreate(BaseModel):
     funding_source: FundingSource
     data_source: DataSource
     repayment_source: bool = False
-    credit_source: Optional[str] = None
+    credit_risk_reserve: Optional[str] = None
     loan_assets: Optional[str] = None
     ecl_impairment_account: Optional[str] = None
 
