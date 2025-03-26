@@ -49,10 +49,10 @@ async def root():
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
+
 @app.post("/token")
 async def get_token(
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: Session = Depends(get_db)
+    form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)
 ):
     # Reuse same logic as your login endpoint
     user = db.query(User).filter(User.email == form_data.username).first()
@@ -62,11 +62,11 @@ async def get_token(
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     # Update last login
     user.last_login = datetime.utcnow()
     db.commit()
-    
+
     # Create token
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     token_data = {
@@ -75,13 +75,13 @@ async def get_token(
         "role": user.role,
         "is_active": user.is_active,
     }
-    access_token = create_access_token(data=token_data, expires_delta=access_token_expires)
-    
+    access_token = create_access_token(
+        data=token_data, expires_delta=access_token_expires
+    )
+
     # Return in format expected by OAuth2
-    return {
-        "access_token": access_token,
-        "token_type": "bearer"
-    }
+    return {"access_token": access_token, "token_type": "bearer"}
+
 
 # Create admin user function
 def create_admin_user():
@@ -115,10 +115,7 @@ async def startup_event():
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(
-        app, 
-        host="0.0.0.0", 
-        port=8000,
-        forwarded_allow_ips="*",      
-        proxy_headers=True            
+        app, host="0.0.0.0", port=8000, forwarded_allow_ips="*", proxy_headers=True
     )

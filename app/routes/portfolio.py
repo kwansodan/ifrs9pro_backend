@@ -45,6 +45,7 @@ from app.models import (
     Loan,
     Security,
     Client,
+    QualityIssue,
 )
 from app.schemas import (
     PortfolioCreate,
@@ -57,7 +58,7 @@ from app.schemas import (
     ECLSummaryMetrics,
     LocalImpairmentSummary,
     ImpairmentConfig,
-    QualityIssue,
+    QualityIssueResponse,
     QualityIssueCreate,
     QualityIssueUpdate,
     QualityIssueComment,
@@ -75,10 +76,15 @@ from app.schemas import (
     ProvisionRateConfig,
     ECLComponentConfig,
     LoanStageInfo,
-    CategoryData
+    CategoryData,
 )
 from app.auth.utils import get_current_active_user
 from app.utils.quality_checks import create_quality_issues_if_needed
+from app.utils.processors import (
+    process_loan_details,
+    process_loan_collateral,
+    process_loan_guarantees,
+)
 
 router = APIRouter(prefix="/portfolios", tags=["portfolios"])
 
@@ -144,6 +150,7 @@ def get_portfolios(
 
 # Update the get_portfolio endpoint in your portfolios.py file
 
+
 @router.get("/{portfolio_id}", response_model=PortfolioWithSummaryResponse)
 def get_portfolio(
     portfolio_id: int,
@@ -202,16 +209,16 @@ def get_portfolio(
 
     # Run quality checks and create issues if necessary
     quality_counts = create_quality_issues_if_needed(db, portfolio_id)
-    
+
     quality_check_summary = QualityCheckSummary(
         duplicate_names=quality_counts["duplicate_names"],
         duplicate_addresses=quality_counts["duplicate_addresses"],
         missing_repayment_data=quality_counts["missing_repayment_data"],
         total_issues=quality_counts["total_issues"],
         high_severity_issues=quality_counts["high_severity_issues"],
-        open_issues=quality_counts["open_issues"]
+        open_issues=quality_counts["open_issues"],
     )
-    
+
     # Get quality issues if requested
     quality_issues = []
     if include_quality_issues:
@@ -221,7 +228,7 @@ def get_portfolio(
             .order_by(QualityIssue.severity.desc(), QualityIssue.created_at.desc())
             .all()
         )
-    
+
     # Get report history if requested
     report_history = []
     if include_report_history:
@@ -244,7 +251,7 @@ def get_portfolio(
         "updated_at": portfolio.updated_at,
         "overview": {
             "total_loans": total_loans,
-            "total_loan_value": round(total_loan_value,2),
+            "total_loan_value": round(total_loan_value, 2),
             "average_loan_amount": round(average_loan_amount, 2),
             "total_customers": total_customers,
         },
@@ -256,10 +263,11 @@ def get_portfolio(
         },
         "quality_check": quality_check_summary,
         "quality_issues": quality_issues if include_quality_issues else None,
-        "report_history": report_history if include_report_history else None
+        "report_history": report_history if include_report_history else None,
     }
 
     return response
+
 
 @router.put("/{portfolio_id}", response_model=PortfolioResponse)
 def update_portfolio(
@@ -328,6 +336,7 @@ def delete_portfolio(
 
     return None
 
+
 @router.post("/{portfolio_id}/ingest", status_code=status.HTTP_200_OK)
 async def ingest_portfolio_data(
     portfolio_id: int,
@@ -340,19 +349,13 @@ async def ingest_portfolio_data(
     """
     Ingest Excel files containing portfolio data.
 
-    Accepts up to four Excel files:
+    Accepts up to three Excel files:
     - loan_details: Primary loan information
     - loan_guarantee_data: Information about loan guarantees
     - loan_collateral_data: Information about loan collateral
     """
     # Check if at least one file is provided
-    if not any(
-        [
-            loan_details,
-            loan_guarantee_data,
-            loan_collateral_data,
-        ]
-    ):
+    if not any([loan_details, loan_guarantee_data, loan_collateral_data]):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="At least one file must be provided",
@@ -372,318 +375,40 @@ async def ingest_portfolio_data(
 
     results = {}
 
-    # Process loan details file
-    if loan_details:
-        try:
-            content = await loan_details.read()
-            df = pd.read_excel(io.BytesIO(content))
+    # Start a transaction
+    try:
+        # Process loan details file
+        if loan_details:
+            results["loan_details"] = await process_loan_details(
+                loan_details, portfolio_id, db
+            )
 
-            # Data cleanup and transformation
-            # Convert column names to match model field names
-            column_mapping = {
-                "Loan No.": "loan_no",
-                "Employee Id": "employee_id",
-                "Employee Name": "employee_name",
-                "Employer": "employer",
-                "Loan Issue Date": "loan_issue_date",
-                "Deduction Start Period": "deduction_start_period",
-                "Submission Period": "submission_period",
-                "Maturity Period": "maturity_period",
-                "Location Code": "location_code",
-                "Dalex Paddy": "dalex_paddy",
-                "Team Leader": "team_leader",
-                "Loan Type": "loan_type",
-                "Loan Amount": "loan_amount",
-                "Loan Term": "loan_term",
-                "Administrative Fees": "administrative_fees",
-                "Total Interest": "total_interest",
-                "Total Collectible": "total_collectible",
-                "Net Loan Amount": "net_loan_amount",
-                "Monthly Installment": "monthly_installment",
-                "Principal Due": "principal_due",
-                "Interest Due": "interest_due",
-                "Total Due": "total_due",
-                "Principal Paid": "principal_paid",
-                "Interest Paid": "interest_paid",
-                "Total Paid": "total_paid",
-                "Principal Paid2": "principal_paid2",
-                "Interest Paid2": "interest_paid2",
-                "Total Paid2": "total_paid2",
-                "Paid": "paid",
-                "Cancelled": "cancelled",
-                "Outstanding Loan Balance": "outstanding_loan_balance",
-                "Accumulated Arrears": "accumulated_arrears",
-                "NDIA": "ndia",
-                "Prevailing Posted Repayment": "prevailing_posted_repayment",
-                "Prevailing Due Payment": "prevailing_due_payment",
-                "Current Missed Deduction": "current_missed_deduction",
-                "Admin Charge": "admin_charge",
-                "Recovery Rate": "recovery_rate",
-                "Deduction Status": "deduction_status",
-            }
+        # Process loan guarantee data file
+        if loan_guarantee_data:
+            results["loan_guarantee_data"] = await process_loan_guarantees(
+                loan_guarantee_data, portfolio_id, db
+            )
 
-            # Rename columns based on mapping
-            df = df.rename(columns=column_mapping)
+        # Process loan collateral data file
+        if loan_collateral_data:
+            results["loan_collateral_data"] = await process_loan_collateral(
+                loan_collateral_data, portfolio_id, db
+            )
 
-            # Convert date columns to appropriate format
-            date_columns = ["loan_issue_date"]
-            for col in date_columns:
-                if col in df.columns:
-                    df[col] = pd.to_datetime(df[col], errors="coerce")
+        # Commit all changes at once
+        db.commit()
 
-            # Special handling for period columns (they appear to be in Month-YY format)
-            # Use last day of the month for period columns like "Nov-21", "Mar-22", etc.
-            # For period columns like "deduction_start_period", "submission_period", "maturity_period"
-            period_columns = ["deduction_start_period", "submission_period", "maturity_period"]
-            for col in period_columns:
-                if col in df.columns:
-                    # Step 1: Parse the period strings (e.g., "Nov-21") to datetime
-                    df[col] = pd.to_datetime(df[col], format="%b-%y", errors="coerce")
-        
-                    # Step 2: Calculate the last day of each month
-                    df[col] = df[col].apply(
-                        lambda x: pd.NaT if pd.isna(x) else (
-                            # Get the first day of next month and subtract one day
-                            (pd.Timestamp(year=x.year, month=x.month, day=1) + 
-                             pd.offsets.MonthEnd(1))
-                        )
-                    )
-
-            # Convert boolean columns
-            boolean_columns = ["paid", "cancelled"]
-            for col in boolean_columns:
-                if col in df.columns:
-                    df[col] = df[col].map({"Yes": True, "No": False})
-
-            # Process and insert each row
-            rows_processed = 0
-            rows_skipped = 0
-            for index, row in df.iterrows():
-                try:
-                    # Check if loan already exists
-                    existing_loan = (
-                        db.query(Loan)
-                        .filter(Loan.loan_no == row.get("loan_no"))
-                        .first()
-                    )
-
-                    if existing_loan:
-                        # Update existing loan
-                        for field in column_mapping.values():
-                            if field in row and pd.notna(row[field]):
-                                setattr(existing_loan, field, row[field])
-                        rows_processed += 1
-                    else:
-                        # Filter to keep only columns that exist in the model
-                        loan_data = {
-                            field: row[field]
-                            for field in column_mapping.values()
-                            if field in row and pd.notna(row[field])
-                        }
-
-                        # Create new loan record
-                        new_loan = Loan(**loan_data)
-                        # Associate loan with the portfolio
-                        new_loan.portfolio_id = portfolio_id
-                        db.add(new_loan)
-                        rows_processed += 1
-
-                except Exception as e:
-                    rows_skipped += 1
-                    print(f"Error processing row {index}: {str(e)}")
-                    continue
-
-            # Commit changes to DB
-            db.commit()
-
-            results["loan_details"] = {
-                "status": "success",
-                "rows_processed": rows_processed,
-                "rows_skipped": rows_skipped,
-                "filename": loan_details.filename,
-            }
-        except Exception as e:
-            results["loan_details"] = {
-                "status": "error",
-                "message": str(e),
-                "filename": loan_details.filename,
-            }
-
-    # Process loan guarantee data file
-    if loan_guarantee_data:
-        try:
-            content = await loan_guarantee_data.read()
-            df = pd.read_excel(io.BytesIO(content))
-
-            # Data cleanup and transformation
-            # Convert column names to match model field names
-            column_mapping = {
-                "Guarantor Name": "guarantor",
-                "Pledged Amount": "pledged_amount",
-            }
-
-            # Rename columns based on mapping
-            df = df.rename(columns=column_mapping)
-
-            # Process and insert each row
-            rows_processed = 0
-            rows_skipped = 0
-            for index, row in df.iterrows():
-                try:
-                    # Check if guarantee already exists by guarantor name in this portfolio
-                    existing_guarantee = (
-                        db.query(Guarantee)
-                        .filter(
-                            Guarantee.guarantor == row.get("guarantor"),
-                            Guarantee.portfolio_id == portfolio_id,
-                        )
-                        .first()
-                    )
-
-                    if existing_guarantee:
-                        # Update existing guarantee
-                        for field in column_mapping.values():
-                            if field in row and pd.notna(row[field]):
-                                setattr(existing_guarantee, field, row[field])
-                        rows_processed += 1
-                    else:
-                        # Filter to keep only columns that exist in the model
-                        guarantee_data = {
-                            field: row[field]
-                            for field in column_mapping.values()
-                            if field in row and pd.notna(row[field])
-                        }
-
-                        # Create new guarantee record
-                        new_guarantee = Guarantee(**guarantee_data)
-                        # Associate guarantee with the portfolio
-                        new_guarantee.portfolio_id = portfolio_id
-                        db.add(new_guarantee)
-                        rows_processed += 1
-
-                except Exception as e:
-                    rows_skipped += 1
-                    print(f"Error processing row {index}: {str(e)}")
-                    continue
-
-            # Commit changes to DB
-            db.commit()
-
-            results["loan_guarantee_data"] = {
-                "status": "success",
-                "rows_processed": rows_processed,
-                "rows_skipped": rows_skipped,
-                "filename": loan_guarantee_data.filename,
-            }
-        except Exception as e:
-            results["loan_guarantee_data"] = {
-                "status": "error",
-                "message": str(e),
-                "filename": loan_guarantee_data.filename,
-            }
-
-    # Process loan collateral data file (which contains client information)
-    if loan_collateral_data:
-        try:
-            content = await loan_collateral_data.read()
-            df = pd.read_excel(io.BytesIO(content))
-
-            # Data cleanup and transformation
-            # Convert column names to match model field names
-            column_mapping = {
-                "Employee Id": "employee_id",
-                "Lastname": "last_name",
-                "Othernames": "other_names",
-                "Residential Address": "residential_address",
-                "Postal Address": "postal_address",
-                "Phone Number": "phone_number",
-                "Title": "title",
-                "Marital Status": "marital_status",
-                "Gender": "gender",
-                "Date of Birth": "date_of_birth",
-                "Employer": "employer",
-                "Previous Employee No": "previous_employee_no",
-                "Social Security No": "social_security_no",
-                "Voters ID No": "voters_id_no",
-                "Employment Date": "employment_date",
-                "Next of Kin": "next_of_kin",
-                "Next of Kin Contact": "next_of_kin_contact",
-                "Next of Kin Address": "next_of_kin_address",
-                "Search Name": "search_name",
-                "Client Type": "client_type",
-            }
-
-            # Rename columns based on mapping
-            df = df.rename(columns=column_mapping)
-
-            # Convert date columns to appropriate format
-            date_columns = ["date_of_birth", "employment_date"]
-            for col in date_columns:
-                if col in df.columns:
-                    df[col] = pd.to_datetime(df[col], errors="coerce")
-
-                # Process and insert each row
-            rows_processed = 0
-            rows_skipped = 0
-            for index, row in df.iterrows():
-                try:
-                    # Convert employee_id to string explicitly
-                    if "employee_id" in row and pd.notna(row["employee_id"]):
-                        row["employee_id"] = str(row["employee_id"])
-                    # Check if client already exists by employee_id
-                    existing_client = (
-                        db.query(Client)
-                        .filter(Client.employee_id == row.get("employee_id"))
-                        .first()
-                    )
-
-                    if existing_client:
-                        # Update existing client
-                        for field in column_mapping.values():
-                            if field in row and pd.notna(row[field]):
-                                setattr(existing_client, field, row[field])
-                        rows_processed += 1
-                    else:
-                        # Filter to keep only columns that exist in the model
-                        client_data = {
-                            field: row[field]
-                            for field in column_mapping.values()
-                            if field in row and pd.notna(row[field])
-                        }
-
-                        # Set client_type to default if it doesn't exist in the data
-                        if "client_type" not in client_data:
-                            client_data["client_type"] = "consumer"
-
-                        # Create new client record
-                        new_client = Client(**client_data)
-                        # Associate client with the portfolio
-                        new_client.portfolio_id = portfolio_id
-                        db.add(new_client)
-                        rows_processed += 1
-
-                except Exception as e:
-                    rows_skipped += 1
-                    print(f"Error processing row {index}: {str(e)}")
-                    continue
-
-            # Commit changes to DB
-            db.commit()
-
-            results["loan_collateral_data"] = {
-                "status": "success",
-                "rows_processed": rows_processed,
-                "rows_skipped": rows_skipped,
-                "filename": loan_collateral_data.filename,
-            }
-        except Exception as e:
-            results["loan_collateral_data"] = {
-                "status": "error",
-                "message": str(e),
-                "filename": loan_collateral_data.filename,
-            }
+    except Exception as e:
+        # Rollback in case of error
+        db.rollback()
+        return {
+            "portfolio_id": portfolio_id,
+            "results": {"error": str(e)},
+            "status": "error",
+        }
 
     return {"portfolio_id": portfolio_id, "results": results}
+
 
 @router.post("/{portfolio_id}/stage-loans-ecl", response_model=StagingResponse)
 def stage_loans_ecl(
@@ -711,15 +436,15 @@ def stage_loans_ecl(
         stage_3_range = parse_days_range(config.stage_3.days_range)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    
+
     # Get all loans in the portfolio
     loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
-    
+
     # Stage the loans
     staged_loans = []
-    
+
     for loan in loans:
-            
+
         # Determine the stage
         if is_in_range(loan.ndia, stage_1_range):
             stage = "Stage 1"
@@ -730,8 +455,7 @@ def stage_loans_ecl(
         else:
             # Default to Stage 3 if no stage matches
             stage = "Stage 3"
-            
-        
+
         outstanding_loan_balance = loan.outstanding_loan_balance
         ndia = int(loan.ndia)
         loan_issue_date = loan.loan_issue_date
@@ -739,7 +463,7 @@ def stage_loans_ecl(
         loan_amount = loan.loan_amount
         monthly_installment = loan.monthly_installment
         loan_term = loan.loan_term
-        
+
         staged_loans.append(
             LoanStageInfo(
                 loan_id=loan.id,
@@ -754,8 +478,9 @@ def stage_loans_ecl(
                 accumulated_arrears=accumulated_arrears,
             )
         )
-        
+
     return StagingResponse(loans=staged_loans)
+
 
 @router.post("/{portfolio_id}/stage-loans-local", response_model=StagingResponse)
 def stage_loans_local_impairment(
@@ -792,10 +517,10 @@ def stage_loans_local_impairment(
 
     # Get all loans in the portfolio
     loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
-    
+
     # Stage the loans
     staged_loans = []
-    
+
     for loan in loans:
         # Calculate NDIA if not available
         if loan.ndia is None:
@@ -811,7 +536,7 @@ def stage_loans_local_impairment(
                 ndia = 0
         else:
             ndia = loan.ndia
-            
+
         # Determine the category
         if is_in_range(ndia, current_range):
             stage = "Current"
@@ -823,7 +548,7 @@ def stage_loans_local_impairment(
             stage = "Doubtful"
         elif is_in_range(ndia, loss_range):
             stage = "Loss"
-            
+
         outstanding_loan_balance = loan.outstanding_loan_balance
         ndia = int(loan.ndia)
         loan_issue_date = loan.loan_issue_date
@@ -831,7 +556,7 @@ def stage_loans_local_impairment(
         loan_amount = loan.loan_amount
         monthly_installment = loan.monthly_installment
         loan_term = loan.loan_term
-        
+
         staged_loans.append(
             LoanStageInfo(
                 loan_id=loan.id,
@@ -846,16 +571,17 @@ def stage_loans_local_impairment(
                 accumulated_arrears=accumulated_arrears,
             )
         )
-        
+
     return StagingResponse(loans=staged_loans)
 
 
 # Quality issue routes
 
-@router.get("/{portfolio_id}/quality-issues", response_model=List[QualityIssue])
+
+@router.get("/{portfolio_id}/quality-issues", response_model=List[QualityIssueResponse])
 def get_quality_issues(
     portfolio_id: int,
-    status: Optional[str] = None,
+    status_type: Optional[str] = None,
     issue_type: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -880,20 +606,25 @@ def get_quality_issues(
     query = db.query(QualityIssue).filter(QualityIssue.portfolio_id == portfolio_id)
     
     # Apply filters if provided
-    if status:
-        query = query.filter(QualityIssue.status == status)
+    if status_type:
+        query = query.filter(QualityIssue.status == status_type)
     if issue_type:
         query = query.filter(QualityIssue.issue_type == issue_type)
-    
+
     # Order by severity (most severe first) and then by created date (newest first)
     quality_issues = query.order_by(
         QualityIssue.severity.desc(), QualityIssue.created_at.desc()
     ).all()
-    
+
+    if not quality_issues:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="No quality issues found"
+        )
+
     return quality_issues
 
 
-@router.get("/{portfolio_id}/quality-issues/{issue_id}", response_model=QualityIssue)
+@router.get("/{portfolio_id}/quality-issues/{issue_id}", response_model=QualityIssueResponse)
 def get_quality_issue(
     portfolio_id: int,
     issue_id: int,
@@ -914,23 +645,23 @@ def get_quality_issue(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
-    
+
     # Get the quality issue
     issue = (
         db.query(QualityIssue)
         .filter(QualityIssue.id == issue_id, QualityIssue.portfolio_id == portfolio_id)
         .first()
     )
-    
+
     if not issue:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Quality issue not found"
         )
-    
+
     return issue
 
 
-@router.put("/{portfolio_id}/quality-issues/{issue_id}", response_model=QualityIssue)
+@router.put("/{portfolio_id}/quality-issues/{issue_id}", response_model=QualityIssueResponse)
 def update_quality_issue(
     portfolio_id: int,
     issue_id: int,
@@ -952,31 +683,34 @@ def update_quality_issue(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
-    
+
     # Get the quality issue
     issue = (
         db.query(QualityIssue)
         .filter(QualityIssue.id == issue_id, QualityIssue.portfolio_id == portfolio_id)
         .first()
     )
-    
+
     if not issue:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Quality issue not found"
         )
-    
+
     # Update fields if provided
     update_data = issue_update.dict(exclude_unset=True)
     for key, value in update_data.items():
         setattr(issue, key, value)
-    
+
     db.commit()
     db.refresh(issue)
-    
+
     return issue
 
 
-@router.post("/{portfolio_id}/quality-issues/{issue_id}/comments", response_model=QualityIssueComment)
+@router.post(
+    "/{portfolio_id}/quality-issues/{issue_id}/comments",
+    response_model=QualityIssueComment,
+)
 def add_comment_to_quality_issue(
     portfolio_id: int,
     issue_id: int,
@@ -998,34 +732,35 @@ def add_comment_to_quality_issue(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
-    
+
     # Get the quality issue
     issue = (
         db.query(QualityIssue)
         .filter(QualityIssue.id == issue_id, QualityIssue.portfolio_id == portfolio_id)
         .first()
     )
-    
+
     if not issue:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Quality issue not found"
         )
-    
+
     # Create new comment
     new_comment = QualityIssueComment(
-        quality_issue_id=issue_id,
-        user_id=current_user.id,
-        comment=comment_data.comment
+        quality_issue_id=issue_id, user_id=current_user.id, comment=comment_data.comment
     )
-    
+
     db.add(new_comment)
     db.commit()
     db.refresh(new_comment)
-    
+
     return new_comment
 
 
-@router.get("/{portfolio_id}/quality-issues/{issue_id}/comments", response_model=List[QualityIssueComment])
+@router.get(
+    "/{portfolio_id}/quality-issues/{issue_id}/comments",
+    response_model=List[QualityIssueComment],
+)
 def get_quality_issue_comments(
     portfolio_id: int,
     issue_id: int,
@@ -1046,19 +781,19 @@ def get_quality_issue_comments(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
-    
+
     # Get the quality issue
     issue = (
         db.query(QualityIssue)
         .filter(QualityIssue.id == issue_id, QualityIssue.portfolio_id == portfolio_id)
         .first()
     )
-    
+
     if not issue:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Quality issue not found"
         )
-    
+
     # Get all comments for this issue, ordered by creation date
     comments = (
         db.query(QualityIssueComment)
@@ -1066,11 +801,13 @@ def get_quality_issue_comments(
         .order_by(QualityIssueComment.created_at)
         .all()
     )
-    
+
     return comments
 
 
-@router.post("/{portfolio_id}/quality-issues/{issue_id}/approve", response_model=QualityIssue)
+@router.post(
+    "/{portfolio_id}/quality-issues/{issue_id}/approve", response_model=QualityIssueResponse
+)
 def approve_quality_issue(
     portfolio_id: int,
     issue_id: int,
@@ -1093,34 +830,34 @@ def approve_quality_issue(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
-    
+
     # Get the quality issue
     issue = (
         db.query(QualityIssue)
         .filter(QualityIssue.id == issue_id, QualityIssue.portfolio_id == portfolio_id)
         .first()
     )
-    
+
     if not issue:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Quality issue not found"
         )
-    
+
     # Update status to approved
     issue.status = "approved"
-    
+
     # Add comment if provided
     if comment:
         new_comment = QualityIssueComment(
             quality_issue_id=issue_id,
             user_id=current_user.id,
-            comment=f"Issue approved: {comment}"
+            comment=f"Issue approved: {comment}",
         )
         db.add(new_comment)
-    
+
     db.commit()
     db.refresh(issue)
-    
+
     return issue
 
 
@@ -1146,32 +883,34 @@ def approve_all_quality_issues(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
-    
+
     # Get all open quality issues
     open_issues = (
         db.query(QualityIssue)
-        .filter(QualityIssue.portfolio_id == portfolio_id, QualityIssue.status == "open")
+        .filter(
+            QualityIssue.portfolio_id == portfolio_id, QualityIssue.status == "open"
+        )
         .all()
     )
-    
+
     if not open_issues:
         return {"message": "No open quality issues to approve", "count": 0}
-    
+
     # Update all issues to approved
     for issue in open_issues:
         issue.status = "approved"
-        
+
         # Add comment if provided
         if comment:
             new_comment = QualityIssueComment(
                 quality_issue_id=issue.id,
                 user_id=current_user.id,
-                comment=f"Batch approval: {comment}"
+                comment=f"Batch approval: {comment}",
             )
             db.add(new_comment)
-    
+
     db.commit()
-    
+
     return {"message": "All quality issues approved", "count": len(open_issues)}
 
 
@@ -1196,17 +935,17 @@ def recheck_quality_issues(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
-    
+
     # Run quality checks and create issues if necessary
     quality_counts = create_quality_issues_if_needed(db, portfolio_id)
-    
+
     return QualityCheckSummary(
         duplicate_names=quality_counts["duplicate_names"],
         duplicate_addresses=quality_counts["duplicate_addresses"],
         missing_repayment_data=quality_counts["missing_repayment_data"],
         total_issues=quality_counts["total_issues"],
         high_severity_issues=quality_counts["high_severity_issues"],
-        open_issues=quality_counts["open_issues"]
+        open_issues=quality_counts["open_issues"],
     )
 
 
@@ -1220,53 +959,56 @@ def calculate_local_provision(
 ):
     """
     Calculate local impairment provisions based on pre-staged loans and provision rates.
-    
+
     This route takes already-staged loans and applies the provision rates
     to calculate the required provision amounts.
     """
     # Use provided reporting date or default to current date
     if not reporting_date:
         reporting_date = datetime.now().date()
-    
+
     # Verify portfolio belongs to current user
     portfolio = (
         db.query(Portfolio)
-        .filter(Portfolio.id == staged_loans.portfolio_id, Portfolio.user_id == current_user.id)
+        .filter(
+            Portfolio.id == staged_loans.portfolio_id,
+            Portfolio.user_id == current_user.id,
+        )
         .first()
     )
     if not portfolio:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, 
-            detail="Portfolio not found or not authorized"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Portfolio not found or not authorized",
         )
-    
+
     # Initialize category tracking
     current_loans = []
     olem_loans = []
     substandard_loans = []
     doubtful_loans = []
     loss_loans = []
-    
+
     # Calculate totals for each category
     current_total = 0
     olem_total = 0
     substandard_total = 0
     doubtful_total = 0
     loss_total = 0
-    
+
     # Process the pre-staged loans
     for loan_with_stage in staged_loans.loans:
         # Get the actual loan object from database for additional details if needed
         loan = db.query(Loan).filter(Loan.id == loan_with_stage.loan_id).first()
         if not loan:
             continue  # Skip if loan not found
-            
+
         # Use the outstanding balance from the staged data
         outstanding_loan_balance = loan_with_stage.outstanding_loan_balance
-        
+
         # Categorize loan by the pre-assigned stage
         stage = loan_with_stage.stage.lower()
-        
+
         if stage == "current":
             current_loans.append(loan)
             current_total += outstanding_loan_balance
@@ -1282,21 +1024,31 @@ def calculate_local_provision(
         elif stage == "loss":
             loss_loans.append(loan)
             loss_total += outstanding_loan_balance
-    
+
     # Calculate provisions using the provision rates
     current_provision = current_total * provision_config.current
     olem_provision = olem_total * provision_config.olem
     substandard_provision = substandard_total * provision_config.substandard
     doubtful_provision = doubtful_total * provision_config.doubtful
     loss_provision = loss_total * provision_config.loss
-    
+
     # Calculate total loan value and provision amount
-    total_loan_value = current_total + olem_total + substandard_total + doubtful_total + loss_total
-    total_provision = current_provision + olem_provision + substandard_provision + doubtful_provision + loss_provision
-    
+    total_loan_value = (
+        current_total + olem_total + substandard_total + doubtful_total + loss_total
+    )
+    total_provision = (
+        current_provision
+        + olem_provision
+        + substandard_provision
+        + doubtful_provision
+        + loss_provision
+    )
+
     # Calculate provision percentage
-    provision_percentage = (total_provision / total_loan_value * 100) if total_loan_value > 0 else 0
-    
+    provision_percentage = (
+        (total_provision / total_loan_value * 100) if total_loan_value > 0 else 0
+    )
+
     # Construct response
     response = LocalImpairmentSummary(
         portfolio_id=staged_loans.portfolio_id,
@@ -1305,37 +1057,38 @@ def calculate_local_provision(
             num_loans=len(current_loans),
             total_loan_value=round(current_total, 2),
             provision_amount=round(current_provision, 2),
-            provision_rate=provision_config.current
+            provision_rate=provision_config.current,
         ),
         olem=CategoryData(
             num_loans=len(olem_loans),
             total_loan_value=round(olem_total, 2),
             provision_amount=round(olem_provision, 2),
-            provision_rate=provision_config.olem
+            provision_rate=provision_config.olem,
         ),
         substandard=CategoryData(
             num_loans=len(substandard_loans),
             total_loan_value=round(substandard_total, 2),
             provision_amount=round(substandard_provision, 2),
-            provision_rate=provision_config.substandard
+            provision_rate=provision_config.substandard,
         ),
         doubtful=CategoryData(
             num_loans=len(doubtful_loans),
             total_loan_value=round(doubtful_total, 2),
             provision_amount=round(doubtful_provision, 2),
-            provision_rate=provision_config.doubtful
+            provision_rate=provision_config.doubtful,
         ),
         loss=CategoryData(
             num_loans=len(loss_loans),
             total_loan_value=round(loss_total, 2),
             provision_amount=round(loss_provision, 2),
-            provision_rate=provision_config.loss
+            provision_rate=provision_config.loss,
         ),
         total_provision=round(total_provision, 2),
-        provision_percentage=round(provision_percentage, 1)
+        provision_percentage=round(provision_percentage, 1),
     )
-    
+
     return response
+
 
 @router.post("/calculate-ecl-provision", response_model=ECLSummary)
 def calculate_ecl_provision(
@@ -1346,50 +1099,53 @@ def calculate_ecl_provision(
 ):
     """
     Calculate ECL provisions based on pre-staged loans.
-    
-    This route takes already-staged loans and calculates ECL provisions using detailed 
+
+    This route takes already-staged loans and calculates ECL provisions using detailed
     calculation approach: Calculate PD, LGD, and EAD for each loan.
     """
     # Use provided reporting date or default to current date
     if not reporting_date:
         reporting_date = datetime.now().date()
-    
+
     # Verify portfolio belongs to current user
     portfolio = (
         db.query(Portfolio)
-        .filter(Portfolio.id == staged_loans.portfolio_id, Portfolio.user_id == current_user.id)
+        .filter(
+            Portfolio.id == staged_loans.portfolio_id,
+            Portfolio.user_id == current_user.id,
+        )
         .first()
     )
     if not portfolio:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, 
-            detail="Portfolio not found or not authorized"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Portfolio not found or not authorized",
         )
-    
+
     # Initialize category tracking
     stage_1_loans = []
     stage_2_loans = []
     stage_3_loans = []
-    
+
     # Calculate totals for each category
     stage_1_total = 0
     stage_2_total = 0
     stage_3_total = 0
-    
+
     # Calculate provisions for each category
     stage_1_provision = 0
     stage_2_provision = 0
     stage_3_provision = 0
-    
+
     # Summary metrics
     total_lgd = 0
     total_pd = 0
     total_ead_percentage = 0
     total_loans = 0
-    
+
     # Get all client IDs to fetch securities
     client_ids = {loan.employee_id for loan in staged_loans.loans}
-    
+
     # Get securities for all clients
     client_securities = {}
     if client_ids:
@@ -1407,75 +1163,81 @@ def calculate_ecl_provision(
                 if client.employee_id not in client_securities:
                     client_securities[client.employee_id] = []
                 client_securities[client.employee_id].append(security)
-    
+
     # Process the pre-staged loans
     for loan_with_stage in staged_loans.loans:
         # Get the actual loan object from database for additional details
         loan = db.query(Loan).filter(Loan.id == loan_with_stage.loan_id).first()
         if not loan:
             continue  # Skip if loan not found
-            
+
         # Use the outstanding balance from the staged data
         outstanding_loan_balance = loan_with_stage.outstanding_loan_balance
-        
+
         # Get securities for this loan's client
         client_securities_list = client_securities.get(loan_with_stage.employee_id, [])
-        
+
         # Categorize loan by the pre-assigned stage
         stage = loan_with_stage.stage.lower()
         ndia = loan_with_stage.ndia
-        
+
         if stage == "stage 1":
             stage_1_loans.append(loan)
             stage_1_total += outstanding_loan_balance
-            
+
             # Calculate components for each loan
             lgd = calculate_loss_given_default(loan, client_securities_list)
             pd = calculate_probability_of_default(loan, ndia)
-            ead_percentage = calculate_exposure_at_default_percentage(loan, reporting_date)
+            ead_percentage = calculate_exposure_at_default_percentage(
+                loan, reporting_date
+            )
             ecl = calculate_marginal_ecl(loan, ead_percentage, pd, lgd)
-            
+
             # Update summary statistics
             total_lgd += lgd
             total_pd += pd
             total_ead_percentage += ead_percentage
-            
+
             stage_1_provision += ecl
-                
+
         elif stage == "stage 2":
             stage_2_loans.append(loan)
             stage_2_total += outstanding_loan_balance
-            
+
             # Calculate components for each loan
             lgd = calculate_loss_given_default(loan, client_securities_list)
             pd = calculate_probability_of_default(loan, ndia)
-            ead_percentage = calculate_exposure_at_default_percentage(loan, reporting_date)
+            ead_percentage = calculate_exposure_at_default_percentage(
+                loan, reporting_date
+            )
             ecl = calculate_marginal_ecl(loan, ead_percentage, pd, lgd)
-            
+
             # Update summary statistics
             total_lgd += lgd
             total_pd += pd
             total_ead_percentage += ead_percentage
-            
+
             stage_2_provision += ecl
-                
+
         elif stage == "stage 3":
             stage_3_loans.append(loan)
             stage_3_total += outstanding_loan_balance
-            
+
             # Calculate components for each loan
             lgd = calculate_loss_given_default(loan, client_securities_list)
             pd = calculate_probability_of_default(loan, ndia)
-            ead_percentage = calculate_exposure_at_default_percentage(loan, reporting_date)
+            ead_percentage = calculate_exposure_at_default_percentage(
+                loan, reporting_date
+            )
             ecl = calculate_marginal_ecl(loan, ead_percentage, pd, lgd)
-            
+
             # Update summary statistics
             total_lgd += lgd
             total_pd += pd
             total_ead_percentage += ead_percentage
-            
+
             stage_3_provision += ecl
-                
+
         # Increment total loan count
         total_loans += 1
 
@@ -1490,13 +1252,21 @@ def calculate_ecl_provision(
 
     # Calculate provision percentage
     provision_percentage = (
-        (Decimal(total_provision) / Decimal(total_loan_value) * 100) if total_loan_value > 0 else 0
+        (Decimal(total_provision) / Decimal(total_loan_value) * 100)
+        if total_loan_value > 0
+        else 0
     )
-    
+
     # Calculate effective provision rates
-    stage_1_rate = Decimal(stage_1_provision) / Decimal(stage_1_total) if stage_1_total > 0 else 0
-    stage_2_rate = Decimal(stage_2_provision) / Decimal(stage_2_total) if stage_2_total > 0 else 0
-    stage_3_rate = Decimal(stage_3_provision) / Decimal(stage_3_total) if stage_3_total > 0 else 0
+    stage_1_rate = (
+        Decimal(stage_1_provision) / Decimal(stage_1_total) if stage_1_total > 0 else 0
+    )
+    stage_2_rate = (
+        Decimal(stage_2_provision) / Decimal(stage_2_total) if stage_2_total > 0 else 0
+    )
+    stage_3_rate = (
+        Decimal(stage_3_provision) / Decimal(stage_3_total) if stage_3_total > 0 else 0
+    )
 
     # Construct response
     response = ECLSummary(
@@ -1506,19 +1276,19 @@ def calculate_ecl_provision(
             num_loans=len(stage_1_loans),
             total_loan_value=round(stage_1_total, 2),
             provision_amount=round(stage_1_provision, 2),
-            provision_rate=round(stage_1_rate, 4)
+            provision_rate=round(stage_1_rate, 4),
         ),
         stage_2=CategoryData(
             num_loans=len(stage_2_loans),
             total_loan_value=round(stage_2_total, 2),
             provision_amount=round(stage_2_provision, 2),
-            provision_rate=round(stage_2_rate, 4)
+            provision_rate=round(stage_2_rate, 4),
         ),
         stage_3=CategoryData(
             num_loans=len(stage_3_loans),
             total_loan_value=round(stage_3_total, 2),
             provision_amount=round(stage_3_provision, 2),
-            provision_rate=round(stage_3_rate, 4)
+            provision_rate=round(stage_3_rate, 4),
         ),
         summary_metrics=ECLSummaryMetrics(
             avg_pd=round(avg_pd, 4),

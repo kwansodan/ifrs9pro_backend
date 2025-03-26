@@ -31,15 +31,16 @@ from app.schemas import (
     ReportBase,
     ReportRequest,
     ReportSaveRequest,
-    ReportCreate, 
-    ReportUpdate, 
-    ReportResponse, 
-    ReportHistoryItem, 
-    ReportHistoryList
+    ReportCreate,
+    ReportUpdate,
+    ReportResponse,
+    ReportHistoryItem,
+    ReportHistoryList,
 )
 
 
 router = APIRouter(prefix="/reports", tags=["reports"])
+
 
 @router.post("/{portfolio_id}/generate", status_code=status.HTTP_200_OK)
 async def generate_report(
@@ -68,74 +69,56 @@ async def generate_report(
     # Generate the report based on the report type
     try:
         report_data = None
-        
+
         if report_request.report_type == ReportTypeEnum.COLLATERAL_SUMMARY:
             report_data = generate_collateral_summary(
-                db=db, 
-                portfolio_id=portfolio_id, 
-                report_date=report_request.report_date
+                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
             )
-        
+
         elif report_request.report_type == ReportTypeEnum.GUARANTEE_SUMMARY:
             report_data = generate_guarantee_summary(
-                db=db, 
-                portfolio_id=portfolio_id, 
-                report_date=report_request.report_date
+                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
             )
-        
+
         elif report_request.report_type == ReportTypeEnum.INTEREST_RATE_SUMMARY:
             report_data = generate_interest_rate_summary(
-                db=db, 
-                portfolio_id=portfolio_id, 
-                report_date=report_request.report_date
+                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
             )
-        
+
         elif report_request.report_type == ReportTypeEnum.REPAYMENT_SUMMARY:
             report_data = generate_repayment_summary(
-                db=db, 
-                portfolio_id=portfolio_id, 
-                report_date=report_request.report_date
+                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
             )
-        
+
         elif report_request.report_type == ReportTypeEnum.ASSUMPTIONS_SUMMARY:
             report_data = generate_assumptions_summary(
-                db=db, 
-                portfolio_id=portfolio_id, 
-                report_date=report_request.report_date
+                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
             )
-        
+
         elif report_request.report_type == ReportTypeEnum.AMORTISED_LOAN_BALANCES:
             report_data = generate_amortised_loan_balances(
-                db=db, 
-                portfolio_id=portfolio_id, 
-                report_date=report_request.report_date
+                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
             )
-        
+
         elif report_request.report_type == ReportTypeEnum.PROBABILITY_DEFAULT:
             report_data = generate_probability_default_report(
-                db=db, 
-                portfolio_id=portfolio_id, 
-                report_date=report_request.report_date
+                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
             )
-        
+
         elif report_request.report_type == ReportTypeEnum.EXPOSURE_DEFAULT:
             report_data = generate_exposure_default_report(
-                db=db, 
-                portfolio_id=portfolio_id, 
-                report_date=report_request.report_date
+                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
             )
-        
+
         elif report_request.report_type == ReportTypeEnum.LOSS_GIVEN_DEFAULT:
             report_data = generate_loss_given_default_report(
-                db=db, 
-                portfolio_id=portfolio_id, 
-                report_date=report_request.report_date
+                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
             )
-        
+
         else:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, 
-                detail=f"Unsupported report type: {report_request.report_type}"
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported report type: {report_request.report_type}",
             )
 
         # Generate the PDF from the report data
@@ -144,15 +127,15 @@ async def generate_report(
             portfolio_id=portfolio_id,
             report_type=report_request.report_type.value,
             report_date=report_request.report_date,
-            report_data=report_data
+            report_data=report_data,
         )
-        
+
         # Encode the PDF as base64
-        pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
-        
+        pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
+
         # Create a file name for the PDF
         report_name = f"{portfolio.name.replace(' ', '_')}_{report_request.report_type.value}_{report_request.report_date}.pdf"
-        
+
         # Return both the data and PDF in the response
         return {
             "portfolio_id": portfolio_id,
@@ -162,17 +145,22 @@ async def generate_report(
             "pdf": {
                 "filename": report_name,
                 "content_type": "application/pdf",
-                "content": pdf_base64
-            }
+                "content": pdf_base64,
+            },
         }
 
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error generating report: {str(e)}"
+            detail=f"Error generating report: {str(e)}",
         )
 
-@router.post("/{portfolio_id}/save", response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
+
+@router.post(
+    "/{portfolio_id}/save",
+    response_model=ReportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def save_report(
     portfolio_id: int,
     report_data: ReportSaveRequest,
@@ -202,7 +190,7 @@ async def save_report(
             report_date=report_data.report_date,
             report_name=report_data.report_name,
             report_data=report_data.report_data,
-            created_by=current_user.id
+            created_by=current_user.id,
         )
 
         db.add(new_report)
@@ -215,7 +203,7 @@ async def save_report(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error saving report: {str(e)}"
+            detail=f"Error saving report: {str(e)}",
         )
 
 
@@ -248,28 +236,23 @@ async def get_report_history(
 
     # Build query for reports
     query = db.query(Report).filter(Report.portfolio_id == portfolio_id)
-    
+
     # Apply filters if provided
     if report_type:
         query = query.filter(Report.report_type == report_type)
-    
+
     if start_date:
         query = query.filter(Report.report_date >= start_date)
-    
+
     if end_date:
         query = query.filter(Report.report_date <= end_date)
-    
+
     # Get total count for pagination
     total = query.count()
-    
+
     # Apply pagination and order
-    reports = (
-        query.order_by(Report.created_at.desc())
-        .offset(skip)
-        .limit(limit)
-        .all()
-    )
-    
+    reports = query.order_by(Report.created_at.desc()).offset(skip).limit(limit).all()
+
     return {"items": reports, "total": total}
 
 
@@ -294,7 +277,7 @@ async def get_report(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
-    
+
     # Get the report
     report = (
         db.query(Report)
@@ -302,17 +285,17 @@ async def get_report(
         .first()
     )
 
-    
-    
     if not report:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Report not found"
         )
-    
+
     return report
 
 
-@router.delete("/{portfolio_id}/report/{report_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{portfolio_id}/report/{report_id}", status_code=status.HTTP_204_NO_CONTENT
+)
 async def delete_report(
     portfolio_id: int,
     report_id: int,
@@ -333,26 +316,29 @@ async def delete_report(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
-    
+
     # Get the report
     report = (
         db.query(Report)
         .filter(Report.id == report_id, Report.portfolio_id == portfolio_id)
         .first()
     )
-    
+
     if not report:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Report not found"
         )
-    
+
     # Delete the report
     db.delete(report)
     db.commit()
-    
+
     return None
 
-@router.get("/{portfolio_id}/report/{report_id}/download", status_code=status.HTTP_200_OK)
+
+@router.get(
+    "/{portfolio_id}/report/{report_id}/download", status_code=status.HTTP_200_OK
+)
 async def download_report_pdf(
     portfolio_id: int,
     report_id: int,
@@ -374,19 +360,19 @@ async def download_report_pdf(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
-    
+
     # Get the report
     report = (
         db.query(Report)
         .filter(Report.id == report_id, Report.portfolio_id == portfolio_id)
         .first()
     )
-    
+
     if not report:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Report not found"
         )
-    
+
     try:
         # Generate the PDF from the saved report data
         pdf_bytes = generate_report_pdf(
@@ -394,21 +380,21 @@ async def download_report_pdf(
             portfolio_id=portfolio_id,
             report_type=report.report_type,
             report_date=report.report_date,
-            report_data=report.report_data
+            report_data=report.report_data,
         )
-        
+
         # Create a file name for the PDF
         report_name = f"{portfolio.name.replace(' ', '_')}_{report.report_type}_{report.report_date}.pdf"
-        
+
         # Return the PDF as a downloadable file
         return StreamingResponse(
             BytesIO(pdf_bytes),
             media_type="application/pdf",
-            headers={"Content-Disposition": f"attachment; filename={report_name}"}
+            headers={"Content-Disposition": f"attachment; filename={report_name}"},
         )
-        
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error generating PDF report: {str(e)}"
+            detail=f"Error generating PDF report: {str(e)}",
         )

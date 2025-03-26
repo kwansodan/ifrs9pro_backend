@@ -51,6 +51,7 @@ class User(Base):
     quality_comments = relationship("QualityIssueComment", back_populates="user")
     feedback = relationship("Feedback", back_populates="user")
 
+
 class AccessRequest(Base):
     __tablename__ = "access_requests"
 
@@ -110,8 +111,12 @@ class Portfolio(Base):
     loans = relationship("Loan", back_populates="portfolio")
     clients = relationship("Client", back_populates="portfolio")
     guarantees = relationship("Guarantee", back_populates="portfolio")
-    quality_issues = relationship("QualityIssue", back_populates="portfolio", cascade="all, delete-orphan")
-    reports = relationship("Report", back_populates="portfolio", cascade="all, delete-orphan")
+    quality_issues = relationship(
+        "QualityIssue", back_populates="portfolio", cascade="all, delete-orphan"
+    )
+    reports = relationship(
+        "Report", back_populates="portfolio", cascade="all, delete-orphan"
+    )
 
 
 class ClientType(str, PyEnum):
@@ -321,26 +326,34 @@ class MacroEcos(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
+
 class QualityIssue(Base):
     __tablename__ = "quality_issues"
 
     id = Column(Integer, primary_key=True, index=True)
     portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="CASCADE"))
-    issue_type = Column(String(50), nullable=False)  
+    issue_type = Column(String(50), nullable=False)
     description = Column(Text, nullable=False)
-    affected_records = Column(JSON, nullable=False)  
-    severity = Column(String(20), nullable=False)  
+    affected_records = Column(JSON, nullable=False)
+    severity = Column(String(20), nullable=False)
     status = Column(String(20), default="open")
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())
     portfolio = relationship("Portfolio", back_populates="quality_issues")
-    comments = relationship("QualityIssueComment", back_populates="quality_issue", cascade="all, delete-orphan")
+    comments = relationship(
+        "QualityIssueComment",
+        back_populates="quality_issue",
+        cascade="all, delete-orphan",
+    )
+
 
 class QualityIssueComment(Base):
     __tablename__ = "quality_issue_comments"
 
     id = Column(Integer, primary_key=True, index=True)
-    quality_issue_id = Column(Integer, ForeignKey("quality_issues.id", ondelete="CASCADE"))
+    quality_issue_id = Column(
+        Integer, ForeignKey("quality_issues.id", ondelete="CASCADE")
+    )
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     comment = Column(Text, nullable=False)
     created_at = Column(DateTime, default=func.now())
@@ -352,7 +365,9 @@ class Report(Base):
     __tablename__ = "reports"
 
     id = Column(Integer, primary_key=True, index=True)
-    portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False)
+    portfolio_id = Column(
+        Integer, ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False
+    )
     report_type = Column(String, nullable=False)
     report_date = Column(Date, nullable=False)
     report_name = Column(String, nullable=False)
@@ -363,8 +378,8 @@ class Report(Base):
     user = relationship("User")
 
 
-
 # Feedback
+
 
 class FeedbackStatus(str, PyEnum):
     SUBMITTED = "submitted"
@@ -379,8 +394,15 @@ class FeedbackStatus(str, PyEnum):
 feedback_likes = Table(
     "feedback_likes",
     Base.metadata,
-    Column("user_id", Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
-    Column("feedback_id", Integer, ForeignKey("feedback.id", ondelete="CASCADE"), primary_key=True),
+    Column(
+        "user_id", Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    ),
+    Column(
+        "feedback_id",
+        Integer,
+        ForeignKey("feedback.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
 )
 
 
@@ -390,15 +412,13 @@ class Feedback(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False)
     description = Column(Text, nullable=False)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
     status = Column(String, default=FeedbackStatus.SUBMITTED)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
+
     # Relationships
     user = relationship("User", back_populates="feedback")
-    liked_by = relationship(
-        "User", 
-        secondary=feedback_likes,
-        backref="liked_feedback"
-    )
+    liked_by = relationship("User", secondary=feedback_likes, backref="liked_feedback")

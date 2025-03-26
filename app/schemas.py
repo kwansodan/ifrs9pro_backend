@@ -5,6 +5,7 @@ from enum import Enum
 
 # Auth schemas
 
+
 class RequestStatus(str, Enum):
     PENDING = "pending"
     APPROVED = "approved"
@@ -18,6 +19,7 @@ class UserRole(str, Enum):
     REVIEWER = "reviewer"
     USER = "user"
 
+
 class UserModel(BaseModel):
     id: int
     first_name: Optional[str] = None
@@ -28,12 +30,14 @@ class UserModel(BaseModel):
     is_active: bool
     access_request_status: Optional[RequestStatus] = None
 
+
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str = Field(default="bearer", pattern="^bearer$")
     expires_in: int = Field(gt=0)
     user: UserModel
-    
+
+
 class EmailVerificationRequest(BaseModel):
     email: EmailStr
 
@@ -58,22 +62,23 @@ class LoginRequest(BaseModel):
     password: str
 
 
-
 # Quality issue schemas
 
-class QualityIssue(BaseModel):
+
+class QualityIssueResponse(BaseModel):
     id: int
     portfolio_id: int
-    issue_type: str  
+    issue_type: str
     description: str
-    affected_records: List[Dict]  
-    severity: str  
-    status: str  
+    affected_records: List[Dict]
+    severity: str
+    status: str
     created_at: datetime
     updated_at: Optional[datetime] = None
-    
+
     class Config:
         from_attributes = True
+
 
 class QualityIssueCreate(BaseModel):
     issue_type: str
@@ -81,23 +86,27 @@ class QualityIssueCreate(BaseModel):
     affected_records: List[Dict]
     severity: str = "medium"
 
+
 class QualityIssueComment(BaseModel):
     id: int
     quality_issue_id: int
     user_id: int
     comment: str
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
 
+
 class QualityIssueCommentCreate(BaseModel):
     comment: str
+
 
 class QualityIssueUpdate(BaseModel):
     status: Optional[str] = None
     description: Optional[str] = None
     severity: Optional[str] = None
+
 
 class QualityCheckSummary(BaseModel):
     duplicate_names: int
@@ -109,6 +118,7 @@ class QualityCheckSummary(BaseModel):
 
 
 # Report schemas
+
 
 class ReportTypeEnum(str, Enum):
     COLLATERAL_SUMMARY = "collateral_summary"
@@ -168,6 +178,7 @@ class ReportHistoryList(BaseModel):
     items: List[ReportHistoryItem]
     total: int
 
+
 class ReportRequest(BaseModel):
     report_date: date
     report_type: ReportTypeEnum
@@ -178,7 +189,6 @@ class ReportSaveRequest(BaseModel):
     report_type: ReportTypeEnum
     report_name: str
     report_data: Dict[str, Any]
-
 
 
 # Portfolio schemas
@@ -294,12 +304,11 @@ class PortfolioWithSummaryResponse(BaseModel):
     overview: Dict[str, Any]
     customer_summary: Dict[str, Any]
     quality_check: QualityCheckSummary
-    quality_issues: Optional[List[QualityIssue]] = None
+    quality_issues: Optional[List[QualityIssueResponse]] = None
     report_history: Optional[List[ReportHistoryItem]] = None
-    
+
     class Config:
         from_attributes = True
-
 
 
 # ECL schemas
@@ -311,8 +320,6 @@ class ECLCategoryData(BaseModel):
     num_loans: int
     total_loan_value: float
     provision_amount: float
-
-
 
 
 # Impairment schemas
@@ -362,8 +369,6 @@ class ImpairmentConfig(BaseModel):
     loss: ImpairmentCategory
 
 
-
-        
 # Access request schemas
 class AccessRequestSubmit(BaseModel):
     email: EmailStr
@@ -385,8 +390,6 @@ class AccessRequestResponse(BaseModel):
 class AccessRequestUpdate(BaseModel):
     status: RequestStatus
     role: Optional[UserRole] = None
-
-
 
 
 # User management schemas
@@ -421,7 +424,9 @@ class UserUpdate(BaseModel):
     role: Optional[UserRole] = None
     is_active: Optional[bool] = None
 
+
 # Feedback schemas
+
 
 class FeedbackStatusEnum(str, Enum):
     SUBMITTED = "submitted"
@@ -468,32 +473,36 @@ class FeedbackResponse(FeedbackBase):
     updated_at: Optional[datetime] = None
     like_count: int
     is_liked_by_user: bool = False
-    
+
     class Config:
         from_attributes = True
 
 
 class FeedbackDetailResponse(FeedbackResponse):
     liked_by: List[FeedbackLikeResponse] = []
-    
+
     class Config:
         from_attributes = True
 
 
 # ECL schemas
 
+
 class DaysRangeConfig(BaseModel):
     days_range: str = Field(..., example="0-30")
+
 
 class ECLConfig(BaseModel):
     stage_1: DaysRangeConfig
     stage_2: DaysRangeConfig
     stage_3: DaysRangeConfig
 
+
 class ECLStagingConfig(BaseModel):
     stage_1: DaysRangeConfig
     stage_2: DaysRangeConfig
     stage_3: DaysRangeConfig
+
 
 class LocalImpairmentConfig(BaseModel):
     current: DaysRangeConfig
@@ -502,10 +511,12 @@ class LocalImpairmentConfig(BaseModel):
     doubtful: DaysRangeConfig
     loss: DaysRangeConfig
 
+
 class LGDInput(BaseModel):
     loan_amount: float
     outstanding_balance: float
     securities: List[dict] = []
+
 
 class EADInput(BaseModel):
     loan_amount: float
@@ -514,14 +525,16 @@ class EADInput(BaseModel):
     maturity_date: date
     reporting_date: date
 
+
 class PDInput(BaseModel):
     ndia: int
     loan_type: Optional[str] = None
 
+
 class EIRInput(BaseModel):
     loan_amount: float
     monthly_installment: float
-    loan_term: int 
+    loan_term: int
 
 
 class LoanStageInfo(BaseModel):
@@ -535,14 +548,17 @@ class LoanStageInfo(BaseModel):
     monthly_installment: float
     loan_term: int
     accumulated_arrears: float
-    
+
+
 class StagingResponse(BaseModel):
     loans: List[LoanStageInfo]
+
 
 class CategoryData(BaseModel):
     num_loans: int
     total_loan_value: float
     provision_amount: float
+
 
 class ECLSummaryMetrics(BaseModel):
     pd: float
@@ -550,6 +566,7 @@ class ECLSummaryMetrics(BaseModel):
     ead: float
     total_provision: float
     provision_percentage: float
+
 
 class ECLSummary(BaseModel):
     portfolio_id: int
@@ -559,11 +576,13 @@ class ECLSummary(BaseModel):
     stage_3: CategoryData
     summary_metrics: ECLSummaryMetrics
 
+
 class LocalImpairmentCategoryData(BaseModel):
     num_loans: int
     total_loan_value: float
     provision_amount: float
     provision_rate: float
+
 
 class LocalImpairmentSummary(BaseModel):
     portfolio_id: int
@@ -576,11 +595,12 @@ class LocalImpairmentSummary(BaseModel):
     total_provision: float
     provision_percentage: float
 
+
 class CalculatorResponse(BaseModel):
     result: float
     input_data: dict
 
-    
+
 class StagedLoans(BaseModel):
     portfolio_id: int
     loans: List[LoanStageInfo]
@@ -593,6 +613,7 @@ class ProvisionRateConfig(BaseModel):
     doubtful: float = Field(..., example=0.5)
     loss: float = Field(..., example=1.0)
 
+
 class ECLComponentConfig(BaseModel):
     pd_factors: Dict[str, float] = Field(
         default_factory=lambda: {"stage_1": 0.01, "stage_2": 0.1, "stage_3": 0.5}
@@ -604,11 +625,13 @@ class ECLComponentConfig(BaseModel):
         default_factory=lambda: {"stage_1": 0.9, "stage_2": 0.95, "stage_3": 1.0}
     )
 
+
 class CategoryData(BaseModel):
     num_loans: int
     total_loan_value: float
     provision_amount: float
     provision_rate: float
+
 
 class LocalImpairmentSummary(BaseModel):
     portfolio_id: int
@@ -621,12 +644,14 @@ class LocalImpairmentSummary(BaseModel):
     total_provision: float
     provision_percentage: float
 
+
 class ECLSummaryMetrics(BaseModel):
     avg_pd: float
     avg_lgd: float
     avg_ead: float
     total_provision: float
     provision_percentage: float
+
 
 class ECLSummary(BaseModel):
     portfolio_id: int
