@@ -75,11 +75,15 @@ from app.schemas import (
     ProvisionRateConfig,
     ECLComponentConfig,
     LoanStageInfo,
-    CategoryData
+    CategoryData,
 )
 from app.auth.utils import get_current_active_user
 from app.utils.quality_checks import create_quality_issues_if_needed
-from app.utils.processors import process_loan_details, process_loan_collateral, process_loan_guarantees
+from app.utils.processors import (
+    process_loan_details,
+    process_loan_collateral,
+    process_loan_guarantees,
+)
 
 router = APIRouter(prefix="/portfolios", tags=["portfolios"])
 
@@ -145,6 +149,7 @@ def get_portfolios(
 
 # Update the get_portfolio endpoint in your portfolios.py file
 
+
 @router.get("/{portfolio_id}", response_model=PortfolioWithSummaryResponse)
 def get_portfolio(
     portfolio_id: int,
@@ -203,16 +208,16 @@ def get_portfolio(
 
     # Run quality checks and create issues if necessary
     quality_counts = create_quality_issues_if_needed(db, portfolio_id)
-    
+
     quality_check_summary = QualityCheckSummary(
         duplicate_names=quality_counts["duplicate_names"],
         duplicate_addresses=quality_counts["duplicate_addresses"],
         missing_repayment_data=quality_counts["missing_repayment_data"],
         total_issues=quality_counts["total_issues"],
         high_severity_issues=quality_counts["high_severity_issues"],
-        open_issues=quality_counts["open_issues"]
+        open_issues=quality_counts["open_issues"],
     )
-    
+
     # Get quality issues if requested
     quality_issues = []
     if include_quality_issues:
@@ -222,7 +227,7 @@ def get_portfolio(
             .order_by(QualityIssue.severity.desc(), QualityIssue.created_at.desc())
             .all()
         )
-    
+
     # Get report history if requested
     report_history = []
     if include_report_history:
@@ -245,7 +250,7 @@ def get_portfolio(
         "updated_at": portfolio.updated_at,
         "overview": {
             "total_loans": total_loans,
-            "total_loan_value": round(total_loan_value,2),
+            "total_loan_value": round(total_loan_value, 2),
             "average_loan_amount": round(average_loan_amount, 2),
             "total_customers": total_customers,
         },
@@ -257,10 +262,11 @@ def get_portfolio(
         },
         "quality_check": quality_check_summary,
         "quality_issues": quality_issues if include_quality_issues else None,
-        "report_history": report_history if include_report_history else None
+        "report_history": report_history if include_report_history else None,
     }
 
     return response
+
 
 @router.put("/{portfolio_id}", response_model=PortfolioResponse)
 def update_portfolio(
@@ -372,31 +378,35 @@ async def ingest_portfolio_data(
     try:
         # Process loan details file
         if loan_details:
-            results["loan_details"] = await process_loan_details(loan_details, portfolio_id, db)
-            
+            results["loan_details"] = await process_loan_details(
+                loan_details, portfolio_id, db
+            )
+
         # Process loan guarantee data file
         if loan_guarantee_data:
-            results["loan_guarantee_data"] = await process_loan_guarantees(loan_guarantee_data, portfolio_id, db)
-            
+            results["loan_guarantee_data"] = await process_loan_guarantees(
+                loan_guarantee_data, portfolio_id, db
+            )
+
         # Process loan collateral data file
         if loan_collateral_data:
-            results["loan_collateral_data"] = await process_loan_collateral(loan_collateral_data, portfolio_id, db)
-            
+            results["loan_collateral_data"] = await process_loan_collateral(
+                loan_collateral_data, portfolio_id, db
+            )
+
         # Commit all changes at once
         db.commit()
-        
+
     except Exception as e:
         # Rollback in case of error
         db.rollback()
         return {
             "portfolio_id": portfolio_id,
             "results": {"error": str(e)},
-            "status": "error"
+            "status": "error",
         }
 
     return {"portfolio_id": portfolio_id, "results": results}
-
-
 
 
 @router.post("/{portfolio_id}/stage-loans-ecl", response_model=StagingResponse)
@@ -425,15 +435,15 @@ def stage_loans_ecl(
         stage_3_range = parse_days_range(config.stage_3.days_range)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    
+
     # Get all loans in the portfolio
     loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
-    
+
     # Stage the loans
     staged_loans = []
-    
+
     for loan in loans:
-            
+
         # Determine the stage
         if is_in_range(loan.ndia, stage_1_range):
             stage = "Stage 1"
@@ -444,8 +454,7 @@ def stage_loans_ecl(
         else:
             # Default to Stage 3 if no stage matches
             stage = "Stage 3"
-            
-        
+
         outstanding_loan_balance = loan.outstanding_loan_balance
         ndia = int(loan.ndia)
         loan_issue_date = loan.loan_issue_date
@@ -453,7 +462,7 @@ def stage_loans_ecl(
         loan_amount = loan.loan_amount
         monthly_installment = loan.monthly_installment
         loan_term = loan.loan_term
-        
+
         staged_loans.append(
             LoanStageInfo(
                 loan_id=loan.id,
@@ -468,8 +477,9 @@ def stage_loans_ecl(
                 accumulated_arrears=accumulated_arrears,
             )
         )
-        
+
     return StagingResponse(loans=staged_loans)
+
 
 @router.post("/{portfolio_id}/stage-loans-local", response_model=StagingResponse)
 def stage_loans_local_impairment(
@@ -506,10 +516,10 @@ def stage_loans_local_impairment(
 
     # Get all loans in the portfolio
     loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
-    
+
     # Stage the loans
     staged_loans = []
-    
+
     for loan in loans:
         # Calculate NDIA if not available
         if loan.ndia is None:
@@ -525,7 +535,7 @@ def stage_loans_local_impairment(
                 ndia = 0
         else:
             ndia = loan.ndia
-            
+
         # Determine the category
         if is_in_range(ndia, current_range):
             stage = "Current"
@@ -537,7 +547,7 @@ def stage_loans_local_impairment(
             stage = "Doubtful"
         elif is_in_range(ndia, loss_range):
             stage = "Loss"
-            
+
         outstanding_loan_balance = loan.outstanding_loan_balance
         ndia = int(loan.ndia)
         loan_issue_date = loan.loan_issue_date
@@ -545,7 +555,7 @@ def stage_loans_local_impairment(
         loan_amount = loan.loan_amount
         monthly_installment = loan.monthly_installment
         loan_term = loan.loan_term
-        
+
         staged_loans.append(
             LoanStageInfo(
                 loan_id=loan.id,
@@ -560,11 +570,12 @@ def stage_loans_local_impairment(
                 accumulated_arrears=accumulated_arrears,
             )
         )
-        
+
     return StagingResponse(loans=staged_loans)
 
 
 # Quality issue routes
+
 
 @router.get("/{portfolio_id}/quality-issues", response_model=List[QualityIssue])
 def get_quality_issues(
@@ -592,18 +603,18 @@ def get_quality_issues(
 
     # Build query for quality issues
     query = db.query(QualityIssue).filter(QualityIssue.portfolio_id == portfolio_id)
-    
+
     # Apply filters if provided
     if status:
         query = query.filter(QualityIssue.status == status)
     if issue_type:
         query = query.filter(QualityIssue.issue_type == issue_type)
-    
+
     # Order by severity (most severe first) and then by created date (newest first)
     quality_issues = query.order_by(
         QualityIssue.severity.desc(), QualityIssue.created_at.desc()
     ).all()
-    
+
     return quality_issues
 
 
@@ -628,19 +639,19 @@ def get_quality_issue(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
-    
+
     # Get the quality issue
     issue = (
         db.query(QualityIssue)
         .filter(QualityIssue.id == issue_id, QualityIssue.portfolio_id == portfolio_id)
         .first()
     )
-    
+
     if not issue:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Quality issue not found"
         )
-    
+
     return issue
 
 
@@ -666,31 +677,34 @@ def update_quality_issue(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
-    
+
     # Get the quality issue
     issue = (
         db.query(QualityIssue)
         .filter(QualityIssue.id == issue_id, QualityIssue.portfolio_id == portfolio_id)
         .first()
     )
-    
+
     if not issue:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Quality issue not found"
         )
-    
+
     # Update fields if provided
     update_data = issue_update.dict(exclude_unset=True)
     for key, value in update_data.items():
         setattr(issue, key, value)
-    
+
     db.commit()
     db.refresh(issue)
-    
+
     return issue
 
 
-@router.post("/{portfolio_id}/quality-issues/{issue_id}/comments", response_model=QualityIssueComment)
+@router.post(
+    "/{portfolio_id}/quality-issues/{issue_id}/comments",
+    response_model=QualityIssueComment,
+)
 def add_comment_to_quality_issue(
     portfolio_id: int,
     issue_id: int,
@@ -712,34 +726,35 @@ def add_comment_to_quality_issue(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
-    
+
     # Get the quality issue
     issue = (
         db.query(QualityIssue)
         .filter(QualityIssue.id == issue_id, QualityIssue.portfolio_id == portfolio_id)
         .first()
     )
-    
+
     if not issue:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Quality issue not found"
         )
-    
+
     # Create new comment
     new_comment = QualityIssueComment(
-        quality_issue_id=issue_id,
-        user_id=current_user.id,
-        comment=comment_data.comment
+        quality_issue_id=issue_id, user_id=current_user.id, comment=comment_data.comment
     )
-    
+
     db.add(new_comment)
     db.commit()
     db.refresh(new_comment)
-    
+
     return new_comment
 
 
-@router.get("/{portfolio_id}/quality-issues/{issue_id}/comments", response_model=List[QualityIssueComment])
+@router.get(
+    "/{portfolio_id}/quality-issues/{issue_id}/comments",
+    response_model=List[QualityIssueComment],
+)
 def get_quality_issue_comments(
     portfolio_id: int,
     issue_id: int,
@@ -760,19 +775,19 @@ def get_quality_issue_comments(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
-    
+
     # Get the quality issue
     issue = (
         db.query(QualityIssue)
         .filter(QualityIssue.id == issue_id, QualityIssue.portfolio_id == portfolio_id)
         .first()
     )
-    
+
     if not issue:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Quality issue not found"
         )
-    
+
     # Get all comments for this issue, ordered by creation date
     comments = (
         db.query(QualityIssueComment)
@@ -780,11 +795,13 @@ def get_quality_issue_comments(
         .order_by(QualityIssueComment.created_at)
         .all()
     )
-    
+
     return comments
 
 
-@router.post("/{portfolio_id}/quality-issues/{issue_id}/approve", response_model=QualityIssue)
+@router.post(
+    "/{portfolio_id}/quality-issues/{issue_id}/approve", response_model=QualityIssue
+)
 def approve_quality_issue(
     portfolio_id: int,
     issue_id: int,
@@ -807,34 +824,34 @@ def approve_quality_issue(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
-    
+
     # Get the quality issue
     issue = (
         db.query(QualityIssue)
         .filter(QualityIssue.id == issue_id, QualityIssue.portfolio_id == portfolio_id)
         .first()
     )
-    
+
     if not issue:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Quality issue not found"
         )
-    
+
     # Update status to approved
     issue.status = "approved"
-    
+
     # Add comment if provided
     if comment:
         new_comment = QualityIssueComment(
             quality_issue_id=issue_id,
             user_id=current_user.id,
-            comment=f"Issue approved: {comment}"
+            comment=f"Issue approved: {comment}",
         )
         db.add(new_comment)
-    
+
     db.commit()
     db.refresh(issue)
-    
+
     return issue
 
 
@@ -860,32 +877,34 @@ def approve_all_quality_issues(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
-    
+
     # Get all open quality issues
     open_issues = (
         db.query(QualityIssue)
-        .filter(QualityIssue.portfolio_id == portfolio_id, QualityIssue.status == "open")
+        .filter(
+            QualityIssue.portfolio_id == portfolio_id, QualityIssue.status == "open"
+        )
         .all()
     )
-    
+
     if not open_issues:
         return {"message": "No open quality issues to approve", "count": 0}
-    
+
     # Update all issues to approved
     for issue in open_issues:
         issue.status = "approved"
-        
+
         # Add comment if provided
         if comment:
             new_comment = QualityIssueComment(
                 quality_issue_id=issue.id,
                 user_id=current_user.id,
-                comment=f"Batch approval: {comment}"
+                comment=f"Batch approval: {comment}",
             )
             db.add(new_comment)
-    
+
     db.commit()
-    
+
     return {"message": "All quality issues approved", "count": len(open_issues)}
 
 
@@ -910,17 +929,17 @@ def recheck_quality_issues(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
-    
+
     # Run quality checks and create issues if necessary
     quality_counts = create_quality_issues_if_needed(db, portfolio_id)
-    
+
     return QualityCheckSummary(
         duplicate_names=quality_counts["duplicate_names"],
         duplicate_addresses=quality_counts["duplicate_addresses"],
         missing_repayment_data=quality_counts["missing_repayment_data"],
         total_issues=quality_counts["total_issues"],
         high_severity_issues=quality_counts["high_severity_issues"],
-        open_issues=quality_counts["open_issues"]
+        open_issues=quality_counts["open_issues"],
     )
 
 
@@ -934,53 +953,56 @@ def calculate_local_provision(
 ):
     """
     Calculate local impairment provisions based on pre-staged loans and provision rates.
-    
+
     This route takes already-staged loans and applies the provision rates
     to calculate the required provision amounts.
     """
     # Use provided reporting date or default to current date
     if not reporting_date:
         reporting_date = datetime.now().date()
-    
+
     # Verify portfolio belongs to current user
     portfolio = (
         db.query(Portfolio)
-        .filter(Portfolio.id == staged_loans.portfolio_id, Portfolio.user_id == current_user.id)
+        .filter(
+            Portfolio.id == staged_loans.portfolio_id,
+            Portfolio.user_id == current_user.id,
+        )
         .first()
     )
     if not portfolio:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, 
-            detail="Portfolio not found or not authorized"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Portfolio not found or not authorized",
         )
-    
+
     # Initialize category tracking
     current_loans = []
     olem_loans = []
     substandard_loans = []
     doubtful_loans = []
     loss_loans = []
-    
+
     # Calculate totals for each category
     current_total = 0
     olem_total = 0
     substandard_total = 0
     doubtful_total = 0
     loss_total = 0
-    
+
     # Process the pre-staged loans
     for loan_with_stage in staged_loans.loans:
         # Get the actual loan object from database for additional details if needed
         loan = db.query(Loan).filter(Loan.id == loan_with_stage.loan_id).first()
         if not loan:
             continue  # Skip if loan not found
-            
+
         # Use the outstanding balance from the staged data
         outstanding_loan_balance = loan_with_stage.outstanding_loan_balance
-        
+
         # Categorize loan by the pre-assigned stage
         stage = loan_with_stage.stage.lower()
-        
+
         if stage == "current":
             current_loans.append(loan)
             current_total += outstanding_loan_balance
@@ -996,21 +1018,31 @@ def calculate_local_provision(
         elif stage == "loss":
             loss_loans.append(loan)
             loss_total += outstanding_loan_balance
-    
+
     # Calculate provisions using the provision rates
     current_provision = current_total * provision_config.current
     olem_provision = olem_total * provision_config.olem
     substandard_provision = substandard_total * provision_config.substandard
     doubtful_provision = doubtful_total * provision_config.doubtful
     loss_provision = loss_total * provision_config.loss
-    
+
     # Calculate total loan value and provision amount
-    total_loan_value = current_total + olem_total + substandard_total + doubtful_total + loss_total
-    total_provision = current_provision + olem_provision + substandard_provision + doubtful_provision + loss_provision
-    
+    total_loan_value = (
+        current_total + olem_total + substandard_total + doubtful_total + loss_total
+    )
+    total_provision = (
+        current_provision
+        + olem_provision
+        + substandard_provision
+        + doubtful_provision
+        + loss_provision
+    )
+
     # Calculate provision percentage
-    provision_percentage = (total_provision / total_loan_value * 100) if total_loan_value > 0 else 0
-    
+    provision_percentage = (
+        (total_provision / total_loan_value * 100) if total_loan_value > 0 else 0
+    )
+
     # Construct response
     response = LocalImpairmentSummary(
         portfolio_id=staged_loans.portfolio_id,
@@ -1019,37 +1051,38 @@ def calculate_local_provision(
             num_loans=len(current_loans),
             total_loan_value=round(current_total, 2),
             provision_amount=round(current_provision, 2),
-            provision_rate=provision_config.current
+            provision_rate=provision_config.current,
         ),
         olem=CategoryData(
             num_loans=len(olem_loans),
             total_loan_value=round(olem_total, 2),
             provision_amount=round(olem_provision, 2),
-            provision_rate=provision_config.olem
+            provision_rate=provision_config.olem,
         ),
         substandard=CategoryData(
             num_loans=len(substandard_loans),
             total_loan_value=round(substandard_total, 2),
             provision_amount=round(substandard_provision, 2),
-            provision_rate=provision_config.substandard
+            provision_rate=provision_config.substandard,
         ),
         doubtful=CategoryData(
             num_loans=len(doubtful_loans),
             total_loan_value=round(doubtful_total, 2),
             provision_amount=round(doubtful_provision, 2),
-            provision_rate=provision_config.doubtful
+            provision_rate=provision_config.doubtful,
         ),
         loss=CategoryData(
             num_loans=len(loss_loans),
             total_loan_value=round(loss_total, 2),
             provision_amount=round(loss_provision, 2),
-            provision_rate=provision_config.loss
+            provision_rate=provision_config.loss,
         ),
         total_provision=round(total_provision, 2),
-        provision_percentage=round(provision_percentage, 1)
+        provision_percentage=round(provision_percentage, 1),
     )
-    
+
     return response
+
 
 @router.post("/calculate-ecl-provision", response_model=ECLSummary)
 def calculate_ecl_provision(
@@ -1060,50 +1093,53 @@ def calculate_ecl_provision(
 ):
     """
     Calculate ECL provisions based on pre-staged loans.
-    
-    This route takes already-staged loans and calculates ECL provisions using detailed 
+
+    This route takes already-staged loans and calculates ECL provisions using detailed
     calculation approach: Calculate PD, LGD, and EAD for each loan.
     """
     # Use provided reporting date or default to current date
     if not reporting_date:
         reporting_date = datetime.now().date()
-    
+
     # Verify portfolio belongs to current user
     portfolio = (
         db.query(Portfolio)
-        .filter(Portfolio.id == staged_loans.portfolio_id, Portfolio.user_id == current_user.id)
+        .filter(
+            Portfolio.id == staged_loans.portfolio_id,
+            Portfolio.user_id == current_user.id,
+        )
         .first()
     )
     if not portfolio:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, 
-            detail="Portfolio not found or not authorized"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Portfolio not found or not authorized",
         )
-    
+
     # Initialize category tracking
     stage_1_loans = []
     stage_2_loans = []
     stage_3_loans = []
-    
+
     # Calculate totals for each category
     stage_1_total = 0
     stage_2_total = 0
     stage_3_total = 0
-    
+
     # Calculate provisions for each category
     stage_1_provision = 0
     stage_2_provision = 0
     stage_3_provision = 0
-    
+
     # Summary metrics
     total_lgd = 0
     total_pd = 0
     total_ead_percentage = 0
     total_loans = 0
-    
+
     # Get all client IDs to fetch securities
     client_ids = {loan.employee_id for loan in staged_loans.loans}
-    
+
     # Get securities for all clients
     client_securities = {}
     if client_ids:
@@ -1121,75 +1157,81 @@ def calculate_ecl_provision(
                 if client.employee_id not in client_securities:
                     client_securities[client.employee_id] = []
                 client_securities[client.employee_id].append(security)
-    
+
     # Process the pre-staged loans
     for loan_with_stage in staged_loans.loans:
         # Get the actual loan object from database for additional details
         loan = db.query(Loan).filter(Loan.id == loan_with_stage.loan_id).first()
         if not loan:
             continue  # Skip if loan not found
-            
+
         # Use the outstanding balance from the staged data
         outstanding_loan_balance = loan_with_stage.outstanding_loan_balance
-        
+
         # Get securities for this loan's client
         client_securities_list = client_securities.get(loan_with_stage.employee_id, [])
-        
+
         # Categorize loan by the pre-assigned stage
         stage = loan_with_stage.stage.lower()
         ndia = loan_with_stage.ndia
-        
+
         if stage == "stage 1":
             stage_1_loans.append(loan)
             stage_1_total += outstanding_loan_balance
-            
+
             # Calculate components for each loan
             lgd = calculate_loss_given_default(loan, client_securities_list)
             pd = calculate_probability_of_default(loan, ndia)
-            ead_percentage = calculate_exposure_at_default_percentage(loan, reporting_date)
+            ead_percentage = calculate_exposure_at_default_percentage(
+                loan, reporting_date
+            )
             ecl = calculate_marginal_ecl(loan, ead_percentage, pd, lgd)
-            
+
             # Update summary statistics
             total_lgd += lgd
             total_pd += pd
             total_ead_percentage += ead_percentage
-            
+
             stage_1_provision += ecl
-                
+
         elif stage == "stage 2":
             stage_2_loans.append(loan)
             stage_2_total += outstanding_loan_balance
-            
+
             # Calculate components for each loan
             lgd = calculate_loss_given_default(loan, client_securities_list)
             pd = calculate_probability_of_default(loan, ndia)
-            ead_percentage = calculate_exposure_at_default_percentage(loan, reporting_date)
+            ead_percentage = calculate_exposure_at_default_percentage(
+                loan, reporting_date
+            )
             ecl = calculate_marginal_ecl(loan, ead_percentage, pd, lgd)
-            
+
             # Update summary statistics
             total_lgd += lgd
             total_pd += pd
             total_ead_percentage += ead_percentage
-            
+
             stage_2_provision += ecl
-                
+
         elif stage == "stage 3":
             stage_3_loans.append(loan)
             stage_3_total += outstanding_loan_balance
-            
+
             # Calculate components for each loan
             lgd = calculate_loss_given_default(loan, client_securities_list)
             pd = calculate_probability_of_default(loan, ndia)
-            ead_percentage = calculate_exposure_at_default_percentage(loan, reporting_date)
+            ead_percentage = calculate_exposure_at_default_percentage(
+                loan, reporting_date
+            )
             ecl = calculate_marginal_ecl(loan, ead_percentage, pd, lgd)
-            
+
             # Update summary statistics
             total_lgd += lgd
             total_pd += pd
             total_ead_percentage += ead_percentage
-            
+
             stage_3_provision += ecl
-                
+
         # Increment total loan count
         total_loans += 1
 
@@ -1204,13 +1246,21 @@ def calculate_ecl_provision(
 
     # Calculate provision percentage
     provision_percentage = (
-        (Decimal(total_provision) / Decimal(total_loan_value) * 100) if total_loan_value > 0 else 0
+        (Decimal(total_provision) / Decimal(total_loan_value) * 100)
+        if total_loan_value > 0
+        else 0
     )
-    
+
     # Calculate effective provision rates
-    stage_1_rate = Decimal(stage_1_provision) / Decimal(stage_1_total) if stage_1_total > 0 else 0
-    stage_2_rate = Decimal(stage_2_provision) / Decimal(stage_2_total) if stage_2_total > 0 else 0
-    stage_3_rate = Decimal(stage_3_provision) / Decimal(stage_3_total) if stage_3_total > 0 else 0
+    stage_1_rate = (
+        Decimal(stage_1_provision) / Decimal(stage_1_total) if stage_1_total > 0 else 0
+    )
+    stage_2_rate = (
+        Decimal(stage_2_provision) / Decimal(stage_2_total) if stage_2_total > 0 else 0
+    )
+    stage_3_rate = (
+        Decimal(stage_3_provision) / Decimal(stage_3_total) if stage_3_total > 0 else 0
+    )
 
     # Construct response
     response = ECLSummary(
@@ -1220,19 +1270,19 @@ def calculate_ecl_provision(
             num_loans=len(stage_1_loans),
             total_loan_value=round(stage_1_total, 2),
             provision_amount=round(stage_1_provision, 2),
-            provision_rate=round(stage_1_rate, 4)
+            provision_rate=round(stage_1_rate, 4),
         ),
         stage_2=CategoryData(
             num_loans=len(stage_2_loans),
             total_loan_value=round(stage_2_total, 2),
             provision_amount=round(stage_2_provision, 2),
-            provision_rate=round(stage_2_rate, 4)
+            provision_rate=round(stage_2_rate, 4),
         ),
         stage_3=CategoryData(
             num_loans=len(stage_3_loans),
             total_loan_value=round(stage_3_total, 2),
             provision_amount=round(stage_3_provision, 2),
-            provision_rate=round(stage_3_rate, 4)
+            provision_rate=round(stage_3_rate, 4),
         ),
         summary_metrics=ECLSummaryMetrics(
             avg_pd=round(avg_pd, 4),

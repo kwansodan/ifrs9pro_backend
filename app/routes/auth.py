@@ -12,8 +12,7 @@ from app.schemas import (
     PasswordSetup,
     Token,
     LoginRequest,
-    LoginResponse
-    
+    LoginResponse,
 )
 from app.auth.utils import (
     create_email_verification_token,
@@ -39,6 +38,7 @@ router = APIRouter(tags=["auth"])
 
 VALID_ADMIN_EMAILS = os.getenv("VALID_ADMIN_EMAILS", "admin@example.com").split(",")
 
+
 @router.post("/request-access")
 async def request_access(
     request_data: EmailVerificationRequest, db: Session = Depends(get_db)
@@ -47,7 +47,7 @@ async def request_access(
     existing_user = db.query(User).filter(User.email == request_data.email).first()
     if existing_user:
         raise HTTPException(status_code=409, detail="Email already registered")
-    
+
     # Check for existing pending request
     existing_request = (
         db.query(AccessRequest)
@@ -57,7 +57,7 @@ async def request_access(
         )
         .first()
     )
-    
+
     if existing_request:
         # Check if the existing request has a verified email
         if existing_request.is_email_verified:
@@ -68,13 +68,13 @@ async def request_access(
             # Check if token is expired - ensure both are timezone-naive for comparison
             current_time = datetime.utcnow()
             token_expiry = existing_request.token_expiry
-            
+
             # Convert to naive datetime if token_expiry is timezone-aware
             if token_expiry.tzinfo is not None:
                 token_expiry = token_expiry.replace(tzinfo=None)
-                
+
             is_expired = token_expiry < current_time
-            
+
             # Generate a new token if expired
             if is_expired:
                 token = create_email_verification_token(request_data.email)
@@ -83,11 +83,11 @@ async def request_access(
                 db.commit()
             else:
                 token = existing_request.token
-                
+
             # Resend verification email
             await send_verification_email(request_data.email, token)
             return {"message": "Verification email sent"}
-    
+
     # Create new access request
     token = create_email_verification_token(request_data.email)
     new_request = AccessRequest(
@@ -97,10 +97,11 @@ async def request_access(
     )
     db.add(new_request)
     db.commit()
-    
+
     # Send verification email
     await send_verification_email(request_data.email, token)
     return {"message": "Verification email sent"}
+
 
 @router.get("/verify-email/{token}")
 async def verify_email(token: str, db: Session = Depends(get_db)):
@@ -149,7 +150,7 @@ async def submit_admin_request(
     )
     if not access_request:
         raise HTTPException(status_code=404, detail="Verified email request not found")
-    
+
     # Update the admin email if provided
     if request_data.admin_email:
         access_request.admin_email = request_data.admin_email
@@ -163,7 +164,7 @@ async def submit_admin_request(
         if admin_user:
             db.commit()
             await send_admin_notification(request_data.admin_email, request_data.email)
-    
+
     db.commit()
     return AccessRequestResponse(
         id=access_request.id,
@@ -173,7 +174,6 @@ async def submit_admin_request(
         created_at=access_request.created_at,
         is_email_verified=access_request.is_email_verified,
     )
-
 
 
 @router.get("/admin/requests", response_model=List[AccessRequestResponse])
@@ -335,8 +335,10 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
 
     # Decode the token for sending back user info
     decoded_token = decode_token(access_token)
-    access_request = db.query(AccessRequest).filter(AccessRequest.email == user.email).first()
-    
+    access_request = (
+        db.query(AccessRequest).filter(AccessRequest.email == user.email).first()
+    )
+
     access_request_status = None
     if access_request is not None:
         access_request_status = access_request.status
@@ -354,6 +356,5 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
             "role": user.role,
             "is_active": user.is_active,
             "access_request_status": access_request_status,
-        }
-        
+        },
     }
