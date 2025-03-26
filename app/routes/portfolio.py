@@ -618,7 +618,7 @@ def get_quality_issues(
 
     if not quality_issues:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="No quality issues found"
+            status_code=status.HTTP_200_OK, detail="No quality issues found"
         )
 
     return quality_issues
