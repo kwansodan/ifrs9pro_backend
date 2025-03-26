@@ -591,9 +591,9 @@ async def ingest_portfolio_data(
             # Data cleanup and transformation
             # Convert column names to match model field names
             column_mapping = {
-                "Employee ID": "employee_id",
-                "Last Name": "last_name",
-                "Other Names": "other_names",
+                "Employee Id": "employee_id",
+                "Lastname": "last_name",
+                "Othernames": "other_names",
                 "Residential Address": "residential_address",
                 "Postal Address": "postal_address",
                 "Phone Number": "phone_number",
@@ -627,6 +627,9 @@ async def ingest_portfolio_data(
             rows_skipped = 0
             for index, row in df.iterrows():
                 try:
+                    # Convert employee_id to string explicitly
+                    if "employee_id" in row and pd.notna(row["employee_id"]):
+                        row["employee_id"] = str(row["employee_id"])
                     # Check if client already exists by employee_id
                     existing_client = (
                         db.query(Client)
