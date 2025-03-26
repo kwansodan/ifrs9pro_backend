@@ -112,10 +112,10 @@ async def process_loan_details(loan_details, portfolio_id, db):
 
 
 async def process_loan_guarantees(loan_guarantee_data, portfolio_id, db):
-    """Process loan guarantees file using bulk operations."""
+    """Process loan guarantees file using optimized bulk operations."""
     try:
         content = await loan_guarantee_data.read()
-        df = pd.read_excel(io.BytesIO(content))
+        df = pd.read_excel(io.BytesIO(content), dtype=str)
 
         # Column mapping
         column_mapping = {
@@ -123,56 +123,34 @@ async def process_loan_guarantees(loan_guarantee_data, portfolio_id, db):
             "Pledged Amount": "pledged_amount",
         }
 
-        # Rename columns
-        df = df.rename(columns=column_mapping)
+        df.rename(columns=column_mapping, inplace=True)
 
-        # Get existing guarantees
-        existing_guarantees = (
-            db.query(Guarantee).filter(Guarantee.portfolio_id == portfolio_id).all()
+        if "pledged_amount" in df.columns:
+            df["pledged_amount"] = pd.to_numeric(df["pledged_amount"], errors="coerce")
+
+        # Fetch only necessary fields from DB
+        existing_guarantors = (
+            db.query(Guarantee.guarantor)
+            .filter(Guarantee.portfolio_id == portfolio_id)
+            .all()
         )
-        existing_guarantees_dict = {g.guarantor: g for g in existing_guarantees}
+        existing_guarantors_set = {
+            g[0] for g in existing_guarantors
+        }  # Extract values from tuples
 
-        rows_processed = 0
-        rows_skipped = 0
-        guarantees_to_add = []
+        rows_processed = len(df)
+        new_guarantees = df[~df["guarantor"].isin(existing_guarantors_set)].copy()
 
-        # Process each row
-        for _, row in df.iterrows():
-            try:
-                guarantor = row.get("guarantor")
-
-                if guarantor in existing_guarantees_dict:
-                    # Update existing guarantee
-                    existing_guarantee = existing_guarantees_dict[guarantor]
-                    for field in column_mapping.values():
-                        if field in row and pd.notna(row[field]):
-                            setattr(existing_guarantee, field, row[field])
-                else:
-                    # Filter valid columns
-                    guarantee_data = {
-                        field: row[field]
-                        for field in column_mapping.values()
-                        if field in row and pd.notna(row[field])
-                    }
-
-                    # Create new guarantee
-                    new_guarantee = Guarantee(**guarantee_data)
-                    new_guarantee.portfolio_id = portfolio_id
-                    guarantees_to_add.append(new_guarantee)
-
-                rows_processed += 1
-            except Exception as e:
-                rows_skipped += 1
-                print(f"Error processing guarantee row: {str(e)}")
-
-        # Bulk insert new guarantees
-        if guarantees_to_add:
-            db.bulk_save_objects(guarantees_to_add)
+        # Prepare new guarantees for bulk insert
+        if not new_guarantees.empty:
+            new_guarantees["portfolio_id"] = portfolio_id
+            guarantees_to_add = new_guarantees.to_dict(orient="records")
+            db.bulk_insert_mappings(Guarantee, guarantees_to_add)
 
         return {
             "status": "success",
             "rows_processed": rows_processed,
-            "rows_skipped": rows_skipped,
+            "rows_skipped": len(df) - len(new_guarantees),
             "filename": loan_guarantee_data.filename,
         }
     except Exception as e:
@@ -184,10 +162,12 @@ async def process_loan_guarantees(loan_guarantee_data, portfolio_id, db):
 
 
 async def process_loan_collateral(loan_collateral_data, portfolio_id, db):
-    """Process loan collateral data file (client information) using bulk operations."""
+    """Process loan collateral data file using optimized bulk operations."""
     try:
         content = await loan_collateral_data.read()
-        df = pd.read_excel(io.BytesIO(content))
+        df = pd.read_excel(
+            io.BytesIO(content), dtype=str
+        )  # Read all columns as strings
 
         # Column mapping
         column_mapping = {
@@ -213,72 +193,45 @@ async def process_loan_collateral(loan_collateral_data, portfolio_id, db):
             "Client Type": "client_type",
         }
 
-        # Rename columns
-        df = df.rename(columns=column_mapping)
+        df.rename(columns=column_mapping, inplace=True)
 
-        # Process date columns
+        # Convert date columns
         date_columns = ["date_of_birth", "employment_date"]
         for col in date_columns:
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col], errors="coerce")
 
-        # Convert employee_id to string
+        # Convert employee_id to string (if it's numeric)
         if "employee_id" in df.columns:
             df["employee_id"] = df["employee_id"].astype(str)
 
-        # Get existing clients
+        # Fetch existing employee IDs
         existing_clients = (
-            db.query(Client).filter(Client.portfolio_id == portfolio_id).all()
+            db.query(Client.employee_id)
+            .filter(Client.portfolio_id == portfolio_id)
+            .all()
         )
-        existing_clients_dict = {
-            client.employee_id: client for client in existing_clients
-        }
+        existing_clients_set = {
+            c[0] for c in existing_clients
+        }  # Extract values from tuples
 
-        rows_processed = 0
-        rows_skipped = 0
-        clients_to_add = []
+        rows_processed = len(df)
+        new_clients = df[~df["employee_id"].isin(existing_clients_set)].copy()
 
-        # Process each row
-        for _, row in df.iterrows():
-            try:
-                employee_id = row.get("employee_id")
+        # Set default client_type if missing
+        if "client_type" in new_clients.columns:
+            new_clients["client_type"].fillna("consumer", inplace=True)
 
-                if employee_id in existing_clients_dict:
-                    # Update existing client
-                    existing_client = existing_clients_dict[employee_id]
-                    for field in column_mapping.values():
-                        if field in row and pd.notna(row[field]):
-                            setattr(existing_client, field, row[field])
-                else:
-                    # Filter valid columns
-                    client_data = {
-                        field: row[field]
-                        for field in column_mapping.values()
-                        if field in row and pd.notna(row[field])
-                    }
-
-                    # Set default client_type if needed
-                    if "client_type" not in client_data:
-                        client_data["client_type"] = "consumer"
-
-                    # Create new client
-                    new_client = Client(**client_data)
-                    new_client.portfolio_id = portfolio_id
-                    clients_to_add.append(new_client)
-
-                rows_processed += 1
-            except Exception as e:
-                rows_skipped += 1
-                print(f"Error processing client row: {str(e)}")
-
-        # Bulk insert new clients
-        if clients_to_add:
-            db.bulk_save_objects(clients_to_add)
+        # Prepare new clients for bulk insert
+        if not new_clients.empty:
+            new_clients["portfolio_id"] = portfolio_id
+            clients_to_add = new_clients.to_dict(orient="records")
+            db.bulk_insert_mappings(Client, clients_to_add)
 
         return {
             "status": "success",
             "rows_processed": rows_processed,
-            "rows_skipped": rows_skipped,
+            "rows_skipped": len(df) - len(new_clients),
             "filename": loan_collateral_data.filename,
         }
     except Exception as e:
