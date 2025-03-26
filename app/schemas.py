@@ -65,7 +65,7 @@ class LoginRequest(BaseModel):
 # Quality issue schemas
 
 
-class QualityIssue(BaseModel):
+class QualityIssueResponse(BaseModel):
     id: int
     portfolio_id: int
     issue_type: str
@@ -304,7 +304,7 @@ class PortfolioWithSummaryResponse(BaseModel):
     overview: Dict[str, Any]
     customer_summary: Dict[str, Any]
     quality_check: QualityCheckSummary
-    quality_issues: Optional[List[QualityIssue]] = None
+    quality_issues: Optional[List[QualityIssueResponse]] = None
     report_history: Optional[List[ReportHistoryItem]] = None
 
     class Config:

@@ -38,8 +38,7 @@ def get_dashboard(
                 "total_portfolios": 0,
                 "total_loans": 0,
                 "total_ecl_amount": 0,
-                # TODO: Implement credit risk reserve calculation
-                # "total_risk_reserve": 0,
+                "total_risk_reserve": 0,
             },
             "customer_overview": {
                 "total_customers": 0,

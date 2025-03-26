@@ -45,6 +45,7 @@ from app.models import (
     Loan,
     Security,
     Client,
+    QualityIssue,
 )
 from app.schemas import (
     PortfolioCreate,
@@ -57,7 +58,7 @@ from app.schemas import (
     ECLSummaryMetrics,
     LocalImpairmentSummary,
     ImpairmentConfig,
-    QualityIssue,
+    QualityIssueResponse,
     QualityIssueCreate,
     QualityIssueUpdate,
     QualityIssueComment,
@@ -577,10 +578,10 @@ def stage_loans_local_impairment(
 # Quality issue routes
 
 
-@router.get("/{portfolio_id}/quality-issues", response_model=List[QualityIssue])
+@router.get("/{portfolio_id}/quality-issues", response_model=List[QualityIssueResponse])
 def get_quality_issues(
     portfolio_id: int,
-    status: Optional[str] = None,
+    status_type: Optional[str] = None,
     issue_type: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -603,10 +604,10 @@ def get_quality_issues(
 
     # Build query for quality issues
     query = db.query(QualityIssue).filter(QualityIssue.portfolio_id == portfolio_id)
-
+    
     # Apply filters if provided
-    if status:
-        query = query.filter(QualityIssue.status == status)
+    if status_type:
+        query = query.filter(QualityIssue.status == status_type)
     if issue_type:
         query = query.filter(QualityIssue.issue_type == issue_type)
 
@@ -615,10 +616,15 @@ def get_quality_issues(
         QualityIssue.severity.desc(), QualityIssue.created_at.desc()
     ).all()
 
+    if not quality_issues:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="No quality issues found"
+        )
+
     return quality_issues
 
 
-@router.get("/{portfolio_id}/quality-issues/{issue_id}", response_model=QualityIssue)
+@router.get("/{portfolio_id}/quality-issues/{issue_id}", response_model=QualityIssueResponse)
 def get_quality_issue(
     portfolio_id: int,
     issue_id: int,
@@ -655,7 +661,7 @@ def get_quality_issue(
     return issue
 
 
-@router.put("/{portfolio_id}/quality-issues/{issue_id}", response_model=QualityIssue)
+@router.put("/{portfolio_id}/quality-issues/{issue_id}", response_model=QualityIssueResponse)
 def update_quality_issue(
     portfolio_id: int,
     issue_id: int,
@@ -800,7 +806,7 @@ def get_quality_issue_comments(
 
 
 @router.post(
-    "/{portfolio_id}/quality-issues/{issue_id}/approve", response_model=QualityIssue
+    "/{portfolio_id}/quality-issues/{issue_id}/approve", response_model=QualityIssueResponse
 )
 def approve_quality_issue(
     portfolio_id: int,
