@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from sqlalchemy.orm import Session
 from app.database import get_db, init_db
-from app.routes import auth, portfolio, admin, reports
+from app.routes import auth, portfolio, admin, reports, dashboard
 from app.models import User, UserRole
 from app.auth.utils import get_password_hash
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -39,18 +39,12 @@ app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(portfolio.router)
 app.include_router(reports.router)
+app.include_router(dashboard.router)
 
 
 @app.get("/")
 async def root():
     return {"message": "Welcome to IFRS9Pro API"}
-
-
-@app.get("/dashboard")
-async def dashboard():
-    return {"message": "Welcome to your dashboard"}
-
-
 
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
