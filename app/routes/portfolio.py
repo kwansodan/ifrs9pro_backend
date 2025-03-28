@@ -948,39 +948,52 @@ def recheck_quality_issues(
         open_issues=quality_counts["open_issues"],
     )
 
-
-@router.post("/calculate-local-provision", response_model=LocalImpairmentSummary)
+@router.post("/{portfolio_id}/calculate-local-impairment", response_model=LocalImpairmentSummary)
 def calculate_local_provision(
-    staged_loans: StagedLoans,
-    provision_config: ProvisionRateConfig = Body(...),
+    portfolio_id: int,
+    config: ImpairmentConfig = Body(...),
     reporting_date: Optional[date] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
-    Calculate local impairment provisions based on pre-staged loans and provision rates.
-
-    This route takes already-staged loans and applies the provision rates
-    to calculate the required provision amounts.
+    Calculate local impairment provisions directly from a portfolio ID.
+    This route handles loan staging internally based on the provided configuration.
     """
     # Use provided reporting date or default to current date
     if not reporting_date:
         reporting_date = datetime.now().date()
 
-    # Verify portfolio belongs to current user
+    # Verify portfolio exists and belongs to current user
     portfolio = (
         db.query(Portfolio)
-        .filter(
-            Portfolio.id == staged_loans.portfolio_id,
-            Portfolio.user_id == current_user.id,
-        )
+        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
         .first()
     )
     if not portfolio:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Portfolio not found or not authorized",
+            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
+
+    # Parse day ranges and extract provision rates from config
+    try:
+        current_range = parse_days_range(config.current.days_range)
+        olem_range = parse_days_range(config.olem.days_range)
+        substandard_range = parse_days_range(config.substandard.days_range)
+        doubtful_range = parse_days_range(config.doubtful.days_range)
+        loss_range = parse_days_range(config.loss.days_range)
+        
+        # Extract provision rates
+        current_rate = Decimal(config.current.rate) / Decimal(100)  # Convert percentage to decimal
+        olem_rate = Decimal(config.olem.rate) / Decimal(100)
+        substandard_rate = Decimal(config.substandard.rate) / Decimal(100)
+        doubtful_rate = Decimal(config.doubtful.rate) / Decimal(100)
+        loss_rate = Decimal(config.loss.rate) / Decimal(100)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Get all loans in the portfolio
+    loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
 
     # Initialize category tracking
     current_loans = []
@@ -996,41 +1009,56 @@ def calculate_local_provision(
     doubtful_total = 0
     loss_total = 0
 
-    # Process the pre-staged loans
-    for loan_with_stage in staged_loans.loans:
-        # Get the actual loan object from database for additional details if needed
-        loan = db.query(Loan).filter(Loan.id == loan_with_stage.loan_id).first()
-        if not loan:
-            continue  # Skip if loan not found
+    # Process each loan and categorize based on NDIA
+    for loan in loans:
+        # Skip loans with missing critical data
+        if loan.outstanding_loan_balance is None:
+            continue
 
-        # Use the outstanding balance from the staged data
-        outstanding_loan_balance = loan_with_stage.outstanding_loan_balance
+        outstanding_loan_balance = loan.outstanding_loan_balance
+        
+        # Calculate NDIA if not available
+        if loan.ndia is None:
+            if (
+                loan.accumulated_arrears
+                and loan.monthly_installment
+                and loan.monthly_installment > 0
+            ):
+                ndia = int(
+                    (loan.accumulated_arrears / loan.monthly_installment) * 30
+                )  # Convert months to days
+            else:
+                ndia = 0
+        else:
+            ndia = loan.ndia
 
-        # Categorize loan by the pre-assigned stage
-        stage = loan_with_stage.stage.lower()
-
-        if stage == "current":
+        # Determine the category based on NDIA
+        if is_in_range(ndia, current_range):
             current_loans.append(loan)
             current_total += outstanding_loan_balance
-        elif stage == "olem":
+        elif is_in_range(ndia, olem_range):
             olem_loans.append(loan)
             olem_total += outstanding_loan_balance
-        elif stage == "substandard":
+        elif is_in_range(ndia, substandard_range):
             substandard_loans.append(loan)
             substandard_total += outstanding_loan_balance
-        elif stage == "doubtful":
+        elif is_in_range(ndia, doubtful_range):
             doubtful_loans.append(loan)
             doubtful_total += outstanding_loan_balance
-        elif stage == "loss":
+        elif is_in_range(ndia, loss_range):
+            loss_loans.append(loan)
+            loss_total += outstanding_loan_balance
+        else:
+            # Default to loss category if no category matches
             loss_loans.append(loan)
             loss_total += outstanding_loan_balance
 
-    # Calculate provisions using the provision rates
-    current_provision = current_total * provision_config.current
-    olem_provision = olem_total * provision_config.olem
-    substandard_provision = substandard_total * provision_config.substandard
-    doubtful_provision = doubtful_total * provision_config.doubtful
-    loss_provision = loss_total * provision_config.loss
+    # Calculate provisions using the provision rates from config
+    current_provision = current_total * current_rate
+    olem_provision = olem_total * olem_rate
+    substandard_provision = substandard_total * substandard_rate
+    doubtful_provision = doubtful_total * doubtful_rate
+    loss_provision = loss_total * loss_rate
 
     # Calculate total loan value and provision amount
     total_loan_value = (
@@ -1051,37 +1079,37 @@ def calculate_local_provision(
 
     # Construct response
     response = LocalImpairmentSummary(
-        portfolio_id=staged_loans.portfolio_id,
+        portfolio_id=portfolio_id,
         calculation_date=reporting_date.strftime("%Y-%m-%d"),
         current=CategoryData(
             num_loans=len(current_loans),
             total_loan_value=round(current_total, 2),
             provision_amount=round(current_provision, 2),
-            provision_rate=provision_config.current,
+            provision_rate=current_rate,
         ),
         olem=CategoryData(
             num_loans=len(olem_loans),
             total_loan_value=round(olem_total, 2),
             provision_amount=round(olem_provision, 2),
-            provision_rate=provision_config.olem,
+            provision_rate=olem_rate,
         ),
         substandard=CategoryData(
             num_loans=len(substandard_loans),
             total_loan_value=round(substandard_total, 2),
             provision_amount=round(substandard_provision, 2),
-            provision_rate=provision_config.substandard,
+            provision_rate=substandard_rate,
         ),
         doubtful=CategoryData(
             num_loans=len(doubtful_loans),
             total_loan_value=round(doubtful_total, 2),
             provision_amount=round(doubtful_provision, 2),
-            provision_rate=provision_config.doubtful,
+            provision_rate=doubtful_rate,
         ),
         loss=CategoryData(
             num_loans=len(loss_loans),
             total_loan_value=round(loss_total, 2),
             provision_amount=round(loss_provision, 2),
-            provision_rate=provision_config.loss,
+            provision_rate=loss_rate,
         ),
         total_provision=round(total_provision, 2),
         provision_percentage=round(provision_percentage, 1),
@@ -1089,38 +1117,43 @@ def calculate_local_provision(
 
     return response
 
-
-@router.post("/calculate-ecl-provision", response_model=ECLSummary)
+@router.post("/{portfolio_id}/calculate-ecl", response_model=ECLSummary)
 def calculate_ecl_provision(
-    staged_loans: StagedLoans,
+    portfolio_id: int,
+    config: ECLStagingConfig = Body(...),
     reporting_date: Optional[date] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
-    Calculate ECL provisions based on pre-staged loans.
-
-    This route takes already-staged loans and calculates ECL provisions using detailed
-    calculation approach: Calculate PD, LGD, and EAD for each loan.
+    Calculate ECL provisions directly from a portfolio ID.
+    This route handles loan staging internally based on the provided configuration.
     """
     # Use provided reporting date or default to current date
     if not reporting_date:
         reporting_date = datetime.now().date()
 
-    # Verify portfolio belongs to current user
+    # Verify portfolio exists and belongs to current user
     portfolio = (
         db.query(Portfolio)
-        .filter(
-            Portfolio.id == staged_loans.portfolio_id,
-            Portfolio.user_id == current_user.id,
-        )
+        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
         .first()
     )
     if not portfolio:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Portfolio not found or not authorized",
+            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
+
+    # Parse day ranges from config
+    try:
+        stage_1_range = parse_days_range(config.stage_1.days_range)
+        stage_2_range = parse_days_range(config.stage_2.days_range)
+        stage_3_range = parse_days_range(config.stage_3.days_range)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Get all loans in the portfolio
+    loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
 
     # Initialize category tracking
     stage_1_loans = []
@@ -1144,7 +1177,7 @@ def calculate_ecl_provision(
     total_loans = 0
 
     # Get all client IDs to fetch securities
-    client_ids = {loan.employee_id for loan in staged_loans.loans}
+    client_ids = {loan.employee_id for loan in loans if loan.employee_id}
 
     # Get securities for all clients
     client_securities = {}
@@ -1164,81 +1197,65 @@ def calculate_ecl_provision(
                     client_securities[client.employee_id] = []
                 client_securities[client.employee_id].append(security)
 
-    # Process the pre-staged loans
-    for loan_with_stage in staged_loans.loans:
-        # Get the actual loan object from database for additional details
-        loan = db.query(Loan).filter(Loan.id == loan_with_stage.loan_id).first()
-        if not loan:
-            continue  # Skip if loan not found
+    # Process and stage each loan
+    for loan in loans:
+        # Skip loans with missing critical data
+        if loan.outstanding_loan_balance is None:
+            continue
 
-        # Use the outstanding balance from the staged data
-        outstanding_loan_balance = loan_with_stage.outstanding_loan_balance
+        outstanding_loan_balance = loan.outstanding_loan_balance
+        ndia = loan.ndia if loan.ndia is not None else 0
+        
+        # Determine the stage based on NDIA
+        if is_in_range(ndia, stage_1_range):
+            stage = "Stage 1"
+            current_stage_loans = stage_1_loans
+            current_stage_total = stage_1_total
+            current_stage_provision = stage_1_provision
+        elif is_in_range(ndia, stage_2_range):
+            stage = "Stage 2"
+            current_stage_loans = stage_2_loans
+            current_stage_total = stage_2_total
+            current_stage_provision = stage_2_provision
+        elif is_in_range(ndia, stage_3_range):
+            stage = "Stage 3"
+            current_stage_loans = stage_3_loans
+            current_stage_total = stage_3_total
+            current_stage_provision = stage_3_provision
+        else:
+            # Default to Stage 3 if no stage matches
+            stage = "Stage 3"
+            current_stage_loans = stage_3_loans
+            current_stage_total = stage_3_total
+            current_stage_provision = stage_3_provision
 
         # Get securities for this loan's client
-        client_securities_list = client_securities.get(loan_with_stage.employee_id, [])
+        client_securities_list = client_securities.get(loan.employee_id, [])
 
-        # Categorize loan by the pre-assigned stage
-        stage = loan_with_stage.stage.lower()
-        ndia = loan_with_stage.ndia
+        # Calculate ECL components for the loan
+        lgd = calculate_loss_given_default(loan, client_securities_list)
+        pd = calculate_probability_of_default(loan, ndia)
+        ead_percentage = calculate_exposure_at_default_percentage(loan, reporting_date)
+        ecl = calculate_marginal_ecl(loan, ead_percentage, pd, lgd)
 
-        if stage == "stage 1":
+        # Update stage totals
+        if stage == "Stage 1":
             stage_1_loans.append(loan)
             stage_1_total += outstanding_loan_balance
-
-            # Calculate components for each loan
-            lgd = calculate_loss_given_default(loan, client_securities_list)
-            pd = calculate_probability_of_default(loan, ndia)
-            ead_percentage = calculate_exposure_at_default_percentage(
-                loan, reporting_date
-            )
-            ecl = calculate_marginal_ecl(loan, ead_percentage, pd, lgd)
-
-            # Update summary statistics
-            total_lgd += lgd
-            total_pd += pd
-            total_ead_percentage += ead_percentage
-
             stage_1_provision += ecl
-
-        elif stage == "stage 2":
+        elif stage == "Stage 2":
             stage_2_loans.append(loan)
             stage_2_total += outstanding_loan_balance
-
-            # Calculate components for each loan
-            lgd = calculate_loss_given_default(loan, client_securities_list)
-            pd = calculate_probability_of_default(loan, ndia)
-            ead_percentage = calculate_exposure_at_default_percentage(
-                loan, reporting_date
-            )
-            ecl = calculate_marginal_ecl(loan, ead_percentage, pd, lgd)
-
-            # Update summary statistics
-            total_lgd += lgd
-            total_pd += pd
-            total_ead_percentage += ead_percentage
-
             stage_2_provision += ecl
-
-        elif stage == "stage 3":
+        elif stage == "Stage 3":
             stage_3_loans.append(loan)
             stage_3_total += outstanding_loan_balance
-
-            # Calculate components for each loan
-            lgd = calculate_loss_given_default(loan, client_securities_list)
-            pd = calculate_probability_of_default(loan, ndia)
-            ead_percentage = calculate_exposure_at_default_percentage(
-                loan, reporting_date
-            )
-            ecl = calculate_marginal_ecl(loan, ead_percentage, pd, lgd)
-
-            # Update summary statistics
-            total_lgd += lgd
-            total_pd += pd
-            total_ead_percentage += ead_percentage
-
             stage_3_provision += ecl
 
-        # Increment total loan count
+        # Update summary statistics
+        total_lgd += lgd
+        total_pd += pd
+        total_ead_percentage += ead_percentage
         total_loans += 1
 
     # Calculate averages for summary metrics
@@ -1270,7 +1287,7 @@ def calculate_ecl_provision(
 
     # Construct response
     response = ECLSummary(
-        portfolio_id=staged_loans.portfolio_id,
+        portfolio_id=portfolio_id,
         calculation_date=reporting_date.strftime("%Y-%m-%d"),
         stage_1=CategoryData(
             num_loans=len(stage_1_loans),
