@@ -306,6 +306,7 @@ class PortfolioWithSummaryResponse(BaseModel):
     quality_check: QualityCheckSummary
     quality_issues: Optional[List[QualityIssueResponse]] = None
     report_history: Optional[List[ReportHistoryItem]] = None
+    latest_results: Optional[PortfolioLatestResults] = None
 
     class Config:
         from_attributes = True
@@ -660,3 +661,64 @@ class ECLSummary(BaseModel):
     stage_2: CategoryData
     stage_3: CategoryData
     summary_metrics: ECLSummaryMetrics
+
+
+# Add these to your app/schemas.py file
+
+from pydantic import BaseModel
+from typing import Optional, List, Dict, Any, Union
+from datetime import datetime, date
+
+
+class StagingResultBase(BaseModel):
+    staging_type: str
+    config: Dict[str, Any]
+    result_summary: Dict[str, Any]
+
+
+class StagingResultCreate(StagingResultBase):
+    portfolio_id: int
+
+
+class StagingResultResponse(StagingResultBase):
+    id: int
+    portfolio_id: int
+    created_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
+class CalculationResultBase(BaseModel):
+    calculation_type: str
+    config: Dict[str, Any]
+    result_summary: Dict[str, Any]
+    total_provision: float
+    provision_percentage: float
+    reporting_date: date
+
+
+class CalculationResultCreate(CalculationResultBase):
+    portfolio_id: int
+
+
+class CalculationResultResponse(CalculationResultBase):
+    id: int
+    portfolio_id: int
+    created_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
+class PortfolioLatestResults(BaseModel):
+    latest_local_impairment_staging: Optional[StagingResultResponse] = None
+    latest_ecl_staging: Optional[StagingResultResponse] = None
+    latest_local_impairment_calculation: Optional[CalculationResultResponse] = None
+    latest_ecl_calculation: Optional[CalculationResultResponse] = None
+
+    class Config:
+        orm_mode = True
+
+
+
