@@ -543,7 +543,7 @@ class PortfolioWithSummaryResponse(BaseModel):
     quality_issues: Optional[List[QualityIssueResponse]] = None
     report_history: Optional[List[ReportHistoryItem]] = None
     calculation_summary: Optional[CalculationSummary] = None 
-    latest_results: Optional[PortfolioLatestResults] = None
+    # latest_results: Optional[PortfolioLatestResults] = None
 
     class Config:
         from_attributes = True

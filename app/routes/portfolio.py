@@ -388,15 +388,15 @@ def get_portfolio(
 
 
     # Create PortfolioLatestResults object
-    portfolio_latest_results = None
-    if any([latest_local_impairment_staging, latest_ecl_staging, 
-            latest_local_impairment_calculation, latest_ecl_calculation]):
-        portfolio_latest_results = PortfolioLatestResults(
-            latest_local_impairment_staging=latest_local_impairment_staging,
-            latest_ecl_staging=latest_ecl_staging,
-            latest_local_impairment_calculation=latest_local_impairment_calculation,
-            latest_ecl_calculation=latest_ecl_calculation
-        )
+    # portfolio_latest_results = None
+    # if any([latest_local_impairment_staging, latest_ecl_staging, 
+    #         latest_local_impairment_calculation, latest_ecl_calculation]):
+    #     portfolio_latest_results = PortfolioLatestResults(
+    #         latest_local_impairment_staging=latest_local_impairment_staging,
+    #         latest_ecl_staging=latest_ecl_staging,
+    #         latest_local_impairment_calculation=latest_local_impairment_calculation,
+    #         latest_ecl_calculation=latest_ecl_calculation
+    #     )
 
     # Create response dictionary with portfolio data and summaries
     response = PortfolioWithSummaryResponse(
