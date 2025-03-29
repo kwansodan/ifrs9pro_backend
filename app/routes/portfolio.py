@@ -153,7 +153,15 @@ def get_portfolios(
     # Apply pagination
     portfolios = query.offset(skip).limit(limit).all()
 
-    return {"items": portfolios, "total": total}
+    # Convert the repayment_source boolean to string representation
+    portfolio_list = []
+    for portfolio in portfolios:
+        portfolio_dict = portfolio.__dict__.copy()
+        if hasattr(portfolio, 'repayment_source'):
+            portfolio_dict['repayment_source'] = "At Source" if portfolio.repayment_source else "Manual Transfer"
+        portfolio_list.append(portfolio_dict)
+
+    return {"items": portfolio_list, "total": total}
 
 
 @router.get("/{portfolio_id}", response_model=PortfolioWithSummaryResponse)
@@ -384,19 +392,9 @@ def get_portfolio(
                 "provision_percentage": float(latest_local_impairment_calculation.provision_percentage),
                 "calculation_date": latest_local_impairment_calculation.created_at
             }
-        
 
-
-    # Create PortfolioLatestResults object
-    # portfolio_latest_results = None
-    # if any([latest_local_impairment_staging, latest_ecl_staging, 
-    #         latest_local_impairment_calculation, latest_ecl_calculation]):
-    #     portfolio_latest_results = PortfolioLatestResults(
-    #         latest_local_impairment_staging=latest_local_impairment_staging,
-    #         latest_ecl_staging=latest_ecl_staging,
-    #         latest_local_impairment_calculation=latest_local_impairment_calculation,
-    #         latest_ecl_calculation=latest_ecl_calculation
-    #     )
+    # Convert repayment_source boolean to string representation
+    repayment_source_str = "At Source" if portfolio.repayment_source else "Manual Transfer"
 
     # Create response dictionary with portfolio data and summaries
     response = PortfolioWithSummaryResponse(
@@ -407,6 +405,7 @@ def get_portfolio(
         customer_type=portfolio.customer_type,
         funding_source=portfolio.funding_source,
         data_source=portfolio.data_source,
+        repayment_source=repayment_source_str,  # Add the repayment_source string field
         created_at=portfolio.created_at,
         updated_at=portfolio.updated_at,
         overview=OverviewModel(
@@ -424,11 +423,11 @@ def get_portfolio(
         quality_check=quality_check_summary,
         quality_issues=quality_issues if include_quality_issues else None,
         report_history=report_history if include_report_history else None,
-        calculation_summary=calculation_summary,  
-        # latest_results=portfolio_latest_results,
+        calculation_summary=calculation_summary,
     )
 
     return response
+
 @router.put("/{portfolio_id}", response_model=PortfolioResponse)
 def update_portfolio(
     portfolio_id: int,
