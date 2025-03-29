@@ -151,122 +151,6 @@ def get_portfolios(
 # Update the get_portfolio endpoint in your portfolios.py file
 
 
-@router.get("/{portfolio_id}", response_model=PortfolioWithSummaryResponse)
-def get_portfolio(
-    portfolio_id: int,
-    include_quality_issues: bool = False,
-    include_report_history: bool = False,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
-):
-    """
-    Retrieve a specific portfolio by ID including overview, customer summary, quality checks,
-    and optionally report history.
-    """
-    # Query the portfolio with joined loans and clients
-    portfolio = (
-        db.query(Portfolio)
-        .options(joinedload(Portfolio.loans), joinedload(Portfolio.clients))
-        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
-        .first()
-    )
-
-    if not portfolio:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
-        )
-
-    # Calculate overview metrics
-    total_loans = len(portfolio.loans)
-    total_loan_value = sum(
-        loan.loan_amount for loan in portfolio.loans if loan.loan_amount is not None
-    )
-    average_loan_amount = total_loan_value / total_loans if total_loans > 0 else 0
-    total_customers = len(portfolio.clients)
-
-    # Calculate customer summary metrics
-    individual_customers = sum(
-        1 for client in portfolio.clients if client.client_type == "consumer"
-    )
-    institutions = sum(
-        1 for client in portfolio.clients if client.client_type == "institution"
-    )
-    mixed = sum(
-        1
-        for client in portfolio.clients
-        if client.client_type not in ["consumer", "institution"]
-    )
-    # Determine active customers (you may need to adjust this logic based on your definition of "active")
-    active_customers = sum(
-        1
-        for client in portfolio.clients
-        if any(
-            loan.paid is False
-            for loan in portfolio.loans
-            if hasattr(loan, "employee_id") and loan.employee_id == client.employee_id
-        )
-    )
-
-    # Run quality checks and create issues if necessary
-    quality_counts = create_quality_issues_if_needed(db, portfolio_id)
-
-    quality_check_summary = QualityCheckSummary(
-        duplicate_names=quality_counts["duplicate_names"],
-        duplicate_addresses=quality_counts["duplicate_addresses"],
-        missing_repayment_data=quality_counts["missing_repayment_data"],
-        total_issues=quality_counts["total_issues"],
-        high_severity_issues=quality_counts["high_severity_issues"],
-        open_issues=quality_counts["open_issues"],
-    )
-
-    # Get quality issues if requested
-    quality_issues = []
-    if include_quality_issues:
-        quality_issues = (
-            db.query(QualityIssue)
-            .filter(QualityIssue.portfolio_id == portfolio_id)
-            .order_by(QualityIssue.severity.desc(), QualityIssue.created_at.desc())
-            .all()
-        )
-
-    # Get report history if requested
-    report_history = []
-    if include_report_history:
-        report_history = (
-            db.query(Report)
-            .filter(Report.portfolio_id == portfolio_id)
-            .order_by(Report.created_at.desc())
-            .all()
-        )
-
-    # Create response dictionary with portfolio data and summaries
-    response = {
-        "id": portfolio.id,
-        "name": portfolio.name,
-        "description": portfolio.description,
-        "asset_type": portfolio.asset_type,
-        "customer_type": portfolio.customer_type,
-        "funding_source": portfolio.funding_source,
-        "created_at": portfolio.created_at,
-        "updated_at": portfolio.updated_at,
-        "overview": {
-            "total_loans": total_loans,
-            "total_loan_value": round(total_loan_value, 2),
-            "average_loan_amount": round(average_loan_amount, 2),
-            "total_customers": total_customers,
-        },
-        "customer_summary": {
-            "individual_customers": individual_customers,
-            "institutions": institutions,
-            "mixed": mixed,
-            "active_customers": active_customers,
-        },
-        "quality_check": quality_check_summary,
-        "quality_issues": quality_issues if include_quality_issues else None,
-        "report_history": report_history if include_report_history else None,
-    }
-
-    return response
 
 
 @router.put("/{portfolio_id}", response_model=PortfolioResponse)
@@ -419,6 +303,7 @@ def stage_loans_ecl(
 ):
     """
     Classify loans in the portfolio according to ECL staging criteria (Stage 1, 2, 3).
+    Stores the staging information in the database.
     """
     portfolio = (
         db.query(Portfolio)
@@ -442,22 +327,39 @@ def stage_loans_ecl(
 
     # Stage the loans
     staged_loans = []
+    staged_at = datetime.now()
+    
+    # Count loans in each stage
+    stage1_count = 0
+    stage2_count = 0
+    stage3_count = 0
+    total_count = 0
 
     for loan in loans:
-
+        total_count += 1
         # Determine the stage
         if is_in_range(loan.ndia, stage_1_range):
             stage = "Stage 1"
+            stage1_count += 1
         elif is_in_range(loan.ndia, stage_2_range):
             stage = "Stage 2"
+            stage2_count += 1
         elif is_in_range(loan.ndia, stage_3_range):
             stage = "Stage 3"
+            stage3_count += 1
         else:
             # Default to Stage 3 if no stage matches
             stage = "Stage 3"
+            stage3_count += 1
 
+        # Store staging information in the loan object
+        loan.ecl_stage = stage
+        loan.ecl_staged_at = staged_at
+        db.add(loan)
+
+        # Create the loan stage info for the response
+        ndia_value = int(loan.ndia) if loan.ndia is not None else 0
         outstanding_loan_balance = loan.outstanding_loan_balance
-        ndia = int(loan.ndia)
         loan_issue_date = loan.loan_issue_date
         accumulated_arrears = loan.accumulated_arrears
         loan_amount = loan.loan_amount
@@ -470,7 +372,7 @@ def stage_loans_ecl(
                 employee_id=loan.employee_id,
                 stage=stage,
                 outstanding_loan_balance=outstanding_loan_balance,
-                ndia=ndia,
+                ndia=ndia_value,
                 loan_issue_date=loan_issue_date,
                 loan_amount=loan_amount,
                 monthly_installment=monthly_installment,
@@ -478,6 +380,26 @@ def stage_loans_ecl(
                 accumulated_arrears=accumulated_arrears,
             )
         )
+
+    # Create a new StagingResult record
+    result_summary = {
+        "total_loans": total_count,
+        "stage1_count": stage1_count,
+        "stage2_count": stage2_count,
+        "stage3_count": stage3_count,
+        "staged_at": staged_at.isoformat()
+    }
+    
+    staging_result = StagingResult(
+        portfolio_id=portfolio_id,
+        staging_type="ecl",
+        config=config.dict(),
+        result_summary=result_summary
+    )
+    db.add(staging_result)
+    
+    # Commit the changes
+    db.commit()
 
     return StagingResponse(loans=staged_loans)
 
@@ -492,6 +414,7 @@ def stage_loans_local_impairment(
     """
     Classify loans in the portfolio according to local impairment categories:
     Current, OLEM, Substandard, Doubtful, and Loss.
+    Stores the staging information in the database.
     """
     # Verify portfolio exists and belongs to current user
     portfolio = (
@@ -520,8 +443,18 @@ def stage_loans_local_impairment(
 
     # Stage the loans
     staged_loans = []
+    staged_at = datetime.now()
+    
+    # Count loans in each category
+    current_count = 0
+    olem_count = 0
+    substandard_count = 0
+    doubtful_count = 0
+    loss_count = 0
+    total_count = 0
 
     for loan in loans:
+        total_count += 1
         # Calculate NDIA if not available
         if loan.ndia is None:
             if (
@@ -540,17 +473,32 @@ def stage_loans_local_impairment(
         # Determine the category
         if is_in_range(ndia, current_range):
             stage = "Current"
+            current_count += 1
         elif is_in_range(ndia, olem_range):
             stage = "OLEM"
+            olem_count += 1
         elif is_in_range(ndia, substandard_range):
             stage = "Substandard"
+            substandard_count += 1
         elif is_in_range(ndia, doubtful_range):
             stage = "Doubtful"
+            doubtful_count += 1
         elif is_in_range(ndia, loss_range):
             stage = "Loss"
+            loss_count += 1
+        else:
+            # Default to Loss if no category matches
+            stage = "Loss"
+            loss_count += 1
 
+        # Store staging information in the loan object
+        loan.local_impairment_stage = stage
+        loan.local_impairment_staged_at = staged_at
+        db.add(loan)
+
+        # Create the loan stage info for the response
+        ndia_value = int(loan.ndia) if loan.ndia is not None else 0
         outstanding_loan_balance = loan.outstanding_loan_balance
-        ndia = int(loan.ndia)
         loan_issue_date = loan.loan_issue_date
         accumulated_arrears = loan.accumulated_arrears
         loan_amount = loan.loan_amount
@@ -563,7 +511,7 @@ def stage_loans_local_impairment(
                 employee_id=loan.employee_id,
                 stage=stage,
                 outstanding_loan_balance=outstanding_loan_balance,
-                ndia=ndia,
+                ndia=ndia_value,
                 loan_issue_date=loan_issue_date,
                 loan_amount=loan_amount,
                 monthly_installment=monthly_installment,
@@ -571,9 +519,30 @@ def stage_loans_local_impairment(
                 accumulated_arrears=accumulated_arrears,
             )
         )
+    
+    # Create a new StagingResult record
+    result_summary = {
+        "total_loans": total_count,
+        "current_count": current_count,
+        "olem_count": olem_count,
+        "substandard_count": substandard_count,
+        "doubtful_count": doubtful_count,
+        "loss_count": loss_count,
+        "staged_at": staged_at.isoformat()
+    }
+    
+    staging_result = StagingResult(
+        portfolio_id=portfolio_id,
+        staging_type="local_impairment",
+        config=config.dict(),
+        result_summary=result_summary
+    )
+    db.add(staging_result)
+    
+    # Commit the changes
+    db.commit()
 
     return StagingResponse(loans=staged_loans)
-
 
 # Quality issue routes
 
