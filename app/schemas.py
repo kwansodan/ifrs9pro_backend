@@ -429,13 +429,37 @@ class CalculationStep(BaseModel):
     ecl: CalculationTypeInfo
 
 
-class CreationStep(BaseModel):
-    completed: bool
-    created_at: Optional[datetime] = None
-    asset_type: Optional[str] = None
-    customer_type: Optional[str] = None
-    funding_source: Optional[str] = None
-    data_source: Optional[str] = None
+class CategoryData(BaseModel):
+    num_loans: int
+    total_loan_value: float
+    provision_amount: float
+    provision_rate: float
+
+class ECLCalculationDetail(BaseModel):
+    """Detailed ECL calculation results for a portfolio"""
+    stage_1: Optional[CategoryData] = None
+    stage_2: Optional[CategoryData] = None
+    stage_3: Optional[CategoryData] = None
+    total_provision: float = 0
+    provision_percentage: float = 0
+    calculation_date: Optional[datetime] = None
+
+class LocalImpairmentDetail(BaseModel):
+    """Detailed local impairment calculation results for a portfolio"""
+    current: Optional[CategoryData] = None
+    olem: Optional[CategoryData] = None
+    substandard: Optional[CategoryData] = None
+    doubtful: Optional[CategoryData] = None
+    loss: Optional[CategoryData] = None
+    total_provision: float = 0
+    provision_percentage: float = 0
+    calculation_date: Optional[datetime] = None
+
+class CalculationSummary(BaseModel):
+    """Summary of calculation results for a portfolio"""
+    ecl: Optional[ECLCalculationDetail] = None
+    local_impairment: Optional[LocalImpairmentDetail] = None
+    total_loan_value: float = 0
 
 
 class IngestionStep(BaseModel):
@@ -445,11 +469,11 @@ class IngestionStep(BaseModel):
     last_ingestion_date: Optional[datetime] = None
 
 
-class CreationSteps(BaseModel):
-    creation: CreationStep
-    ingestion: IngestionStep
-    staging: StagingStep
-    calculation: CalculationStep
+# class CreationSteps(BaseModel):
+#     creation: CreationStep
+#     ingestion: IngestionStep
+#     staging: StagingStep
+#     calculation: CalculationStep
 
 
 class StagingResultBase(BaseModel):
@@ -518,12 +542,11 @@ class PortfolioWithSummaryResponse(BaseModel):
     quality_check: Optional[QualityCheckSummary] = None
     quality_issues: Optional[List[QualityIssueResponse]] = None
     report_history: Optional[List[ReportHistoryItem]] = None
-    creation_steps: CreationSteps
+    calculation_summary: Optional[CalculationSummary] = None 
     latest_results: Optional[PortfolioLatestResults] = None
 
     class Config:
         from_attributes = True
-
 
 # ==================== IMPAIRMENT MODELS ====================
 
@@ -568,15 +591,7 @@ class ImpairmentCategoryData(BaseModel):
     rate: float
     total_loan_value: float
     provision_amount: float
-
-
-class CategoryData(BaseModel):
-    num_loans: int
-    total_loan_value: float
-    provision_amount: float
-    provision_rate: float
-
-
+    
 class LocalImpairmentCategoryData(BaseModel):
     num_loans: int
     total_loan_value: float

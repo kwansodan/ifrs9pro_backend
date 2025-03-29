@@ -79,6 +79,9 @@ from app.schemas import (
     ECLComponentConfig,
     LoanStageInfo,
     CategoryData,
+    PortfolioWithSummaryResponse,
+    OverviewModel,
+    CustomerSummaryModel,
     PortfolioLatestResults,
 
 
@@ -283,89 +286,149 @@ def get_portfolio(
         .first()
     )
 
-    # Portfolio creation steps
-    creation_steps = {
-        "creation": {
-            "completed": True,  # If we're viewing the portfolio, it exists
-            "created_at": portfolio.created_at,
-            "asset_type": portfolio.asset_type,
-            "customer_type": portfolio.customer_type,
-        },
-        "ingestion": {
-            "completed": total_loans > 0,  # Consider ingestion complete if there are loans
-            "total_loans": total_loans,
-            "total_customers": total_customers,
-            "last_ingestion_date": max([loan.created_at for loan in portfolio.loans], default=None) if portfolio.loans else None,
-        },
-        "staging": {
-            "local_impairment": {
-                "completed": latest_local_impairment_staging is not None,
-                "staged_at": latest_local_impairment_staging.created_at if latest_local_impairment_staging else None,
-                "total_loans": latest_local_impairment_staging.result_summary.get("total_loans", 0) if latest_local_impairment_staging else 0,
-            },
-            "ecl": {
-                "completed": latest_ecl_staging is not None,
-                "staged_at": latest_ecl_staging.created_at if latest_ecl_staging else None,
-                "total_loans": latest_ecl_staging.result_summary.get("total_loans", 0) if latest_ecl_staging else 0,
-            }
-        },
-        "calculation": {
-            "local_impairment": {
-                "completed": latest_local_impairment_calculation is not None,
-                "calculated_at": latest_local_impairment_calculation.created_at if latest_local_impairment_calculation else None,
-                "total_provision": latest_local_impairment_calculation.total_provision if latest_local_impairment_calculation else None,
-                "provision_percentage": latest_local_impairment_calculation.provision_percentage if latest_local_impairment_calculation else None,
-            },
-            "ecl": {
-                "completed": latest_ecl_calculation is not None,
-                "calculated_at": latest_ecl_calculation.created_at if latest_ecl_calculation else None,
-                "total_provision": latest_ecl_calculation.total_provision if latest_ecl_calculation else None,
-                "provision_percentage": latest_ecl_calculation.provision_percentage if latest_ecl_calculation else None,
-            }
+    # Calculate summary for calculations
+    calculation_summary = None
+    if latest_ecl_calculation or latest_local_impairment_calculation:
+        # Get the total loan value from earlier calculation
+        total_value = round(total_loan_value, 2)
+        
+        # Initialize calculation summary
+        calculation_summary = {
+            "total_loan_value": total_value,
         }
-    }
+        
+        # Add ECL detailed summary if available
+        if latest_ecl_calculation:
+            # Get the detailed result summary
+            ecl_summary = latest_ecl_calculation.result_summary
+            
+            # Extract stage-specific data from the result_summary
+            stage_1_data = {
+                "num_loans": ecl_summary.get("stage1_count", 0),
+                "total_loan_value": ecl_summary.get("stage1_total", 0),
+                "provision_amount": ecl_summary.get("stage1_provision", 0),
+                "provision_rate": ecl_summary.get("stage1_provision_rate", 0),
+            }
+            
+            stage_2_data = {
+                "num_loans": ecl_summary.get("stage2_count", 0),
+                "total_loan_value": ecl_summary.get("stage2_total", 0),
+                "provision_amount": ecl_summary.get("stage2_provision", 0),
+                "provision_rate": ecl_summary.get("stage2_provision_rate", 0),
+            }
+            
+            stage_3_data = {
+                "num_loans": ecl_summary.get("stage3_count", 0),
+                "total_loan_value": ecl_summary.get("stage3_total", 0),
+                "provision_amount": ecl_summary.get("stage3_provision", 0),
+                "provision_rate": ecl_summary.get("stage3_provision_rate", 0),
+            }
+            
+            calculation_summary["ecl"] = {
+                "stage_1": stage_1_data,
+                "stage_2": stage_2_data,
+                "stage_3": stage_3_data,
+                "total_provision": float(latest_ecl_calculation.total_provision),
+                "provision_percentage": float(latest_ecl_calculation.provision_percentage),
+                "calculation_date": latest_ecl_calculation.created_at
+            }
+            
+        # Add local impairment detailed summary if available
+        if latest_local_impairment_calculation:
+            # Get the detailed result summary
+            local_summary = latest_local_impairment_calculation.result_summary
+            
+            # Extract category-specific data from the result_summary
+            current_data = {
+                "num_loans": local_summary.get("current_count", 0),
+                "total_loan_value": local_summary.get("current_total", 0),
+                "provision_amount": local_summary.get("current_provision", 0),
+                "provision_rate": local_summary.get("current_provision_rate", 0),
+            }
+            
+            olem_data = {
+                "num_loans": local_summary.get("olem_count", 0),
+                "total_loan_value": local_summary.get("olem_total", 0),
+                "provision_amount": local_summary.get("olem_provision", 0),
+                "provision_rate": local_summary.get("olem_provision_rate", 0),
+            }
+            
+            substandard_data = {
+                "num_loans": local_summary.get("substandard_count", 0),
+                "total_loan_value": local_summary.get("substandard_total", 0),
+                "provision_amount": local_summary.get("substandard_provision", 0),
+                "provision_rate": local_summary.get("substandard_provision_rate", 0),
+            }
+            
+            doubtful_data = {
+                "num_loans": local_summary.get("doubtful_count", 0),
+                "total_loan_value": local_summary.get("doubtful_total", 0),
+                "provision_amount": local_summary.get("doubtful_provision", 0),
+                "provision_rate": local_summary.get("doubtful_provision_rate", 0),
+            }
+            
+            loss_data = {
+                "num_loans": local_summary.get("loss_count", 0),
+                "total_loan_value": local_summary.get("loss_total", 0),
+                "provision_amount": local_summary.get("loss_provision", 0),
+                "provision_rate": local_summary.get("loss_provision_rate", 0),
+            }
+            
+            calculation_summary["local_impairment"] = {
+                "current": current_data,
+                "olem": olem_data,
+                "substandard": substandard_data,
+                "doubtful": doubtful_data,
+                "loss": loss_data,
+                "total_provision": float(latest_local_impairment_calculation.total_provision),
+                "provision_percentage": float(latest_local_impairment_calculation.provision_percentage),
+                "calculation_date": latest_local_impairment_calculation.created_at
+            }
+        
 
-    # Create the latest results object
-    latest_results = {
-        "latest_local_impairment_staging": latest_local_impairment_staging,
-        "latest_ecl_staging": latest_ecl_staging,
-        "latest_local_impairment_calculation": latest_local_impairment_calculation,
-        "latest_ecl_calculation": latest_ecl_calculation,
-    }
+
+    # Create PortfolioLatestResults object
+    portfolio_latest_results = None
+    if any([latest_local_impairment_staging, latest_ecl_staging, 
+            latest_local_impairment_calculation, latest_ecl_calculation]):
+        portfolio_latest_results = PortfolioLatestResults(
+            latest_local_impairment_staging=latest_local_impairment_staging,
+            latest_ecl_staging=latest_ecl_staging,
+            latest_local_impairment_calculation=latest_local_impairment_calculation,
+            latest_ecl_calculation=latest_ecl_calculation
+        )
 
     # Create response dictionary with portfolio data and summaries
-    response = {
-        "id": portfolio.id,
-        "name": portfolio.name,
-        "description": portfolio.description,
-        "asset_type": portfolio.asset_type,
-        "customer_type": portfolio.customer_type,
-        "funding_source": portfolio.funding_source,
-        "data_source": portfolio.data_source,
-        "created_at": portfolio.created_at,
-        "updated_at": portfolio.updated_at,
-        "overview": {
-            "total_loans": total_loans,
-            "total_loan_value": round(total_loan_value, 2),
-            "average_loan_amount": round(average_loan_amount, 2),
-            "total_customers": total_customers,
-        },
-        "customer_summary": {
-            "individual_customers": individual_customers,
-            "institutions": institutions,
-            "mixed": mixed,
-            "active_customers": active_customers,
-        },
-        "quality_check": quality_check_summary,
-        "quality_issues": quality_issues if include_quality_issues else None,
-        "report_history": report_history if include_report_history else None,
-        "creation_steps": creation_steps,
-        "latest_results": latest_results,
-    }
+    response = PortfolioWithSummaryResponse(
+        id=portfolio.id,
+        name=portfolio.name,
+        description=portfolio.description,
+        asset_type=portfolio.asset_type,
+        customer_type=portfolio.customer_type,
+        funding_source=portfolio.funding_source,
+        data_source=portfolio.data_source,
+        created_at=portfolio.created_at,
+        updated_at=portfolio.updated_at,
+        overview=OverviewModel(
+            total_loans=total_loans,
+            total_loan_value=round(total_loan_value, 2),
+            average_loan_amount=round(average_loan_amount, 2),
+            total_customers=total_customers,
+        ),
+        customer_summary=CustomerSummaryModel(
+            individual_customers=individual_customers,
+            institutions=institutions,
+            mixed=mixed,
+            active_customers=active_customers,
+        ),
+        quality_check=quality_check_summary,
+        quality_issues=quality_issues if include_quality_issues else None,
+        report_history=report_history if include_report_history else None,
+        calculation_summary=calculation_summary,  
+        # latest_results=portfolio_latest_results,
+    )
 
     return response
-
-
 @router.put("/{portfolio_id}", response_model=PortfolioResponse)
 def update_portfolio(
     portfolio_id: int,
@@ -1318,6 +1381,46 @@ def calculate_local_provision(
         (total_provision / total_loan_value * 100) if total_loan_value > 0 else 0
     )
 
+    # At the end of calculate_local_provision
+    calculation_result = CalculationResult(
+        portfolio_id=portfolio_id,
+        calculation_type="local_impairment",
+        config=config.dict(),
+        result_summary={
+            "current_count": len(current_loans),
+            "current_total": float(current_total),
+            "current_provision": float(current_provision),
+            "current_provision_rate": float(current_rate),
+            
+        "olem_count": len(olem_loans),
+        "olem_total": float(olem_total),
+        "olem_provision": float(olem_provision),
+        "olem_provision_rate": float(olem_rate),
+        
+        "substandard_count": len(substandard_loans),
+        "substandard_total": float(substandard_total),
+        "substandard_provision": float(substandard_provision),
+        "substandard_provision_rate": float(substandard_rate),
+        
+        "doubtful_count": len(doubtful_loans),
+        "doubtful_total": float(doubtful_total),
+        "doubtful_provision": float(doubtful_provision),
+        "doubtful_provision_rate": float(doubtful_rate),
+        
+        "loss_count": len(loss_loans),
+        "loss_total": float(loss_total),
+        "loss_provision": float(loss_provision),
+        "loss_provision_rate": float(loss_rate),
+        
+        "total_loans": len(current_loans) + len(olem_loans) + len(substandard_loans) + len(doubtful_loans) + len(loss_loans)
+        },
+        total_provision=float(total_provision),
+        provision_percentage=float(provision_percentage),
+        reporting_date=reporting_date
+    )
+    db.add(calculation_result)
+    db.commit()
+
     # Construct response
     response = LocalImpairmentSummary(
         portfolio_id=portfolio_id,
@@ -1526,6 +1629,32 @@ def calculate_ecl_provision(
         Decimal(stage_3_provision) / Decimal(stage_3_total) if stage_3_total > 0 else 0
     )
 
+    calculation_result = CalculationResult(
+        portfolio_id=portfolio_id,
+        calculation_type="ecl",
+        config=config.dict(),
+        result_summary={
+            "stage1_count": len(stage_1_loans),
+            "stage1_total": float(stage_1_total),
+            "stage1_provision": float(stage_1_provision),
+            "stage1_provision_rate": float(stage_1_rate),
+            "stage2_count": len(stage_2_loans),
+            "stage2_total": float(stage_2_total),
+            "stage2_provision": float(stage_2_provision),
+            "stage2_provision_rate": float(stage_2_rate),
+            "stage3_count": len(stage_3_loans),
+            "stage3_total": float(stage_3_total),
+            "stage3_provision": float(stage_3_provision),
+            "stage3_provision_rate": float(stage_3_rate),
+            "total_loans": total_loans
+        },
+        total_provision=total_provision,
+        provision_percentage=provision_percentage,
+        reporting_date=reporting_date
+    )
+    db.add(calculation_result)
+    db.commit()
+
     # Construct response
     response = ECLSummary(
         portfolio_id=portfolio_id,
@@ -1558,3 +1687,6 @@ def calculate_ecl_provision(
     )
 
     return response
+
+
+
