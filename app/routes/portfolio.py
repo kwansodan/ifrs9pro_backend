@@ -46,6 +46,8 @@ from app.models import (
     Security,
     Client,
     QualityIssue,
+    StagingResult,
+    CalculationResult
 )
 from app.schemas import (
     PortfolioCreate,
@@ -77,6 +79,9 @@ from app.schemas import (
     ECLComponentConfig,
     LoanStageInfo,
     CategoryData,
+    PortfolioLatestResults,
+
+
 )
 from app.auth.utils import get_current_active_user
 from app.utils.quality_checks import create_quality_issues_if_needed
@@ -148,9 +153,217 @@ def get_portfolios(
     return {"items": portfolios, "total": total}
 
 
-# Update the get_portfolio endpoint in your portfolios.py file
+@router.get("/{portfolio_id}", response_model=PortfolioWithSummaryResponse)
+def get_portfolio(
+    portfolio_id: int,
+    include_quality_issues: bool = False,
+    include_report_history: bool = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Retrieve a specific portfolio by ID including overview, customer summary, quality checks,
+    latest staging and calculation results, and optionally report history.
+    """
+    # Query the portfolio with joined loans and clients
+    portfolio = (
+        db.query(Portfolio)
+        .options(joinedload(Portfolio.loans), joinedload(Portfolio.clients))
+        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .first()
+    )
 
+    if not portfolio:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
+        )
 
+    # Calculate overview metrics
+    total_loans = len(portfolio.loans)
+    total_loan_value = sum(
+        loan.loan_amount for loan in portfolio.loans if loan.loan_amount is not None
+    )
+    average_loan_amount = total_loan_value / total_loans if total_loans > 0 else 0
+    total_customers = len(portfolio.clients)
+
+    # Calculate customer summary metrics
+    individual_customers = sum(
+        1 for client in portfolio.clients if client.client_type == "consumer"
+    )
+    institutions = sum(
+        1 for client in portfolio.clients if client.client_type == "institution"
+    )
+    mixed = sum(
+        1
+        for client in portfolio.clients
+        if client.client_type not in ["consumer", "institution"]
+    )
+    # Determine active customers
+    active_customers = sum(
+        1
+        for client in portfolio.clients
+        if any(
+            loan.paid is False
+            for loan in portfolio.loans
+            if hasattr(loan, "employee_id") and loan.employee_id == client.employee_id
+        )
+    )
+
+    # Run quality checks and create issues if necessary
+    quality_counts = create_quality_issues_if_needed(db, portfolio_id)
+
+    quality_check_summary = QualityCheckSummary(
+        duplicate_names=quality_counts["duplicate_names"],
+        duplicate_addresses=quality_counts["duplicate_addresses"],
+        missing_repayment_data=quality_counts["missing_repayment_data"],
+        total_issues=quality_counts["total_issues"],
+        high_severity_issues=quality_counts["high_severity_issues"],
+        open_issues=quality_counts["open_issues"],
+    )
+
+    # Get quality issues if requested
+    quality_issues = []
+    if include_quality_issues:
+        quality_issues = (
+            db.query(QualityIssue)
+            .filter(QualityIssue.portfolio_id == portfolio_id)
+            .order_by(QualityIssue.severity.desc(), QualityIssue.created_at.desc())
+            .all()
+        )
+
+    # Get report history if requested
+    report_history = []
+    if include_report_history:
+        report_history = (
+            db.query(Report)
+            .filter(Report.portfolio_id == portfolio_id)
+            .order_by(Report.created_at.desc())
+            .all()
+        )
+
+    # Get latest staging results
+    latest_local_impairment_staging = (
+        db.query(StagingResult)
+        .filter(
+            StagingResult.portfolio_id == portfolio_id,
+            StagingResult.staging_type == "local_impairment"
+        )
+        .order_by(StagingResult.created_at.desc())
+        .first()
+    )
+    
+    latest_ecl_staging = (
+        db.query(StagingResult)
+        .filter(
+            StagingResult.portfolio_id == portfolio_id,
+            StagingResult.staging_type == "ecl"
+        )
+        .order_by(StagingResult.created_at.desc())
+        .first()
+    )
+    
+    # Get latest calculation results
+    latest_local_impairment_calculation = (
+        db.query(CalculationResult)
+        .filter(
+            CalculationResult.portfolio_id == portfolio_id,
+            CalculationResult.calculation_type == "local_impairment"
+        )
+        .order_by(CalculationResult.created_at.desc())
+        .first()
+    )
+    
+    latest_ecl_calculation = (
+        db.query(CalculationResult)
+        .filter(
+            CalculationResult.portfolio_id == portfolio_id,
+            CalculationResult.calculation_type == "ecl"
+        )
+        .order_by(CalculationResult.created_at.desc())
+        .first()
+    )
+
+    # Portfolio creation steps
+    creation_steps = {
+        "creation": {
+            "completed": True,  # If we're viewing the portfolio, it exists
+            "created_at": portfolio.created_at,
+            "asset_type": portfolio.asset_type,
+            "customer_type": portfolio.customer_type,
+        },
+        "ingestion": {
+            "completed": total_loans > 0,  # Consider ingestion complete if there are loans
+            "total_loans": total_loans,
+            "total_customers": total_customers,
+            "last_ingestion_date": max([loan.created_at for loan in portfolio.loans], default=None) if portfolio.loans else None,
+        },
+        "staging": {
+            "local_impairment": {
+                "completed": latest_local_impairment_staging is not None,
+                "staged_at": latest_local_impairment_staging.created_at if latest_local_impairment_staging else None,
+                "total_loans": latest_local_impairment_staging.result_summary.get("total_loans", 0) if latest_local_impairment_staging else 0,
+            },
+            "ecl": {
+                "completed": latest_ecl_staging is not None,
+                "staged_at": latest_ecl_staging.created_at if latest_ecl_staging else None,
+                "total_loans": latest_ecl_staging.result_summary.get("total_loans", 0) if latest_ecl_staging else 0,
+            }
+        },
+        "calculation": {
+            "local_impairment": {
+                "completed": latest_local_impairment_calculation is not None,
+                "calculated_at": latest_local_impairment_calculation.created_at if latest_local_impairment_calculation else None,
+                "total_provision": latest_local_impairment_calculation.total_provision if latest_local_impairment_calculation else None,
+                "provision_percentage": latest_local_impairment_calculation.provision_percentage if latest_local_impairment_calculation else None,
+            },
+            "ecl": {
+                "completed": latest_ecl_calculation is not None,
+                "calculated_at": latest_ecl_calculation.created_at if latest_ecl_calculation else None,
+                "total_provision": latest_ecl_calculation.total_provision if latest_ecl_calculation else None,
+                "provision_percentage": latest_ecl_calculation.provision_percentage if latest_ecl_calculation else None,
+            }
+        }
+    }
+
+    # Create the latest results object
+    latest_results = {
+        "latest_local_impairment_staging": latest_local_impairment_staging,
+        "latest_ecl_staging": latest_ecl_staging,
+        "latest_local_impairment_calculation": latest_local_impairment_calculation,
+        "latest_ecl_calculation": latest_ecl_calculation,
+    }
+
+    # Create response dictionary with portfolio data and summaries
+    response = {
+        "id": portfolio.id,
+        "name": portfolio.name,
+        "description": portfolio.description,
+        "asset_type": portfolio.asset_type,
+        "customer_type": portfolio.customer_type,
+        "funding_source": portfolio.funding_source,
+        "data_source": portfolio.data_source,
+        "created_at": portfolio.created_at,
+        "updated_at": portfolio.updated_at,
+        "overview": {
+            "total_loans": total_loans,
+            "total_loan_value": round(total_loan_value, 2),
+            "average_loan_amount": round(average_loan_amount, 2),
+            "total_customers": total_customers,
+        },
+        "customer_summary": {
+            "individual_customers": individual_customers,
+            "institutions": institutions,
+            "mixed": mixed,
+            "active_customers": active_customers,
+        },
+        "quality_check": quality_check_summary,
+        "quality_issues": quality_issues if include_quality_issues else None,
+        "report_history": report_history if include_report_history else None,
+        "creation_steps": creation_steps,
+        "latest_results": latest_results,
+    }
+
+    return response
 
 
 @router.put("/{portfolio_id}", response_model=PortfolioResponse)
