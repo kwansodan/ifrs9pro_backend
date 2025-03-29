@@ -986,6 +986,65 @@ def get_quality_issue_comments(
 
     return comments
 
+@router.put(
+    "/{portfolio_id}/quality-issues/{issue_id}/comments/{comment_id}",
+    response_model=QualityIssueComment,
+)
+def edit_quality_issue_comment(
+    portfolio_id: int,
+    issue_id: int,
+    comment_id: int,
+    comment_data: QualityIssueCommentCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Edit a comment on a quality issue.
+    """
+    # Verify portfolio exists and belongs to current user
+    portfolio = (
+        db.query(Portfolio)
+        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .first()
+    )
+    if not portfolio:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
+        )
+    
+    # Get the quality issue
+    issue = (
+        db.query(QualityIssue)
+        .filter(QualityIssue.id == issue_id, QualityIssue.portfolio_id == portfolio_id)
+        .first()
+    )
+    if not issue:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Quality issue not found"
+        )
+    
+    # Get the comment and verify ownership
+    comment = (
+        db.query(QualityIssueComment)
+        .filter(
+            QualityIssueComment.id == comment_id,
+            QualityIssueComment.quality_issue_id == issue_id,
+            QualityIssueComment.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not comment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Comment not found or you don't have permission to edit it"
+        )
+    
+    # Update comment
+    comment.comment = comment_data.comment
+    
+    db.commit()
+    db.refresh(comment)
+    return comment
 
 @router.post(
     "/{portfolio_id}/quality-issues/{issue_id}/approve", response_model=QualityIssueResponse
