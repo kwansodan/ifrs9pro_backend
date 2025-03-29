@@ -117,6 +117,8 @@ class Portfolio(Base):
     reports = relationship(
         "Report", back_populates="portfolio", cascade="all, delete-orphan"
     )
+    staging_results = relationship("StagingResult", back_populates="portfolio", cascade="all, delete-orphan")
+    calculation_results = relationship("CalculationResult", back_populates="portfolio", cascade="all, delete-orphan")
 
 
 class ClientType(str, PyEnum):
@@ -422,3 +424,45 @@ class Feedback(Base):
     # Relationships
     user = relationship("User", back_populates="feedback")
     liked_by = relationship("User", secondary=feedback_likes, backref="liked_feedback")
+
+
+
+# Add these to your existing models.py file at the appropriate location
+
+class StagingResult(Base):
+    """
+    Stores the results of loan staging operations, either for local impairment or ECL.
+    """
+    __tablename__ = "staging_results"
+
+    id = Column(Integer, primary_key=True, index=True)
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="CASCADE"))
+    staging_type = Column(String, nullable=False)  # "local_impairment" or "ecl"
+    config = Column(JSON, nullable=False)  # Store the configuration used for staging
+    result_summary = Column(JSON, nullable=False)  # Summary statistics of staging
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    portfolio = relationship("Portfolio", back_populates="staging_results")
+
+
+class CalculationResult(Base):
+    """
+    Stores the results of calculation operations, either for local impairment or ECL.
+    """
+    __tablename__ = "calculation_results"
+
+    id = Column(Integer, primary_key=True, index=True)
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="CASCADE"))
+    calculation_type = Column(String, nullable=False)  # "local_impairment" or "ecl"
+    config = Column(JSON, nullable=False)  # Store the configuration used
+    result_summary = Column(JSON, nullable=False)  # Summary stats of calculation
+    total_provision = Column(Numeric(precision=18, scale=2), nullable=False)
+    provision_percentage = Column(Numeric(precision=10, scale=4), nullable=False)
+    reporting_date = Column(Date, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    portfolio = relationship("Portfolio", back_populates="calculation_results")
+
+
