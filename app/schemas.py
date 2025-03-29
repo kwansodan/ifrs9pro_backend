@@ -3,8 +3,7 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, date
 from enum import Enum
 
-# Auth schemas
-
+# ==================== ENUM DEFINITIONS ====================
 
 class RequestStatus(str, Enum):
     PENDING = "pending"
@@ -20,6 +19,52 @@ class UserRole(str, Enum):
     USER = "user"
 
 
+class AssetType(str, Enum):
+    EQUITY = "equity"
+    DEBT = "debt"
+
+
+class CustomerType(str, Enum):
+    INDIVIDUALS = "individuals"
+    INSTITUTION = "institution"
+    MIXED = "mixed"
+
+
+class FundingSource(str, Enum):
+    PRIVATE_INVESTORS = "private investors"
+    PENSION_FUND = "pension fund"
+    MUTUAL_FUND = "mutual fund"
+    OTHER_FUNDS = "other funds"
+
+
+class DataSource(str, Enum):
+    EXTERNAL_APPLICATION = "connect to external application"
+    UPLOAD_DATA = "upload data"
+
+
+class ReportTypeEnum(str, Enum):
+    COLLATERAL_SUMMARY = "collateral_summary"
+    GUARANTEE_SUMMARY = "guarantee_summary"
+    INTEREST_RATE_SUMMARY = "interest_rate_summary"
+    REPAYMENT_SUMMARY = "repayment_summary"
+    ASSUMPTIONS_SUMMARY = "assumptions_summary"
+    AMORTISED_LOAN_BALANCES = "amortised_loan_balances"
+    PROBABILITY_DEFAULT = "probability_default"
+    EXPOSURE_DEFAULT = "exposure_default"
+    LOSS_GIVEN_DEFAULT = "loss_given_default"
+
+
+class FeedbackStatusEnum(str, Enum):
+    SUBMITTED = "submitted"
+    OPEN = "open"
+    CLOSED = "closed"
+    RETURNED = "returned"
+    IN_DEVELOPMENT = "in development"
+    COMPLETED = "completed"
+
+
+# ==================== AUTH MODELS ====================
+
 class UserModel(BaseModel):
     id: int
     first_name: Optional[str] = None
@@ -29,6 +74,43 @@ class UserModel(BaseModel):
     role: UserRole
     is_active: bool
     access_request_status: Optional[RequestStatus] = None
+
+
+class UserCreate(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: EmailStr
+    recovery_email: Optional[EmailStr] = None
+    role: UserRole = UserRole.USER
+    is_active: bool = True
+    portfolio_id: Optional[int] = None
+
+
+class UserUpdate(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    recovery_email: Optional[EmailStr] = None
+    role: Optional[UserRole] = None
+    is_active: Optional[bool] = None
+
+
+class UserResponse(BaseModel):
+    id: int
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: EmailStr
+    recovery_email: Optional[EmailStr] = None
+    role: UserRole
+    is_active: bool
+    created_at: datetime
+    last_login: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
 
 
 class LoginResponse(BaseModel):
@@ -57,12 +139,43 @@ class TokenData(BaseModel):
     exp: Optional[datetime] = None
 
 
-class LoginRequest(BaseModel):
+# ==================== ACCESS REQUEST MODELS ====================
+
+class AccessRequestSubmit(BaseModel):
     email: EmailStr
-    password: str
+    admin_email: Optional[EmailStr] = None
 
 
-# Quality issue schemas
+class AccessRequestResponse(BaseModel):
+    id: int
+    email: EmailStr
+    admin_email: Optional[EmailStr] = None
+    status: str
+    created_at: datetime
+    is_email_verified: bool
+
+    class Config:
+        from_attributes = True
+
+
+class AccessRequestUpdate(BaseModel):
+    status: RequestStatus
+    role: Optional[UserRole] = None
+
+
+# ==================== QUALITY ISSUE MODELS ====================
+
+class QualityIssueCreate(BaseModel):
+    issue_type: str
+    description: str
+    affected_records: List[Dict]
+    severity: str = "medium"
+
+
+class QualityIssueUpdate(BaseModel):
+    status: Optional[str] = None
+    description: Optional[str] = None
+    severity: Optional[str] = None
 
 
 class QualityIssueResponse(BaseModel):
@@ -80,13 +193,6 @@ class QualityIssueResponse(BaseModel):
         from_attributes = True
 
 
-class QualityIssueCreate(BaseModel):
-    issue_type: str
-    description: str
-    affected_records: List[Dict]
-    severity: str = "medium"
-
-
 class QualityIssueComment(BaseModel):
     id: int
     quality_issue_id: int
@@ -102,12 +208,6 @@ class QualityIssueCommentCreate(BaseModel):
     comment: str
 
 
-class QualityIssueUpdate(BaseModel):
-    status: Optional[str] = None
-    description: Optional[str] = None
-    severity: Optional[str] = None
-
-
 class QualityCheckSummary(BaseModel):
     duplicate_names: int
     duplicate_addresses: int
@@ -117,20 +217,57 @@ class QualityCheckSummary(BaseModel):
     open_issues: int
 
 
-# Report schemas
+# ==================== FEEDBACK MODELS ====================
+
+class FeedbackBase(BaseModel):
+    title: str
+    description: str
 
 
-class ReportTypeEnum(str, Enum):
-    COLLATERAL_SUMMARY = "collateral_summary"
-    GUARANTEE_SUMMARY = "guarantee_summary"
-    INTEREST_RATE_SUMMARY = "interest_rate_summary"
-    REPAYMENT_SUMMARY = "repayment_summary"
-    ASSUMPTIONS_SUMMARY = "assumptions_summary"
-    AMORTISED_LOAN_BALANCES = "amortised_loan_balances"
-    PROBABILITY_DEFAULT = "probability_default"
-    EXPOSURE_DEFAULT = "exposure_default"
-    LOSS_GIVEN_DEFAULT = "loss_given_default"
+class FeedbackCreate(FeedbackBase):
+    pass
 
+
+class FeedbackUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+
+
+class FeedbackStatusUpdate(BaseModel):
+    status: FeedbackStatusEnum
+
+
+class FeedbackLikeResponse(BaseModel):
+    id: int
+    email: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class FeedbackResponse(FeedbackBase):
+    id: int
+    user_id: int
+    status: str
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    like_count: int
+    is_liked_by_user: bool = False
+
+    class Config:
+        from_attributes = True
+
+
+class FeedbackDetailResponse(FeedbackResponse):
+    liked_by: List[FeedbackLikeResponse] = []
+
+    class Config:
+        from_attributes = True
+
+
+# ==================== REPORT MODELS ====================
 
 class ReportBase(BaseModel):
     report_type: ReportTypeEnum
@@ -191,31 +328,7 @@ class ReportSaveRequest(BaseModel):
     report_data: Dict[str, Any]
 
 
-# Portfolio schemas
-
-
-class AssetType(str, Enum):
-    EQUITY = "equity"
-    DEBT = "debt"
-
-
-class CustomerType(str, Enum):
-    INDIVIDUALS = "individuals"
-    INSTITUTION = "institution"
-    MIXED = "mixed"
-
-
-class FundingSource(str, Enum):
-    PRIVATE_INVESTORS = "private investors"
-    PENSION_FUND = "pension fund"
-    MUTUAL_FUND = "mutual fund"
-    OTHER_FUNDS = "other funds"
-
-
-class DataSource(str, Enum):
-    EXTERNAL_APPLICATION = "connect to external application"
-    UPLOAD_DATA = "upload data"
-
+# ==================== PORTFOLIO MODELS ====================
 
 class PortfolioCreate(BaseModel):
     name: str
@@ -230,7 +343,6 @@ class PortfolioCreate(BaseModel):
     ecl_impairment_account: Optional[str] = None
 
 
-# For updating an existing portfolio
 class PortfolioUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
@@ -292,77 +404,149 @@ class CustomerSummaryModel(BaseModel):
         from_attributes = True
 
 
+# ==================== STAGING AND CALCULATION MODELS ====================
+
+class StagingTypeInfo(BaseModel):
+    completed: bool
+    staged_at: Optional[datetime] = None
+    total_loans: Optional[int] = None
+
+
+class CalculationTypeInfo(BaseModel):
+    completed: bool
+    calculated_at: Optional[datetime] = None
+    total_provision: Optional[float] = None
+    provision_percentage: Optional[float] = None
+
+
+class StagingStep(BaseModel):
+    local_impairment: StagingTypeInfo
+    ecl: StagingTypeInfo
+
+
+class CalculationStep(BaseModel):
+    local_impairment: CalculationTypeInfo
+    ecl: CalculationTypeInfo
+
+
+class CreationStep(BaseModel):
+    completed: bool
+    created_at: Optional[datetime] = None
+    asset_type: Optional[str] = None
+    customer_type: Optional[str] = None
+    funding_source: Optional[str] = None
+    data_source: Optional[str] = None
+
+
+class IngestionStep(BaseModel):
+    completed: bool
+    total_loans: Optional[int] = None
+    total_customers: Optional[int] = None
+    last_ingestion_date: Optional[datetime] = None
+
+
+class CreationSteps(BaseModel):
+    creation: CreationStep
+    ingestion: IngestionStep
+    staging: StagingStep
+    calculation: CalculationStep
+
+
+class StagingResultBase(BaseModel):
+    staging_type: str
+    config: Dict[str, Any]
+    result_summary: Dict[str, Any]
+
+
+class StagingResultCreate(StagingResultBase):
+    portfolio_id: int
+
+
+class StagingResultResponse(StagingResultBase):
+    id: int
+    portfolio_id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CalculationResultBase(BaseModel):
+    calculation_type: str
+    config: Dict[str, Any]
+    result_summary: Dict[str, Any]
+    total_provision: float
+    provision_percentage: float
+    reporting_date: date
+
+
+class CalculationResultCreate(CalculationResultBase):
+    portfolio_id: int
+
+
+class CalculationResultResponse(CalculationResultBase):
+    id: int
+    portfolio_id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class PortfolioLatestResults(BaseModel):
+    latest_local_impairment_staging: Optional[StagingResultResponse] = None
+    latest_ecl_staging: Optional[StagingResultResponse] = None
+    latest_local_impairment_calculation: Optional[CalculationResultResponse] = None
+    latest_ecl_calculation: Optional[CalculationResultResponse] = None
+
+    class Config:
+        from_attributes = True
+
+
 class PortfolioWithSummaryResponse(BaseModel):
     id: int
     name: str
     description: Optional[str] = None
-    asset_type: str
-    customer_type: str
-    funding_source: str
+    asset_type: Optional[str] = None
+    customer_type: Optional[str] = None
+    funding_source: Optional[str] = None
+    data_source: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
-    overview: Dict[str, Any]
-    customer_summary: Dict[str, Any]
-    quality_check: QualityCheckSummary
+    overview: OverviewModel
+    customer_summary: CustomerSummaryModel
+    quality_check: Optional[QualityCheckSummary] = None
     quality_issues: Optional[List[QualityIssueResponse]] = None
     report_history: Optional[List[ReportHistoryItem]] = None
+    creation_steps: CreationSteps
     latest_results: Optional[PortfolioLatestResults] = None
 
     class Config:
         from_attributes = True
 
 
-# ECL schemas
+# ==================== IMPAIRMENT MODELS ====================
+
+class DaysRangeConfig(BaseModel):
+    days_range: str = Field(..., example="0-30")
 
 
-class ECLCategoryData(BaseModel):
-    """Data for each delinquency category row in the ECL grid"""
-
-    num_loans: int
-    total_loan_value: float
-    provision_amount: float
-
-
-# Impairment schemas
 class ImpairmentCategory(BaseModel):
     """Configuration for an impairment category"""
-
     days_range: str  # Format: "0-30", "31-90", "360+" etc.
     rate: float
 
 
-class ImpairmentCategoryData(BaseModel):
-    """Data for each impairment category row"""
-
-    days_range: str
-    rate: float
-    total_loan_value: float
-    provision_amount: float
-
-
-class ImpairmentSummaryMetrics(BaseModel):
-    """Summary metrics for the impairment calculation"""
-
-    total_loans: float
-    total_provision: float
-
-
-class LocalImpairmentSummary(BaseModel):
-    """Response schema for the local impairment calculation endpoint"""
-
-    portfolio_id: int
-    calculation_date: str
-    current: ImpairmentCategoryData
-    olem: ImpairmentCategoryData
-    substandard: ImpairmentCategoryData
-    doubtful: ImpairmentCategoryData
-    loss: ImpairmentCategoryData
-    summary_metrics: ImpairmentSummaryMetrics
+class LocalImpairmentConfig(BaseModel):
+    current: DaysRangeConfig
+    olem: DaysRangeConfig
+    substandard: DaysRangeConfig
+    doubtful: DaysRangeConfig
+    loss: DaysRangeConfig
 
 
 class ImpairmentConfig(BaseModel):
     """Configuration for all impairment categories"""
-
     current: ImpairmentCategory
     olem: ImpairmentCategory
     substandard: ImpairmentCategory
@@ -370,127 +554,61 @@ class ImpairmentConfig(BaseModel):
     loss: ImpairmentCategory
 
 
-# Access request schemas
-class AccessRequestSubmit(BaseModel):
-    email: EmailStr
-    admin_email: Optional[EmailStr] = None
+class ProvisionRateConfig(BaseModel):
+    current: float = Field(..., example=0.01)
+    olem: float = Field(..., example=0.03)
+    substandard: float = Field(..., example=0.2)
+    doubtful: float = Field(..., example=0.5)
+    loss: float = Field(..., example=1.0)
 
 
-class AccessRequestResponse(BaseModel):
-    id: int
-    email: EmailStr
-    admin_email: Optional[EmailStr] = None
-    status: str
-    created_at: datetime
-    is_email_verified: bool
-
-    class Config:
-        from_attributes = True
+class ImpairmentCategoryData(BaseModel):
+    """Data for each impairment category row"""
+    days_range: str
+    rate: float
+    total_loan_value: float
+    provision_amount: float
 
 
-class AccessRequestUpdate(BaseModel):
-    status: RequestStatus
-    role: Optional[UserRole] = None
+class CategoryData(BaseModel):
+    num_loans: int
+    total_loan_value: float
+    provision_amount: float
+    provision_rate: float
 
 
-# User management schemas
-class UserCreate(BaseModel):
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    email: EmailStr
-    recovery_email: Optional[EmailStr] = None
-    role: UserRole = UserRole.USER
-    is_active: bool = True
-    portfolio_id: Optional[int] = None
+class LocalImpairmentCategoryData(BaseModel):
+    num_loans: int
+    total_loan_value: float
+    provision_amount: float
+    provision_rate: float
 
 
-class UserResponse(BaseModel):
-    id: int
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    email: EmailStr
-    recovery_email: Optional[EmailStr] = None
-    role: UserRole
-    is_active: bool
-    created_at: datetime
-    last_login: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+class ImpairmentSummaryMetrics(BaseModel):
+    """Summary metrics for the impairment calculation"""
+    total_loans: float
+    total_provision: float
 
 
-class UserUpdate(BaseModel):
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    email: Optional[EmailStr] = None
-    recovery_email: Optional[EmailStr] = None
-    role: Optional[UserRole] = None
-    is_active: Optional[bool] = None
+class LocalImpairmentSummary(BaseModel):
+    portfolio_id: int
+    calculation_date: str
+    current: CategoryData
+    olem: CategoryData
+    substandard: CategoryData
+    doubtful: CategoryData
+    loss: CategoryData
+    total_provision: float
+    provision_percentage: float
 
 
-# Feedback schemas
+# ==================== ECL MODELS ====================
 
-
-class FeedbackStatusEnum(str, Enum):
-    SUBMITTED = "submitted"
-    OPEN = "open"
-    CLOSED = "closed"
-    RETURNED = "returned"
-    IN_DEVELOPMENT = "in development"
-    COMPLETED = "completed"
-
-
-class FeedbackBase(BaseModel):
-    title: str
-    description: str
-
-
-class FeedbackCreate(FeedbackBase):
-    pass
-
-
-class FeedbackUpdate(BaseModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
-
-
-class FeedbackStatusUpdate(BaseModel):
-    status: FeedbackStatusEnum
-
-
-class FeedbackLikeResponse(BaseModel):
-    id: int
-    email: str
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-
-    class Config:
-        from_attributes = True
-
-
-class FeedbackResponse(FeedbackBase):
-    id: int
-    user_id: int
-    status: str
-    created_at: datetime
-    updated_at: Optional[datetime] = None
-    like_count: int
-    is_liked_by_user: bool = False
-
-    class Config:
-        from_attributes = True
-
-
-class FeedbackDetailResponse(FeedbackResponse):
-    liked_by: List[FeedbackLikeResponse] = []
-
-    class Config:
-        from_attributes = True
-
-
-# ECL schemas
-
-
-class DaysRangeConfig(BaseModel):
-    days_range: str = Field(..., example="0-30")
+class ECLCategoryData(BaseModel):
+    """Data for each delinquency category row in the ECL grid"""
+    num_loans: int
+    total_loan_value: float
+    provision_amount: float
 
 
 class ECLConfig(BaseModel):
@@ -505,13 +623,36 @@ class ECLStagingConfig(BaseModel):
     stage_3: DaysRangeConfig
 
 
-class LocalImpairmentConfig(BaseModel):
-    current: DaysRangeConfig
-    olem: DaysRangeConfig
-    substandard: DaysRangeConfig
-    doubtful: DaysRangeConfig
-    loss: DaysRangeConfig
+class ECLComponentConfig(BaseModel):
+    pd_factors: Dict[str, float] = Field(
+        default_factory=lambda: {"stage_1": 0.01, "stage_2": 0.1, "stage_3": 0.5}
+    )
+    lgd_factors: Dict[str, float] = Field(
+        default_factory=lambda: {"stage_1": 0.1, "stage_2": 0.3, "stage_3": 0.6}
+    )
+    ead_factors: Dict[str, float] = Field(
+        default_factory=lambda: {"stage_1": 0.9, "stage_2": 0.95, "stage_3": 1.0}
+    )
 
+
+class ECLSummaryMetrics(BaseModel):
+    avg_pd: float
+    avg_lgd: float
+    avg_ead: float
+    total_provision: float
+    provision_percentage: float
+
+
+class ECLSummary(BaseModel):
+    portfolio_id: int
+    calculation_date: str
+    stage_1: CategoryData
+    stage_2: CategoryData
+    stage_3: CategoryData
+    summary_metrics: ECLSummaryMetrics
+
+
+# ==================== CALCULATOR MODELS ====================
 
 class LGDInput(BaseModel):
     loan_amount: float
@@ -555,170 +696,11 @@ class StagingResponse(BaseModel):
     loans: List[LoanStageInfo]
 
 
-class CategoryData(BaseModel):
-    num_loans: int
-    total_loan_value: float
-    provision_amount: float
-
-
-class ECLSummaryMetrics(BaseModel):
-    pd: float
-    lgd: float
-    ead: float
-    total_provision: float
-    provision_percentage: float
-
-
-class ECLSummary(BaseModel):
-    portfolio_id: int
-    calculation_date: str
-    stage_1: CategoryData
-    stage_2: CategoryData
-    stage_3: CategoryData
-    summary_metrics: ECLSummaryMetrics
-
-
-class LocalImpairmentCategoryData(BaseModel):
-    num_loans: int
-    total_loan_value: float
-    provision_amount: float
-    provision_rate: float
-
-
-class LocalImpairmentSummary(BaseModel):
-    portfolio_id: int
-    calculation_date: str
-    current: LocalImpairmentCategoryData
-    olem: LocalImpairmentCategoryData
-    substandard: LocalImpairmentCategoryData
-    doubtful: LocalImpairmentCategoryData
-    loss: LocalImpairmentCategoryData
-    total_provision: float
-    provision_percentage: float
-
-
-class CalculatorResponse(BaseModel):
-    result: float
-    input_data: dict
-
-
 class StagedLoans(BaseModel):
     portfolio_id: int
     loans: List[LoanStageInfo]
 
 
-class ProvisionRateConfig(BaseModel):
-    current: float = Field(..., example=0.01)
-    olem: float = Field(..., example=0.03)
-    substandard: float = Field(..., example=0.2)
-    doubtful: float = Field(..., example=0.5)
-    loss: float = Field(..., example=1.0)
-
-
-class ECLComponentConfig(BaseModel):
-    pd_factors: Dict[str, float] = Field(
-        default_factory=lambda: {"stage_1": 0.01, "stage_2": 0.1, "stage_3": 0.5}
-    )
-    lgd_factors: Dict[str, float] = Field(
-        default_factory=lambda: {"stage_1": 0.1, "stage_2": 0.3, "stage_3": 0.6}
-    )
-    ead_factors: Dict[str, float] = Field(
-        default_factory=lambda: {"stage_1": 0.9, "stage_2": 0.95, "stage_3": 1.0}
-    )
-
-
-class CategoryData(BaseModel):
-    num_loans: int
-    total_loan_value: float
-    provision_amount: float
-    provision_rate: float
-
-
-class LocalImpairmentSummary(BaseModel):
-    portfolio_id: int
-    calculation_date: str
-    current: CategoryData
-    olem: CategoryData
-    substandard: CategoryData
-    doubtful: CategoryData
-    loss: CategoryData
-    total_provision: float
-    provision_percentage: float
-
-
-class ECLSummaryMetrics(BaseModel):
-    avg_pd: float
-    avg_lgd: float
-    avg_ead: float
-    total_provision: float
-    provision_percentage: float
-
-
-class ECLSummary(BaseModel):
-    portfolio_id: int
-    calculation_date: str
-    stage_1: CategoryData
-    stage_2: CategoryData
-    stage_3: CategoryData
-    summary_metrics: ECLSummaryMetrics
-
-
-# Add these to your app/schemas.py file
-
-from pydantic import BaseModel
-from typing import Optional, List, Dict, Any, Union
-from datetime import datetime, date
-
-
-class StagingResultBase(BaseModel):
-    staging_type: str
-    config: Dict[str, Any]
-    result_summary: Dict[str, Any]
-
-
-class StagingResultCreate(StagingResultBase):
-    portfolio_id: int
-
-
-class StagingResultResponse(StagingResultBase):
-    id: int
-    portfolio_id: int
-    created_at: datetime
-
-    class Config:
-        orm_mode = True
-
-
-class CalculationResultBase(BaseModel):
-    calculation_type: str
-    config: Dict[str, Any]
-    result_summary: Dict[str, Any]
-    total_provision: float
-    provision_percentage: float
-    reporting_date: date
-
-
-class CalculationResultCreate(CalculationResultBase):
-    portfolio_id: int
-
-
-class CalculationResultResponse(CalculationResultBase):
-    id: int
-    portfolio_id: int
-    created_at: datetime
-
-    class Config:
-        orm_mode = True
-
-
-class PortfolioLatestResults(BaseModel):
-    latest_local_impairment_staging: Optional[StagingResultResponse] = None
-    latest_ecl_staging: Optional[StagingResultResponse] = None
-    latest_local_impairment_calculation: Optional[CalculationResultResponse] = None
-    latest_ecl_calculation: Optional[CalculationResultResponse] = None
-
-    class Config:
-        orm_mode = True
-
-
-
+class CalculatorResponse(BaseModel):
+    result: float
+    input_data: dict
