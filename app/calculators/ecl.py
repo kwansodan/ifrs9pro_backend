@@ -199,7 +199,7 @@ def calculate_marginal_ecl(loan, ead_percentage, pd, lgd):
         Decimal: The calculated marginal ECL amount
     """
 
-    ead_value = loan.outstanding_loan_balance * (ead_percentage / 100)
+    ead_value = Decimal(loan.outstanding_loan_balance) * Decimal(ead_percentage / 100)
 
     # Convert percentage values to decimals
     pd_decimal = Decimal(str(pd / 100.0))
