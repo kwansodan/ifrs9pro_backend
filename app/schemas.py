@@ -219,53 +219,64 @@ class QualityCheckSummary(BaseModel):
 
 # ==================== FEEDBACK MODELS ====================
 
-class FeedbackBase(BaseModel):
-    title: str
-    description: str
+class FeedbackStatusEnum(str, Enum):
+    SUBMITTED = "submitted"
+    OPEN = "open"
+    CLOSED = "closed"
+    RETURNED = "returned"
+    IN_DEVELOPMENT = "in development"
+    COMPLETED = "completed"
 
+class FeedbackBase(BaseModel):
+    title: str = Field(..., min_length=3, max_length=100)
+    description: str = Field(..., min_length=10)
 
 class FeedbackCreate(FeedbackBase):
+    """
+    Schema for creating new feedback
+    """
     pass
 
-
 class FeedbackUpdate(BaseModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
-
+    """
+    Schema for updating existing feedback
+    """
+    title: Optional[str] = Field(None, min_length=3, max_length=100)
+    description: Optional[str] = Field(None, min_length=10)
 
 class FeedbackStatusUpdate(BaseModel):
+    """
+    Schema for updating feedback status
+    """
     status: FeedbackStatusEnum
 
-
-class FeedbackLikeResponse(BaseModel):
+class UserBasic(BaseModel):
+    """
+    Basic user information for feedback response
+    """
     id: int
-    email: str
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+    email: str
 
     class Config:
         from_attributes = True
 
-
 class FeedbackResponse(FeedbackBase):
+    """
+    Schema for feedback response
+    """
     id: int
+    status: FeedbackStatusEnum
     user_id: int
-    status: str
+    user: Optional[UserBasic] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
-    like_count: int
+    like_count: int = 0
     is_liked_by_user: bool = False
 
     class Config:
         from_attributes = True
-
-
-class FeedbackDetailResponse(FeedbackResponse):
-    liked_by: List[FeedbackLikeResponse] = []
-
-    class Config:
-        from_attributes = True
-
 
 # ==================== REPORT MODELS ====================
 

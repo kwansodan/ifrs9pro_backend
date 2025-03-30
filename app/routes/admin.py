@@ -34,7 +34,7 @@ from app.auth.utils import (
 from app.schemas import (
     FeedbackStatusUpdate,
     FeedbackResponse,
-    FeedbackDetailResponse,
+
 )
 
 
@@ -42,7 +42,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 
 # Handle access requests
-@router.get("/requests", response_model=List[AccessRequestResponse])
+@router.get("/requests", response_model=List[AccessRequestResponse], operation_id="list_all_access_requests")
 async def get_access_requests(
     db: Session = Depends(get_db), current_user: User = Depends(is_admin)
 ):
@@ -53,7 +53,7 @@ async def get_access_requests(
     return access_requests
 
 
-@router.put("/requests/{request_id}")
+@router.put("/requests/{request_id}", operation_id="update_specific_access_request")
 async def update_access_request(
     request_id: int,
     request_update: AccessRequestUpdate,
@@ -284,9 +284,6 @@ async def update_user(
     db.commit()
     db.refresh(user)
     return user
-
-
-
 
 
 # Feedback routes
