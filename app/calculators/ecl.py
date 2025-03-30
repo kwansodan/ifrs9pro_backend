@@ -1,3 +1,6 @@
+import pickle
+import pandas as pd
+from datetime import datetime
 from decimal import Decimal
 from typing import Optional, Tuple, List, Union, Dict, Any
 from app.models import Client
@@ -207,12 +210,8 @@ def is_in_range(value: int, range_tuple: Tuple[int, Optional[int]]) -> bool:
         return min_val <= value <= max_val
 
 
-import pickle
-import pandas as pd
-from datetime import datetime
-
-# Load the pre-trained logistic regression model
-with open("models/logistic_model.pkl", "rb") as file:
+#Load the pre-trained logistic regression model
+with open("app/ml_models/logistic_model.pkl", "rb") as file:
     model = pickle.load(file)
 
 def calculate_probability_of_default(loan, db):
