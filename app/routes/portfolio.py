@@ -1592,7 +1592,7 @@ def calculate_ecl_provision(
 
         # Calculate ECL components for the loan
         lgd = calculate_loss_given_default(loan, client_securities_list)
-        pd = calculate_probability_of_default(loan, ndia)
+        pd = calculate_probability_of_default(loan, db)
         ead_percentage = calculate_exposure_at_default_percentage(loan, reporting_date)
         ecl = calculate_marginal_ecl(loan, ead_percentage, pd, lgd)
 

@@ -1,5 +1,6 @@
 from decimal import Decimal
 from typing import Optional, Tuple, List, Union, Dict, Any
+from app.models import Client
 
 
 def calculate_effective_interest_rate(loan_amount, monthly_installment, loan_term):
@@ -108,24 +109,6 @@ def calculate_loss_given_default(
     return lgd
 
 
-def calculate_probability_of_default(loan, ndia):
-    """
-    Calculate Probability of Default based on NDIA (Number of Days in Arrears)
-    """
-    # IFRS 9 staging
-    if ndia < 120:  # Stage 1
-        # Low risk
-        pd = 5.0  # 5% (base rate for performing loans)
-    elif ndia < 240:  # Stage 2
-        # Significant increase in credit risk
-        pd = 30.0  # 30%
-    else:  # Stage 3
-        # Credit impaired
-        pd = 75.0  #
-
-    return pd
-
-
 def calculate_exposure_at_default_percentage(loan, reporting_date):
     """
     Calculate Exposure at Default as a percentage
@@ -222,3 +205,55 @@ def is_in_range(value: int, range_tuple: Tuple[int, Optional[int]]) -> bool:
         return value >= min_val
     else:
         return min_val <= value <= max_val
+
+
+import pickle
+import pandas as pd
+from datetime import datetime
+
+# Load the pre-trained logistic regression model
+with open("models/logistic_model.pkl", "rb") as file:
+    model = pickle.load(file)
+
+def calculate_probability_of_default(loan, db):
+    """
+    Calculate Probability of Default using the machine learning model based on customer age
+    
+    Parameters:
+    - loan: Loan object from the database
+    - db: SQLAlchemy database session
+    
+    Returns:
+    - float: Probability of default as a percentage (0-100)
+    """
+    # Import here to avoid circular imports
+    
+    
+    # Get client associated with this loan's employee_id
+    client = db.query(Client).filter(
+        Client.employee_id == loan.employee_id
+    ).first()
+    
+    if client and client.date_of_birth:
+        # Calculate age from date of birth
+        today = datetime.now().date()
+        client_age = today.year - client.date_of_birth.year - (
+            (today.month, today.day) < (client.date_of_birth.month, client.date_of_birth.day)
+        )
+        
+        # Prepare input for the model
+        # Based on the training script, we need to provide input in the expected format
+        # The dummy data format was [[age, feature2, feature3], ...]
+        input_data = pd.DataFrame([[client_age, 0, 0]])
+        
+        # Get probability from model (returns probability of class 1 - "default")
+        probability = model.predict_proba(input_data)[:, 1][0]
+        
+        # Convert to percentage
+        percentage = probability * 100
+        
+        return percentage
+    else:
+        # Return a default probability if we can't get the client's age
+        return 5.0  # Default 5% probability
+
