@@ -356,7 +356,7 @@ class PortfolioUpdate(BaseModel):
     ecl_impairment_account: Optional[str] = None
 
 
-class PortfolioResponse(BaseModel):
+class PortfolioResponseBase(BaseModel):
     id: int
     name: str
     description: str
@@ -371,9 +371,12 @@ class PortfolioResponse(BaseModel):
     user_id: int
     created_at: datetime
     updated_at: Optional[datetime] = None
-
+    
     class Config:
         from_attributes = True
+
+class PortfolioResponse(PortfolioResponseBase):
+    has_ingested_data: bool = False  
 
 
 class PortfolioList(BaseModel):
@@ -536,6 +539,7 @@ class PortfolioWithSummaryResponse(BaseModel):
     funding_source: Optional[str] = None
     data_source: Optional[str] = None
     repayment_source: Optional[str] = None
+    has_ingested_data: bool
     created_at: datetime
     updated_at: Optional[datetime] = None
     overview: OverviewModel
@@ -544,7 +548,7 @@ class PortfolioWithSummaryResponse(BaseModel):
     quality_issues: Optional[List[QualityIssueResponse]] = None
     report_history: Optional[List[ReportHistoryItem]] = None
     calculation_summary: Optional[CalculationSummary] = None 
-    # latest_results: Optional[PortfolioLatestResults] = None
+
 
     class Config:
         from_attributes = True

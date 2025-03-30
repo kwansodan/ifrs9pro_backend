@@ -1,3 +1,4 @@
+import logging
 from fastapi import (
     APIRouter,
     Depends,
@@ -94,6 +95,7 @@ from app.utils.processors import (
     process_loan_guarantees,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/portfolios", tags=["portfolios"])
 
 
@@ -126,6 +128,7 @@ def create_portfolio(
     return new_portfolio
 
 
+
 @router.get("/", response_model=PortfolioList)
 def get_portfolios(
     skip: int = 0,
@@ -150,19 +153,29 @@ def get_portfolios(
     # Get total count for pagination
     total = query.count()
 
-    # Apply pagination
+    # Apply pagination and get portfolios
     portfolios = query.offset(skip).limit(limit).all()
-
-    # Convert the repayment_source boolean to string representation
-    portfolio_list = []
+    
+    # Convert to response objects
+    response_items = []
     for portfolio in portfolios:
+        # Check if portfolio has loans
+        has_data = db.query(Loan).filter(Loan.portfolio_id == portfolio.id).limit(1).count() > 0
+        
+        # Convert to PortfolioResponse and set has_ingested_data
         portfolio_dict = portfolio.__dict__.copy()
-        if hasattr(portfolio, 'repayment_source'):
-            portfolio_dict['repayment_source'] = "At Source" if portfolio.repayment_source else "Manual Transfer"
-        portfolio_list.append(portfolio_dict)
+        if '_sa_instance_state' in portfolio_dict:
+            del portfolio_dict['_sa_instance_state']
+            
+        # Convert boolean to string for repayment_source if needed
+        if isinstance(portfolio_dict.get('repayment_source'), bool):
+            portfolio_dict['repayment_source'] = "At Source" if portfolio_dict['repayment_source'] else "Manual Transfer"
+            
+        # Create response object with the data flag
+        portfolio_response = PortfolioResponse(**portfolio_dict, has_ingested_data=has_data)
+        response_items.append(portfolio_response)
 
-    return {"items": portfolio_list, "total": total}
-
+    return {"items": response_items, "total": total}
 
 @router.get("/{portfolio_id}", response_model=PortfolioWithSummaryResponse)
 def get_portfolio(
@@ -191,6 +204,8 @@ def get_portfolio(
 
     # Calculate overview metrics
     total_loans = len(portfolio.loans)
+    has_ingested_data = total_loans > 0  # Simple check if the portfolio has any loans
+    
     total_loan_value = sum(
         loan.loan_amount for loan in portfolio.loans if loan.loan_amount is not None
     )
@@ -405,7 +420,8 @@ def get_portfolio(
         customer_type=portfolio.customer_type,
         funding_source=portfolio.funding_source,
         data_source=portfolio.data_source,
-        repayment_source=repayment_source_str,  # Add the repayment_source string field
+        repayment_source=repayment_source_str,  
+        has_ingested_data=has_ingested_data, 
         created_at=portfolio.created_at,
         updated_at=portfolio.updated_at,
         overview=OverviewModel(
@@ -427,7 +443,6 @@ def get_portfolio(
     )
 
     return response
-
 @router.put("/{portfolio_id}", response_model=PortfolioResponse)
 def update_portfolio(
     portfolio_id: int,
