@@ -1,5 +1,9 @@
+import csv
+import io
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from fastapi.responses import StreamingResponse
 from app.database import get_db
 from app.models import AccessRequest, User, Feedback
 from app.schemas import (
@@ -30,7 +34,7 @@ from app.auth.utils import (
 from app.schemas import (
     FeedbackStatusUpdate,
     FeedbackResponse,
-    FeedbackDetailResponse,
+
 )
 
 
@@ -38,7 +42,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 
 # Handle access requests
-@router.get("/requests", response_model=List[AccessRequestResponse])
+@router.get("/requests", response_model=List[AccessRequestResponse], operation_id="list_all_access_requests")
 async def get_access_requests(
     db: Session = Depends(get_db), current_user: User = Depends(is_admin)
 ):
@@ -49,7 +53,7 @@ async def get_access_requests(
     return access_requests
 
 
-@router.put("/requests/{request_id}")
+@router.put("/requests/{request_id}", operation_id="update_specific_access_request")
 async def update_access_request(
     request_id: int,
     request_update: AccessRequestUpdate,
@@ -120,6 +124,64 @@ async def get_users(
 
     return users
 
+@router.get("/users/export", response_class=StreamingResponse)
+async def export_users_csv(
+    db: Session = Depends(get_db), 
+    current_user: User = Depends(is_admin)
+):
+    """
+    Export all users as a CSV file.
+    Only accessible to admin users.
+    """
+    # Query all users
+    users = db.query(User).all()
+    
+    # Create a StringIO object to write CSV data
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    # Write header row
+    writer.writerow([
+        "ID", 
+        "First Name",
+        "Last Name",
+        "Email", 
+        "Recovery Email",
+        "Role", 
+        "Is Active", 
+        "Last Login",
+        "Created At",
+        "Updated At"
+    ])
+    
+    # Write user data
+    for user in users:
+        writer.writerow([
+            user.id,
+            user.first_name or "",
+            user.last_name or "",
+            user.email,
+            user.recovery_email or "",
+            user.role,
+            user.is_active,
+            user.last_login.strftime("%Y-%m-%d %H:%M:%S") if user.last_login else "",
+            user.created_at.strftime("%Y-%m-%d %H:%M:%S") if user.created_at else "",
+            user.updated_at.strftime("%Y-%m-%d %H:%M:%S") if user.updated_at else ""
+        ])
+    
+    # Prepare the output
+    output.seek(0)
+    
+    # Generate filename with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"users_export_{timestamp}.csv"
+    
+    # Return the CSV as a streaming response
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
 @router.get("/users/{user_id}", response_model=UserResponse)
 async def get_user(
@@ -222,24 +284,6 @@ async def update_user(
     db.commit()
     db.refresh(user)
     return user
-
-
-@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_user(
-    user_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(is_admin),
-):
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
-        )
-
-    db.delete(user)
-    db.commit()
-
-    return None
 
 
 # Feedback routes
