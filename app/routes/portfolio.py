@@ -692,12 +692,14 @@ async def ingest_portfolio_data(
     current_user: User = Depends(get_current_active_user),
 ):
     """
-    Ingest Excel files containing portfolio data.
+    Ingest Excel files containing portfolio data and automatically perform both types of staging.
 
     Accepts up to three Excel files:
     - loan_details: Primary loan information
     - loan_guarantee_data: Information about loan guarantees
     - loan_collateral_data: Information about loan collateral
+    
+    The function automatically performs both ECL and local impairment staging after successful ingestion.
     """
     # Check if at least one file is provided
     if not any([loan_details, loan_guarantee_data, loan_collateral_data]):
@@ -740,20 +742,90 @@ async def ingest_portfolio_data(
                 loan_collateral_data, portfolio_id, db
             )
 
-        # Commit all changes at once
+        # Commit changes after ingestion
         db.commit()
 
+        # Automatically perform both types of staging
+        staging_results = {}
+        
+        # 1. Perform ECL staging
+        try:
+            # Create default ECL staging config
+            ecl_config = ECLStagingConfig(
+                stage_1={"days_range": "0-120"},
+                stage_2={"days_range": "120-240"},
+                stage_3={"days_range": "240+"}
+            )
+            
+            # Call the staging function
+            ecl_staging = stage_loans_ecl(
+                portfolio_id=portfolio_id,
+                config=ecl_config,
+                db=db,
+                current_user=current_user
+            )
+            
+            staging_results["ecl"] = {
+                "status": "success",
+                "loans_staged": len(ecl_staging.loans)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error during ECL staging: {str(e)}")
+            staging_results["ecl"] = {
+                "status": "error",
+                "error": str(e)
+            }
+        
+        # 2. Perform local impairment staging
+        try:
+            # Create default local impairment config
+            local_config = LocalImpairmentConfig(
+                current={"days_range": "0-30", "rate": 1},
+                olem={"days_range": "31-90", "rate": 5},
+                substandard={"days_range": "91-180", "rate": 25},
+                doubtful={"days_range": "181-365", "rate": 50},
+                loss={"days_range": "366+", "rate": 100}
+            )
+            
+            # Call the staging function
+            local_staging = stage_loans_local_impairment(
+                portfolio_id=portfolio_id,
+                config=local_config,
+                db=db,
+                current_user=current_user
+            )
+            
+            staging_results["local_impairment"] = {
+                "status": "success",
+                "loans_staged": len(local_staging.loans)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error during local impairment staging: {str(e)}")
+            staging_results["local_impairment"] = {
+                "status": "error",
+                "error": str(e)
+            }
+        
+        # Add staging results to the response
+        results["staging"] = staging_results
+
     except Exception as e:
-        # Rollback in case of error
+        # Rollback in case of error during ingestion
         db.rollback()
+        logger.error(f"Error during ingestion: {str(e)}")
         return {
             "portfolio_id": portfolio_id,
             "results": {"error": str(e)},
             "status": "error",
         }
 
-    return {"portfolio_id": portfolio_id, "results": results}
-
+    return {
+        "portfolio_id": portfolio_id, 
+        "results": results, 
+        "status": "success"
+    }
 
 @router.get("/{portfolio_id}/calculate-ecl", response_model=ECLSummary)
 def calculate_ecl_provision(
