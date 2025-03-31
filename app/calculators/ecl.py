@@ -1,5 +1,9 @@
+import pickle
+import pandas as pd
+from datetime import datetime
 from decimal import Decimal
 from typing import Optional, Tuple, List, Union, Dict, Any
+from app.models import Client
 
 
 def calculate_effective_interest_rate(loan_amount, monthly_installment, loan_term):
@@ -108,24 +112,6 @@ def calculate_loss_given_default(
     return lgd
 
 
-def calculate_probability_of_default(loan, ndia):
-    """
-    Calculate Probability of Default based on NDIA (Number of Days in Arrears)
-    """
-    # IFRS 9 staging
-    if ndia < 120:  # Stage 1
-        # Low risk
-        pd = 5.0  # 5% (base rate for performing loans)
-    elif ndia < 240:  # Stage 2
-        # Significant increase in credit risk
-        pd = 30.0  # 30%
-    else:  # Stage 3
-        # Credit impaired
-        pd = 75.0  #
-
-    return pd
-
-
 def calculate_exposure_at_default_percentage(loan, reporting_date):
     """
     Calculate Exposure at Default as a percentage
@@ -222,3 +208,50 @@ def is_in_range(value: int, range_tuple: Tuple[int, Optional[int]]) -> bool:
         return value >= min_val
     else:
         return min_val <= value <= max_val
+
+
+
+def calculate_probability_of_default(loan, db):
+    """
+    Calculate Probability of Default using the machine learning model based on customer age
+    
+    Parameters:
+    - loan: Loan object from the database
+    - db: SQLAlchemy database session
+    
+    Returns:
+    - float: Probability of default as a percentage (0-100)
+    """
+    try:
+        # Import here to avoid circular imports
+        import numpy as np
+        # Load the pre-trained logistic regression model
+        with open("app/ml_models/logistic_model.pkl", "rb") as file:
+            model = pickle.load(file)
+            
+        # Get client associated with this loan's employee_id
+        client = db.query(Client).filter(
+            Client.employee_id == loan.employee_id
+        ).first()
+        
+        if not client or not client.date_of_birth:
+            return 5.0  # Default 5% probability if client or DOB not found
+        
+        # Get year of birth from date of birth
+        year_of_birth = client.date_of_birth.year
+        
+        # Prepare input for the model (similar to predict function)
+        X_new = np.array([[year_of_birth]])
+        
+        # Get prediction and probability from model
+        prediction = model.predict(X_new)[0]
+        probability = model.predict_proba(X_new)[0][1]  # Probability of default
+        
+        # Convert to percentage
+        percentage = probability * 100
+        
+        return percentage
+    except Exception as e:
+        # Handle exceptions but maintain return type as float
+        print(f"Error calculating probability of default: {str(e)}")
+        return 5.0  # Default 5% probability on error

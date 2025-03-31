@@ -15,6 +15,10 @@ from app.auth.utils import (
     create_access_token,
 )
 from app.config import settings
+import pickle
+import numpy as np
+
+
 
 # Initialize database tables explicitly before the app starts
 init_db()
@@ -83,7 +87,43 @@ async def get_token(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-# Create admin user function
+
+
+# Load the pre-trained model
+with open("app/ml_models/logistic_model.pkl", "rb") as file:
+    model = pickle.load(file)
+
+# @app.get("/predict")
+# def predict_default_probability(year_of_birth: int):
+#     """
+#     Calculate and return the probability of default based on year of birth.
+    
+#     Parameters:
+#     - year_of_birth: Year the client was born
+    
+#     Returns:
+#     - JSON with default prediction and probability
+#     """
+#     try:
+#         # Prepare input for the model
+#         X_new = np.array([[year_of_birth]])
+        
+#         # Get prediction and probability from model
+#         prediction = model.predict(X_new)[0]
+#         probability = model.predict_proba(X_new)[0][1]  # Probability of default
+        
+#         return {
+#             "year_of_birth": year_of_birth,
+#             "default_prediction": int(prediction),
+#             "probability_of_default": round(probability, 4)
+#         }
+    
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+# create admin user function
 def create_admin_user():
     # Get a new session
     db = SessionLocal = next(get_db())
