@@ -210,9 +210,6 @@ def is_in_range(value: int, range_tuple: Tuple[int, Optional[int]]) -> bool:
         return min_val <= value <= max_val
 
 
-#Load the pre-trained logistic regression model
-with open("app/ml_models/logistic_model.pkl", "rb") as file:
-    model = pickle.load(file)
 
 def calculate_probability_of_default(loan, db):
     """
@@ -225,34 +222,36 @@ def calculate_probability_of_default(loan, db):
     Returns:
     - float: Probability of default as a percentage (0-100)
     """
-    # Import here to avoid circular imports
-    
-    
-    # Get client associated with this loan's employee_id
-    client = db.query(Client).filter(
-        Client.employee_id == loan.employee_id
-    ).first()
-    
-    if client and client.date_of_birth:
-        # Calculate age from date of birth
-        today = datetime.now().date()
-        client_age = today.year - client.date_of_birth.year - (
-            (today.month, today.day) < (client.date_of_birth.month, client.date_of_birth.day)
-        )
+    try:
+        # Import here to avoid circular imports
+        import numpy as np
+        # Load the pre-trained logistic regression model
+        with open("app/ml_models/logistic_model.pkl", "rb") as file:
+            model = pickle.load(file)
+            
+        # Get client associated with this loan's employee_id
+        client = db.query(Client).filter(
+            Client.employee_id == loan.employee_id
+        ).first()
         
-        # Prepare input for the model
-        # Based on the training script, we need to provide input in the expected format
-        # The dummy data format was [[age, feature2, feature3], ...]
-        input_data = pd.DataFrame([[client_age, 0, 0]])
+        if not client or not client.date_of_birth:
+            return 5.0  # Default 5% probability if client or DOB not found
         
-        # Get probability from model (returns probability of class 1 - "default")
-        probability = model.predict_proba(input_data)[:, 1][0]
+        # Get year of birth from date of birth
+        year_of_birth = client.date_of_birth.year
+        
+        # Prepare input for the model (similar to predict function)
+        X_new = np.array([[year_of_birth]])
+        
+        # Get prediction and probability from model
+        prediction = model.predict(X_new)[0]
+        probability = model.predict_proba(X_new)[0][1]  # Probability of default
         
         # Convert to percentage
         percentage = probability * 100
         
         return percentage
-    else:
-        # Return a default probability if we can't get the client's age
-        return 5.0  # Default 5% probability
-
+    except Exception as e:
+        # Handle exceptions but maintain return type as float
+        print(f"Error calculating probability of default: {str(e)}")
+        return 5.0  # Default 5% probability on error
