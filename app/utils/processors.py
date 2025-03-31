@@ -60,10 +60,38 @@ async def process_loan_details(loan_details, portfolio_id, db):
         # Convert dates efficiently
         df["loan_issue_date"] = pd.to_datetime(df["loan_issue_date"], errors="coerce")
 
+        # Handle date formats for period columns with mixed formats
         for col in ["deduction_start_period", "submission_period", "maturity_period"]:
-            df[col] = pd.to_datetime(
-                df[col], format="%b-%y", errors="coerce"
-            ) + pd.offsets.MonthEnd(0)
+            # First, standardize the format for parsing
+            if col in df.columns:
+                # Handle both formats: "Sep-22" and "SEP2022"
+                # Function to convert various date formats to standard format
+                def standardize_date_format(date_str):
+                    if pd.isna(date_str):
+                        return None
+                    
+                    date_str = str(date_str).strip().upper()
+                    
+                    # Format: "SEP2022" (no hyphen)
+                    if len(date_str) == 7 and not "-" in date_str:
+                        month = date_str[:3]
+                        year = date_str[3:]
+                        if len(year) == 4:  # Full year format (2022)
+                            return f"{month}-{year[2:]}"  # Convert to "SEP-22"
+                        return date_str
+                    
+                    return date_str
+                
+                # Apply standardization
+                df[col] = df[col].apply(standardize_date_format)
+                
+                # Parse the standardized dates
+                df[col] = pd.to_datetime(
+                    df[col], format="%b-%y", errors="coerce"
+                ) + pd.offsets.MonthEnd(0)
+                
+                # Replace NaT values with None for SQL compatibility
+                df[col] = df[col].where(pd.notna(df[col]), None)
 
         # Convert boolean columns efficiently
         df["paid"] = df["paid"].isin(["Yes", "True"])
@@ -87,14 +115,20 @@ async def process_loan_details(loan_details, portfolio_id, db):
             try:
                 loan_no = record.get("loan_no")
 
+                # Replace NaT values with None for SQL compatibility
+                for date_col in ["loan_issue_date", "deduction_start_period", "submission_period", "maturity_period"]:
+                    if date_col in record and pd.isna(record[date_col]):
+                        record[date_col] = None
+
                 if loan_no in existing_loan_nos:
                     updates.append(record)
                 else:
                     loans_to_add.append(Loan(**record, portfolio_id=portfolio_id))
 
                 rows_processed += 1
-            except Exception:
+            except Exception as e:
                 rows_skipped += 1
+                print(f"Error processing loan: {e}")
 
         # Bulk insert new loans
         if loans_to_add:
@@ -109,44 +143,63 @@ async def process_loan_details(loan_details, portfolio_id, db):
 
     except Exception as e:
         return {"status": "error", "message": str(e), "filename": loan_details.filename}
-
-
+    
 async def process_loan_guarantees(loan_guarantee_data, portfolio_id, db):
-    """Process loan guarantees file using optimized bulk operations."""
+    """Process loan guarantees file using a simplified approach."""
     try:
         content = await loan_guarantee_data.read()
         df = pd.read_excel(io.BytesIO(content), dtype=str)
-
-        # Column mapping
-        column_mapping = {
-            "Guarantor Name": "guarantor",
-            "Pledged Amount": "pledged_amount",
-        }
-
-        df.rename(columns=column_mapping, inplace=True)
-
+        
+        # Print column names for debugging
+        print(f"Actual columns in file: {df.columns.tolist()}")
+        
+        # Create a lowercase version of column names for easy matching
+        lowercase_columns = {col.lower(): col for col in df.columns}
+        
+        # Find 'guarantor' and 'amount' columns using simple pattern matching
+        guarantor_col = None
+        amount_col = None
+        
+        if 'guarantor name' in lowercase_columns or 'guarantor' in lowercase_columns:
+            guarantor_col = lowercase_columns.get('guarantor name') or lowercase_columns.get('guarantor')
+        
+        if 'pledged amount' in lowercase_columns or 'amount' in lowercase_columns:
+            amount_col = lowercase_columns.get('pledged amount') or lowercase_columns.get('amount')
+        
+        # If we found the columns, rename them to our standard names
+        rename_dict = {}
+        if guarantor_col:
+            rename_dict[guarantor_col] = "guarantor"
+        else:
+            raise ValueError(f"Could not find guarantor column. Available columns: {df.columns.tolist()}")
+            
+        if amount_col:
+            rename_dict[amount_col] = "pledged_amount"
+        
+        # Apply the renaming
+        df.rename(columns=rename_dict, inplace=True)
+        
+        # Convert pledged_amount to numeric if the column exists
         if "pledged_amount" in df.columns:
             df["pledged_amount"] = pd.to_numeric(df["pledged_amount"], errors="coerce")
-
+        
         # Fetch only necessary fields from DB
         existing_guarantors = (
             db.query(Guarantee.guarantor)
             .filter(Guarantee.portfolio_id == portfolio_id)
             .all()
         )
-        existing_guarantors_set = {
-            g[0] for g in existing_guarantors
-        }  # Extract values from tuples
-
+        existing_guarantors_set = {g[0] for g in existing_guarantors}
+        
         rows_processed = len(df)
         new_guarantees = df[~df["guarantor"].isin(existing_guarantors_set)].copy()
-
+        
         # Prepare new guarantees for bulk insert
         if not new_guarantees.empty:
             new_guarantees["portfolio_id"] = portfolio_id
             guarantees_to_add = new_guarantees.to_dict(orient="records")
             db.bulk_insert_mappings(Guarantee, guarantees_to_add)
-
+            
         return {
             "status": "success",
             "rows_processed": rows_processed,
@@ -159,7 +212,6 @@ async def process_loan_guarantees(loan_guarantee_data, portfolio_id, db):
             "message": str(e),
             "filename": loan_guarantee_data.filename,
         }
-
 
 async def process_loan_collateral(loan_collateral_data, portfolio_id, db):
     """Process loan collateral data file using optimized bulk operations."""
