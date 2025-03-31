@@ -412,7 +412,7 @@ def generate_assumptions_summary(
     for loan in loans:
         # Calculate PD
         ndia = loan.ndia or 0
-        pd = calculate_probability_of_default(loan, ndia)
+        pd = calculate_probability_of_default(loan, db)
         pd_values.append(pd)
 
         # Calculate LGD
@@ -608,7 +608,7 @@ def generate_probability_default_report(
 
     for loan in loans:
         ndia = loan.ndia or 0
-        pd = calculate_probability_of_default(loan, ndia)
+        pd = calculate_probability_of_default(loan, db)
         pd_values.append(pd)
 
         loan_pds.append(

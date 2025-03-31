@@ -160,8 +160,7 @@ def get_dashboard(
                         loan, current_date
                     )
                     pd = calculate_probability_of_default(
-                        loan, loan.ndia if loan.ndia else 0
-                    )
+                        loan, db)
                     lgd = calculate_loss_given_default(loan, securities)
 
                     # Calculate ECL for this loan
