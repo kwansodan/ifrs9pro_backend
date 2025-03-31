@@ -1,4 +1,5 @@
 import os
+import logging
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
@@ -17,16 +18,20 @@ from app.auth.utils import (
 from app.config import settings
 import pickle
 import numpy as np
+import asyncio
 
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("app")
 
-
-# Initialize database tables explicitly before the app starts
-init_db()
-
+# Initialize the FastAPI app first
 app = FastAPI()
 
-# Redirect to https
-# app.add_middleware(HTTPSRedirectMiddleware)
+# Add a health check endpoint immediately
+@app.get("/health")
+async def health_check():
+    """Simple health check endpoint for Azure health probes"""
+    return {"status": "healthy"}
 
 # Configure CORS
 app.add_middleware(
@@ -36,7 +41,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # Register routers
 app.include_router(auth.router)
@@ -50,9 +54,7 @@ app.include_router(user_router.router)
 async def root():
     return {"message": "Welcome to IFRS9Pro API"}
 
-
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
 
 @app.post("/token")
 async def get_token(
@@ -86,72 +88,108 @@ async def get_token(
     # Return in format expected by OAuth2
     return {"access_token": access_token, "token_type": "bearer"}
 
+# Global model variable for lazy loading
+model = None
 
+def get_model():
+    """Lazy-load the ML model only when needed"""
+    global model
+    if model is None:
+        try:
+            logger.info("Loading ML model...")
+            with open("app/ml_models/logistic_model.pkl", "rb") as file:
+                model = pickle.load(file)
+            logger.info("ML model loaded successfully")
+        except Exception as e:
+            logger.error(f"Error loading model: {e}")
+            # Return a simple fallback model that won't break the application
+            return None
+    return model
 
-
-# Load the pre-trained model
-with open("app/ml_models/logistic_model.pkl", "rb") as file:
-    model = pickle.load(file)
-
+# Commented out prediction endpoint - uncomment when ready
 # @app.get("/predict")
 # def predict_default_probability(year_of_birth: int):
 #     """
 #     Calculate and return the probability of default based on year of birth.
-    
-#     Parameters:
-#     - year_of_birth: Year the client was born
-    
-#     Returns:
-#     - JSON with default prediction and probability
 #     """
 #     try:
+#         model = get_model()  # Lazy load the model
+#         if not model:
+#             raise HTTPException(status_code=503, detail="Model not available")
+#         
 #         # Prepare input for the model
 #         X_new = np.array([[year_of_birth]])
-        
+#         
 #         # Get prediction and probability from model
 #         prediction = model.predict(X_new)[0]
 #         probability = model.predict_proba(X_new)[0][1]  # Probability of default
-        
+#         
 #         return {
 #             "year_of_birth": year_of_birth,
 #             "default_prediction": int(prediction),
 #             "probability_of_default": round(probability, 4)
 #         }
-    
+#     
 #     except Exception as e:
 #         raise HTTPException(status_code=500, detail=str(e))
 
-
-
-# create admin user function
-def create_admin_user():
-    # Get a new session
-    db = SessionLocal = next(get_db())
+async def init_db_async():
+    """Initialize database tables asynchronously"""
     try:
-        admin_email = os.getenv("ADMIN_EMAIL")
-        admin_password = os.getenv("ADMIN_PASSWORD")
-
-        existing_admin = db.query(User).filter(User.email == admin_email).first()
-        if not existing_admin:
-            admin_user = User(
-                email=admin_email,
-                hashed_password=get_password_hash(admin_password),
-                role=UserRole.ADMIN,
-            )
-            db.add(admin_user)
-            db.commit()
-            print(f"Admin user created: {admin_email}")
+        logger.info("Initializing database...")
+        init_db()
+        logger.info("Database initialized successfully")
     except Exception as e:
-        db.rollback()
-        print(f"Error creating admin user: {e}")
-    finally:
-        db.close()
+        logger.error(f"Error initializing database: {e}")
 
+async def create_admin_user_async():
+    """Create admin user asynchronously"""
+    try:
+        logger.info("Creating admin user if needed...")
+        # Get a new session
+        db = next(get_db())
+        try:
+            admin_email = os.getenv("ADMIN_EMAIL")
+            admin_password = os.getenv("ADMIN_PASSWORD")
+
+            if not admin_email or not admin_password:
+                logger.warning("Admin credentials not provided in environment variables")
+                return
+
+            existing_admin = db.query(User).filter(User.email == admin_email).first()
+            if not existing_admin:
+                admin_user = User(
+                    email=admin_email,
+                    hashed_password=get_password_hash(admin_password),
+                    role=UserRole.ADMIN,
+                )
+                db.add(admin_user)
+                db.commit()
+                logger.info(f"Admin user created: {admin_email}")
+            else:
+                logger.info("Admin user already exists")
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error creating admin user: {e}")
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error in create_admin_user_async: {e}")
 
 @app.on_event("startup")
 async def startup_event():
-    create_admin_user()
-
+    """
+    Application startup event handler
+    - First responds to health checks
+    - Then initializes database and creates admin user in background
+    """
+    logger.info("Application startup event triggered")
+    
+    # Schedule these tasks to run in the background
+    # This allows the health check to respond immediately
+    loop = asyncio.get_event_loop()
+    loop.create_task(init_db_async())
+    loop.create_task(create_admin_user_async())
 
 if __name__ == "__main__":
     import uvicorn
