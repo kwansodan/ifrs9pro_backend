@@ -722,111 +722,132 @@ async def ingest_portfolio_data(
 
     results = {}
 
-    # Start a transaction
+    # Explicitly rollback any existing transaction to start fresh
+    db.rollback()
+
+    # Process files one by one with separate transactions for each
     try:
         # Process loan details file
         if loan_details:
-            results["loan_details"] = await process_loan_details(
-                loan_details, portfolio_id, db
-            )
+            try:
+                results["loan_details"] = await process_loan_details(
+                    loan_details, portfolio_id, db
+                )
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Error processing loan details: {str(e)}")
+                results["loan_details"] = {"status": "error", "message": str(e)}
 
         # Process loan guarantee data file
         if loan_guarantee_data:
-            results["loan_guarantee_data"] = await process_loan_guarantees(
-                loan_guarantee_data, portfolio_id, db
-            )
+            try:
+                results["loan_guarantee_data"] = await process_loan_guarantees(
+                    loan_guarantee_data, portfolio_id, db
+                )
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Error processing loan guarantees: {str(e)}")
+                results["loan_guarantee_data"] = {"status": "error", "message": str(e)}
 
         # Process loan collateral data file
         if loan_collateral_data:
-            results["loan_collateral_data"] = await process_loan_collateral(
-                loan_collateral_data, portfolio_id, db
-            )
+            try:
+                results["loan_collateral_data"] = await process_loan_collateral(
+                    loan_collateral_data, portfolio_id, db
+                )
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Error processing loan collateral: {str(e)}")
+                results["loan_collateral_data"] = {"status": "error", "message": str(e)}
 
-        # Commit changes after ingestion
-        db.commit()
+        # Only perform staging if at least one file was processed successfully
+        if any(result.get("status") == "success" for result in results.values() if isinstance(result, dict)):
+            # Automatically perform both types of staging
+            staging_results = {}
+            
+            # 1. Perform ECL staging
+            try:
+                # Create default ECL staging config
+                ecl_config = ECLStagingConfig(
+                    stage_1={"days_range": "0-120"},
+                    stage_2={"days_range": "120-240"},
+                    stage_3={"days_range": "240+"}
+                )
+                
+                # Call the staging function
+                ecl_staging = stage_loans_ecl(
+                    portfolio_id=portfolio_id,
+                    config=ecl_config,
+                    db=db,
+                    current_user=current_user
+                )
+                
+                staging_results["ecl"] = {
+                    "status": "success",
+                    "loans_staged": len(ecl_staging.loans)
+                }
+                
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Error during ECL staging: {str(e)}")
+                staging_results["ecl"] = {
+                    "status": "error",
+                    "error": str(e)
+                }
+            
+            # 2. Perform local impairment staging
+            try:
+                # Create default local impairment config
+                local_config = LocalImpairmentConfig(
+                    current={"days_range": "0-30", "rate": 1},
+                    olem={"days_range": "31-90", "rate": 5},
+                    substandard={"days_range": "91-180", "rate": 25},
+                    doubtful={"days_range": "181-365", "rate": 50},
+                    loss={"days_range": "366+", "rate": 100}
+                )
+                
+                # Call the staging function
+                local_staging = stage_loans_local_impairment(
+                    portfolio_id=portfolio_id,
+                    config=local_config,
+                    db=db,
+                    current_user=current_user
+                )
+                
+                staging_results["local_impairment"] = {
+                    "status": "success",
+                    "loans_staged": len(local_staging.loans)
+                }
+                
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Error during local impairment staging: {str(e)}")
+                staging_results["local_impairment"] = {
+                    "status": "error",
+                    "error": str(e)
+                }
+            
+            # Add staging results to the response
+            results["staging"] = staging_results
 
-        # Automatically perform both types of staging
-        staging_results = {}
-        
-        # 1. Perform ECL staging
-        try:
-            # Create default ECL staging config
-            ecl_config = ECLStagingConfig(
-                stage_1={"days_range": "0-120"},
-                stage_2={"days_range": "120-240"},
-                stage_3={"days_range": "240+"}
-            )
-            
-            # Call the staging function
-            ecl_staging = stage_loans_ecl(
-                portfolio_id=portfolio_id,
-                config=ecl_config,
-                db=db,
-                current_user=current_user
-            )
-            
-            staging_results["ecl"] = {
-                "status": "success",
-                "loans_staged": len(ecl_staging.loans)
-            }
-            
-        except Exception as e:
-            logger.error(f"Error during ECL staging: {str(e)}")
-            staging_results["ecl"] = {
-                "status": "error",
-                "error": str(e)
-            }
-        
-        # 2. Perform local impairment staging
-        try:
-            # Create default local impairment config
-            local_config = LocalImpairmentConfig(
-                current={"days_range": "0-30", "rate": 1},
-                olem={"days_range": "31-90", "rate": 5},
-                substandard={"days_range": "91-180", "rate": 25},
-                doubtful={"days_range": "181-365", "rate": 50},
-                loss={"days_range": "366+", "rate": 100}
-            )
-            
-            # Call the staging function
-            local_staging = stage_loans_local_impairment(
-                portfolio_id=portfolio_id,
-                config=local_config,
-                db=db,
-                current_user=current_user
-            )
-            
-            staging_results["local_impairment"] = {
-                "status": "success",
-                "loans_staged": len(local_staging.loans)
-            }
-            
-        except Exception as e:
-            logger.error(f"Error during local impairment staging: {str(e)}")
-            staging_results["local_impairment"] = {
-                "status": "error",
-                "error": str(e)
-            }
-        
-        # Add staging results to the response
-        results["staging"] = staging_results
+        return {
+            "portfolio_id": portfolio_id, 
+            "results": results, 
+            "status": "success" if not any(result.get("status") == "error" for result in results.values() if isinstance(result, dict)) else "partial_success"
+        }
 
     except Exception as e:
-        # Rollback in case of error during ingestion
+        # Rollback in case of a general error
         db.rollback()
-        logger.error(f"Error during ingestion: {str(e)}")
+        logger.error(f"General error during ingestion: {str(e)}")
         return {
             "portfolio_id": portfolio_id,
             "results": {"error": str(e)},
             "status": "error",
         }
-
-    return {
-        "portfolio_id": portfolio_id, 
-        "results": results, 
-        "status": "success"
-    }
-
 @router.get("/{portfolio_id}/calculate-ecl", response_model=ECLSummary)
 def calculate_ecl_provision(
     portfolio_id: int,
