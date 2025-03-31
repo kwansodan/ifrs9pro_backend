@@ -6,7 +6,6 @@ from app.models import (
     Client,
 )
 
-
 async def process_loan_details(loan_details, portfolio_id, db):
     """Highly optimized function to process loan details."""
     try:
@@ -97,11 +96,14 @@ async def process_loan_details(loan_details, portfolio_id, db):
         df["paid"] = df["paid"].isin(["Yes", "True"])
         df["cancelled"] = df["cancelled"].isin(["Yes", "True"])
 
-        # Get existing loan numbers in bulk
-        existing_loans = (
-            db.query(Loan.loan_no).filter(Loan.portfolio_id == portfolio_id).all()
-        )
+        # Clean any existing transaction state
+        db.rollback()
+
+        # Get ALL existing loan numbers, regardless of portfolio, to be extremely cautious
+        existing_loans = db.query(Loan.loan_no).all()
         existing_loan_nos = {loan_no for (loan_no,) in existing_loans}
+
+        print(f"Found {len(existing_loan_nos)} existing loan numbers in database")
 
         # Convert DataFrame to list of dictionaries
         loan_records = df.astype(object).to_dict(orient="records")
@@ -114,36 +116,73 @@ async def process_loan_details(loan_details, portfolio_id, db):
         for record in loan_records:
             try:
                 loan_no = record.get("loan_no")
+                
+                # Skip completely if loan_no is None or empty
+                if not loan_no:
+                    rows_skipped += 1
+                    print(f"Skipping record with no loan_no")
+                    continue
 
                 # Replace NaT values with None for SQL compatibility
                 for date_col in ["loan_issue_date", "deduction_start_period", "submission_period", "maturity_period"]:
                     if date_col in record and pd.isna(record[date_col]):
                         record[date_col] = None
 
-                if loan_no in existing_loan_nos:
+                # Double-check if this loan exists (by loan_no)
+                if loan_no in existing_loan_nos or db.query(Loan).filter(Loan.loan_no == loan_no).count() > 0:
+                    print(f"Skipping existing loan: {loan_no}")
                     updates.append(record)
                 else:
+                    print(f"Adding new loan: {loan_no}")
                     loans_to_add.append(Loan(**record, portfolio_id=portfolio_id))
 
                 rows_processed += 1
             except Exception as e:
                 rows_skipped += 1
                 print(f"Error processing loan: {e}")
+                continue  # Skip to next record on error
 
-        # Bulk insert new loans
+        # Only insert new loans, skip existing ones
+        inserted_count = 0
         if loans_to_add:
-            db.bulk_save_objects(loans_to_add)
+            try:
+                db.bulk_save_objects(loans_to_add)
+                inserted_count = len(loans_to_add)
+                print(f"Successfully inserted {inserted_count} new loans")
+            except Exception as e:
+                db.rollback()
+                print(f"Error during bulk save: {e}")
+                # Try one by one as a fallback
+                print("Falling back to one-by-one insertion")
+                inserted_count = 0
+                for loan in loans_to_add:
+                    try:
+                        db.add(loan)
+                        db.flush()  # Check for errors without committing
+                        inserted_count += 1
+                    except Exception as inner_e:
+                        db.rollback()  # Roll back the failed insert
+                        print(f"Error inserting loan {getattr(loan, 'loan_no', 'unknown')}: {inner_e}")
+                        rows_skipped += 1
+                        
+                print(f"Successfully inserted {inserted_count} loans one by one")
+            
+        # We're intentionally not updating existing loans, just skipping them
+        skipped_existing = len(updates)
+        print(f"Skipped {skipped_existing} existing loans")
 
         return {
             "status": "success",
-            "rows_processed": rows_processed,
-            "rows_skipped": rows_skipped,
+            "rows_processed": rows_processed - skipped_existing,  
+            "rows_inserted": inserted_count,
+            "rows_skipped": rows_skipped + skipped_existing,  
             "filename": loan_details.filename,
         }
 
     except Exception as e:
-        return {"status": "error", "message": str(e), "filename": loan_details.filename}
-    
+        # Make sure to rollback on error
+        db.rollback()
+        return {"status": "error", "message": str(e), "filename": loan_details.filename}    
 async def process_loan_guarantees(loan_guarantee_data, portfolio_id, db):
     """Process loan guarantees file using a simplified approach."""
     try:
