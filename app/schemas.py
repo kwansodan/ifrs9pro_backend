@@ -541,29 +541,7 @@ class PortfolioLatestResults(BaseModel):
         from_attributes = True
 
 
-class PortfolioWithSummaryResponse(BaseModel):
-    id: int
-    name: str
-    description: Optional[str] = None
-    asset_type: Optional[str] = None
-    customer_type: Optional[str] = None
-    funding_source: Optional[str] = None
-    data_source: Optional[str] = None
-    repayment_source: Optional[str] = None
-    has_ingested_data: bool
-    created_at: datetime
-    updated_at: Optional[datetime] = None
-    overview: OverviewModel
-    customer_summary: CustomerSummaryModel
-    quality_check: Optional[QualityCheckSummary] = None
-    quality_issues: Optional[List[QualityIssueResponse]] = None
-    report_history: Optional[List[ReportHistoryItem]] = None
-    calculation_summary: Optional[CalculationSummary] = None 
-
-
-    class Config:
-        from_attributes = True
-
+        
 # ==================== IMPAIRMENT MODELS ====================
 
 class DaysRangeConfig(BaseModel):
@@ -633,7 +611,31 @@ class LocalImpairmentSummary(BaseModel):
     provision_percentage: float
 
 
+class StagingSummaryStageData(BaseModel):
+    """Data about loans in a specific stage"""
+    num_loans: int
+    outstanding_loan_balance: float
+
+
+class LocalImpairmentStagingSummary(BaseModel):
+    """Summary of local impairment staging results"""
+    current: Optional[StagingSummaryStageData] = None
+    olem: Optional[StagingSummaryStageData] = None
+    substandard: Optional[StagingSummaryStageData] = None
+    doubtful: Optional[StagingSummaryStageData] = None
+    loss: Optional[StagingSummaryStageData] = None
+    staging_date: Optional[datetime] = None
+
+
 # ==================== ECL MODELS ====================
+
+class ECLStagingSummary(BaseModel):
+    """Summary of ECL staging results"""
+    stage_1: Optional[StagingSummaryStageData] = None
+    stage_2: Optional[StagingSummaryStageData] = None
+    stage_3: Optional[StagingSummaryStageData] = None
+    staging_date: Optional[datetime] = None
+
 
 class ECLCategoryData(BaseModel):
     """Data for each delinquency category row in the ECL grid"""
@@ -735,3 +737,33 @@ class StagedLoans(BaseModel):
 class CalculatorResponse(BaseModel):
     result: float
     input_data: dict
+
+class StagingSummary(BaseModel):
+    """Combined staging summary for both ECL and local impairment"""
+    ecl: Optional[ECLStagingSummary] = None
+    local_impairment: Optional[LocalImpairmentStagingSummary] = None
+
+
+
+class PortfolioWithSummaryResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    asset_type: Optional[str] = None
+    customer_type: Optional[str] = None
+    funding_source: Optional[str] = None
+    data_source: Optional[str] = None
+    repayment_source: Optional[str] = None
+    has_ingested_data: bool
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    overview: OverviewModel
+    customer_summary: CustomerSummaryModel
+    quality_check: Optional[QualityCheckSummary] = None
+    quality_issues: Optional[List[QualityIssueResponse]] = None
+    report_history: Optional[List[ReportHistoryItem]] = None
+    calculation_summary: Optional[CalculationSummary] = None
+    staging_summary: Optional[StagingSummary] = None
+
+    class Config:
+        from_attributes = True

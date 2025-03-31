@@ -287,6 +287,26 @@ def get_portfolio(
         .order_by(StagingResult.created_at.desc())
         .first()
     )
+      # Get latest staging results
+    latest_local_impairment_staging = (
+        db.query(StagingResult)
+        .filter(
+            StagingResult.portfolio_id == portfolio_id,
+            StagingResult.staging_type == "local_impairment"
+        )
+        .order_by(StagingResult.created_at.desc())
+        .first()
+    )
+    
+    latest_ecl_staging = (
+        db.query(StagingResult)
+        .filter(
+            StagingResult.portfolio_id == portfolio_id,
+            StagingResult.staging_type == "ecl"
+        )
+        .order_by(StagingResult.created_at.desc())
+        .first()
+    )
     
     # Get latest calculation results
     latest_local_impairment_calculation = (
@@ -308,6 +328,156 @@ def get_portfolio(
         .order_by(CalculationResult.created_at.desc())
         .first()
     )
+    # Create staging summary from the staging results
+    staging_summary = None
+    if latest_ecl_staging or latest_local_impairment_staging:
+        staging_summary = {}
+        
+        # Process ECL staging if available
+        if latest_ecl_staging:
+            ecl_result = latest_ecl_staging.result_summary
+            
+            # Extract data for each stage
+            stage_1_data = None
+            stage_2_data = None
+            stage_3_data = None
+            
+            # Check if we have the newer format with detailed loan data
+            if "loans" in ecl_result:
+                # Calculate totals from individual loan data
+                stage_1_loans = [loan for loan in ecl_result["loans"] if loan.get("stage") == "Stage 1"]
+                stage_2_loans = [loan for loan in ecl_result["loans"] if loan.get("stage") == "Stage 2"]
+                stage_3_loans = [loan for loan in ecl_result["loans"] if loan.get("stage") == "Stage 3"]
+                
+                stage_1_balance = sum(float(loan.get("outstanding_loan_balance", 0)) for loan in stage_1_loans)
+                stage_2_balance = sum(float(loan.get("outstanding_loan_balance", 0)) for loan in stage_2_loans)
+                stage_3_balance = sum(float(loan.get("outstanding_loan_balance", 0)) for loan in stage_3_loans)
+                
+                stage_1_data = {
+                    "num_loans": len(stage_1_loans),
+                    "outstanding_loan_balance": stage_1_balance
+                }
+                
+                stage_2_data = {
+                    "num_loans": len(stage_2_loans),
+                    "outstanding_loan_balance": stage_2_balance
+                }
+                
+                stage_3_data = {
+                    "num_loans": len(stage_3_loans),
+                    "outstanding_loan_balance": stage_3_balance
+                }
+            else:
+                # Use summary statistics if available
+                stage_1_data = {
+                    "num_loans": ecl_result.get("stage1_count", 0),
+                    "outstanding_loan_balance": ecl_result.get("stage1_total", 0)
+                }
+                
+                stage_2_data = {
+                    "num_loans": ecl_result.get("stage2_count", 0),
+                    "outstanding_loan_balance": ecl_result.get("stage2_total", 0)
+                }
+                
+                stage_3_data = {
+                    "num_loans": ecl_result.get("stage3_count", 0),
+                    "outstanding_loan_balance": ecl_result.get("stage3_total", 0)
+                }
+            
+            # Create ECL staging summary
+            staging_summary["ecl"] = {
+                "stage_1": stage_1_data,
+                "stage_2": stage_2_data,
+                "stage_3": stage_3_data,
+                "staging_date": latest_ecl_staging.created_at
+            }
+        
+        # Process local impairment staging if available
+        if latest_local_impairment_staging:
+            local_result = latest_local_impairment_staging.result_summary
+            
+            # Extract data for each category
+            current_data = None
+            olem_data = None
+            substandard_data = None
+            doubtful_data = None
+            loss_data = None
+            
+            # Check if we have the newer format with detailed loan data
+            if "loans" in local_result:
+                # Calculate totals from individual loan data
+                current_loans = [loan for loan in local_result["loans"] if loan.get("stage") == "Current"]
+                olem_loans = [loan for loan in local_result["loans"] if loan.get("stage") == "OLEM"]
+                substandard_loans = [loan for loan in local_result["loans"] if loan.get("stage") == "Substandard"]
+                doubtful_loans = [loan for loan in local_result["loans"] if loan.get("stage") == "Doubtful"]
+                loss_loans = [loan for loan in local_result["loans"] if loan.get("stage") == "Loss"]
+                
+                current_balance = sum(float(loan.get("outstanding_loan_balance", 0)) for loan in current_loans)
+                olem_balance = sum(float(loan.get("outstanding_loan_balance", 0)) for loan in olem_loans)
+                substandard_balance = sum(float(loan.get("outstanding_loan_balance", 0)) for loan in substandard_loans)
+                doubtful_balance = sum(float(loan.get("outstanding_loan_balance", 0)) for loan in doubtful_loans)
+                loss_balance = sum(float(loan.get("outstanding_loan_balance", 0)) for loan in loss_loans)
+                
+                current_data = {
+                    "num_loans": len(current_loans),
+                    "outstanding_loan_balance": current_balance
+                }
+                
+                olem_data = {
+                    "num_loans": len(olem_loans),
+                    "outstanding_loan_balance": olem_balance
+                }
+                
+                substandard_data = {
+                    "num_loans": len(substandard_loans),
+                    "outstanding_loan_balance": substandard_balance
+                }
+                
+                doubtful_data = {
+                    "num_loans": len(doubtful_loans),
+                    "outstanding_loan_balance": doubtful_balance
+                }
+                
+                loss_data = {
+                    "num_loans": len(loss_loans),
+                    "outstanding_loan_balance": loss_balance
+                }
+            else:
+                # Use summary statistics if available
+                current_data = {
+                    "num_loans": local_result.get("current_count", 0),
+                    "outstanding_loan_balance": local_result.get("current_total", 0)
+                }
+                
+                olem_data = {
+                    "num_loans": local_result.get("olem_count", 0),
+                    "outstanding_loan_balance": local_result.get("olem_total", 0)
+                }
+                
+                substandard_data = {
+                    "num_loans": local_result.get("substandard_count", 0),
+                    "outstanding_loan_balance": local_result.get("substandard_total", 0)
+                }
+                
+                doubtful_data = {
+                    "num_loans": local_result.get("doubtful_count", 0),
+                    "outstanding_loan_balance": local_result.get("doubtful_total", 0)
+                }
+                
+                loss_data = {
+                    "num_loans": local_result.get("loss_count", 0),
+                    "outstanding_loan_balance": local_result.get("loss_total", 0)
+                }
+            
+            # Create local impairment staging summary
+            staging_summary["local_impairment"] = {
+                "current": current_data,
+                "olem": olem_data,
+                "substandard": substandard_data,
+                "doubtful": doubtful_data,
+                "loss": loss_data,
+                "staging_date": latest_local_impairment_staging.created_at
+            }
 
     # Calculate summary for calculations
     calculation_summary = None
@@ -440,6 +610,7 @@ def get_portfolio(
         quality_issues=quality_issues if include_quality_issues else None,
         report_history=report_history if include_report_history else None,
         calculation_summary=calculation_summary,
+        staging_summary=staging_summary,
     )
 
     return response
