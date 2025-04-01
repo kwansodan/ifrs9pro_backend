@@ -579,7 +579,7 @@ def get_portfolio(
             }
 
     # Convert repayment_source boolean to string representation
-    repayment_source_str = "At Source" if portfolio.repayment_source else "Manual Transfer"
+    # repayment_source_str = "At Source" if portfolio.repayment_source else "Manual Transfer"
 
     # Create response dictionary with portfolio data and summaries
     response = PortfolioWithSummaryResponse(
@@ -590,7 +590,10 @@ def get_portfolio(
         customer_type=portfolio.customer_type,
         funding_source=portfolio.funding_source,
         data_source=portfolio.data_source,
-        repayment_source=repayment_source_str,  
+        repayment_source=portfolio.repayment_source,
+        credit_risk_reserve=portfolio.credit_risk_reserve,
+        loan_assets=portfolio.loan_assets,
+        ecl_impairment_account=portfolio.ecl_impairment_account,
         has_ingested_data=has_ingested_data, 
         created_at=portfolio.created_at,
         updated_at=portfolio.updated_at,
