@@ -23,7 +23,6 @@ async def create_feedback(
     """
     # Create new feedback object
     new_feedback = Feedback(
-        title=feedback_data.title,
         description=feedback_data.description,
         user_id=current_user.id,
         status=FeedbackStatus.SUBMITTED,
