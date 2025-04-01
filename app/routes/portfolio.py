@@ -93,6 +93,7 @@ from app.utils.processors import (
     process_loan_details,
     process_loan_collateral,
     process_loan_guarantees,
+    process_client_data,
 )
 
 logger = logging.getLogger(__name__)
@@ -686,6 +687,7 @@ def delete_portfolio(
 async def ingest_portfolio_data(
     portfolio_id: int,
     loan_details: Optional[UploadFile] = File(None),
+    client_data: Optional[UploadFile] = File(None),
     loan_guarantee_data: Optional[UploadFile] = File(None),
     loan_collateral_data: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
@@ -696,6 +698,7 @@ async def ingest_portfolio_data(
 
     Accepts up to three Excel files:
     - loan_details: Primary loan information
+    - client_data: Customer information
     - loan_guarantee_data: Information about loan guarantees
     - loan_collateral_data: Information about loan collateral
     
@@ -751,6 +754,18 @@ async def ingest_portfolio_data(
                 logger.error(f"Error processing loan guarantees: {str(e)}")
                 results["loan_guarantee_data"] = {"status": "error", "message": str(e)}
 
+        # Process client data file
+        if client_data:
+            try:
+                results["client_data"] = await process_client_data(
+                    client_data, portfolio_id, db
+                )
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Error processing client data: {str(e)}")
+                results["client_data"] = {"status": "error", "message": str(e)}
+                
         # Process loan collateral data file
         if loan_collateral_data:
             try:
