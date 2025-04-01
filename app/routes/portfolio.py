@@ -167,9 +167,6 @@ def get_portfolios(
         if '_sa_instance_state' in portfolio_dict:
             del portfolio_dict['_sa_instance_state']
             
-        # Convert boolean to string for repayment_source if needed
-        if isinstance(portfolio_dict.get('repayment_source'), bool):
-            portfolio_dict['repayment_source'] = "At Source" if portfolio_dict['repayment_source'] else "Manual Transfer"
             
         # Create response object with the data flag
         portfolio_response = PortfolioResponse(**portfolio_dict, has_ingested_data=has_data)
