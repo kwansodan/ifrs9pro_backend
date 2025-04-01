@@ -228,7 +228,6 @@ class FeedbackStatusEnum(str, Enum):
     COMPLETED = "completed"
 
 class FeedbackBase(BaseModel):
-    title: str = Field(..., min_length=3, max_length=100)
     description: str = Field(..., min_length=10)
 
 class FeedbackCreate(FeedbackBase):
@@ -241,7 +240,6 @@ class FeedbackUpdate(BaseModel):
     """
     Schema for updating existing feedback
     """
-    title: Optional[str] = Field(None, min_length=3, max_length=100)
     description: Optional[str] = Field(None, min_length=10)
 
 class FeedbackStatusUpdate(BaseModel):
