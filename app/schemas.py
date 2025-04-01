@@ -373,7 +373,7 @@ class PortfolioResponseBase(BaseModel):
     customer_type: str
     funding_source: str
     data_source: str
-    repayment_source: str
+    repayment_source: bool
     credit_risk_reserve: Optional[str] = None
     loan_assets: Optional[str] = None
     ecl_impairment_account: Optional[str] = None
@@ -751,7 +751,10 @@ class PortfolioWithSummaryResponse(BaseModel):
     customer_type: Optional[str] = None
     funding_source: Optional[str] = None
     data_source: Optional[str] = None
-    repayment_source: Optional[str] = None
+    repayment_source: Optional[bool] = None
+    credit_risk_reserve: Optional[str] = None
+    loan_assets: Optional[str] = None
+    ecl_impairment_account: Optional[str] = None
     has_ingested_data: bool
     created_at: datetime
     updated_at: Optional[datetime] = None
