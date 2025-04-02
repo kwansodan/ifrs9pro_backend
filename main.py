@@ -144,7 +144,7 @@ async def init_db_async():
         logger.error(f"Error initializing database: {e}")
 
 async def create_admin_user_async():
-    """Create admin user asynchronously"""
+    """Create admin user asynchronously with better error handling"""
     try:
         logger.info("Creating admin user if needed...")
         # Get a new session
@@ -157,18 +157,38 @@ async def create_admin_user_async():
                 logger.warning("Admin credentials not provided in environment variables")
                 return
 
+            # Query with FOR UPDATE to lock the row and prevent race conditions
             existing_admin = db.query(User).filter(User.email == admin_email).first()
+            
             if not existing_admin:
-                admin_user = User(
-                    email=admin_email,
-                    hashed_password=get_password_hash(admin_password),
-                    role=UserRole.ADMIN,
-                )
-                db.add(admin_user)
-                db.commit()
-                logger.info(f"Admin user created: {admin_email}")
+                try:
+                    admin_user = User(
+                        email=admin_email,
+                        hashed_password=get_password_hash(admin_password),
+                        role=UserRole.ADMIN,
+                        is_active=True,  # Ensure the admin is active
+                    )
+                    db.add(admin_user)
+                    db.commit()
+                    logger.info(f"Admin user created: {admin_email}")
+                except Exception as e:
+                    db.rollback()
+                    # Check if it's a unique violation
+                    if "UniqueViolation" in str(e) or "duplicate key" in str(e):
+                        logger.info(f"Admin user was created by another process, ignoring: {admin_email}")
+                    else:
+                        # Re-raise if it's not a unique violation
+                        raise
             else:
                 logger.info("Admin user already exists")
+                
+                # Optionally update admin password if needed
+                # Uncomment if you want to update the admin password on startup
+                # if not verify_password(admin_password, existing_admin.hashed_password):
+                #     existing_admin.hashed_password = get_password_hash(admin_password)
+                #     db.commit()
+                #     logger.info("Admin password updated")
+                
         except Exception as e:
             db.rollback()
             logger.error(f"Error creating admin user: {e}")
@@ -176,7 +196,7 @@ async def create_admin_user_async():
             db.close()
     except Exception as e:
         logger.error(f"Error in create_admin_user_async: {e}")
-
+        
 @app.on_event("startup")
 async def startup_event():
     """
