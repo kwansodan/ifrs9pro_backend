@@ -691,7 +691,7 @@ async def ingest_portfolio_data(
     The function automatically performs both ECL and local impairment staging after successful ingestion.
     """
     # Check if at least one file is provided
-    if not loan_details and client_data:
+    if not loan_details or not client_data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="You must provide files for loan_details and client_data",
