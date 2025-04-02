@@ -270,6 +270,7 @@ class FeedbackResponse(FeedbackBase):
     user: Optional[UserBasic] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
+    is_creator: bool 
     like_count: int = 0
     is_liked_by_user: bool = False
 
