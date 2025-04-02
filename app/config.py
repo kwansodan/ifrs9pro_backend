@@ -15,7 +15,11 @@ class Settings:
         """
         Returns the proper SQLAlchemy connection URL, converting from libpq format if needed.
         """
-        db_url = os.getenv("AZURE_POSTGRESQL_CONNECTIONSTRING")            
+        db_url = os.getenv("AZURE_POSTGRESQL_CONNECTIONSTRING")
+        if not db_url:
+            # Fallback to the original env var if DATABASE_URL is not set
+            db_url = os.getenv("SQLALCHEMY_DATABASE_URL")
+            
         if db_url and (db_url.startswith("dbname=") or not db_url.startswith("postgresql://")):
             return convert_libpq_to_sqlalchemy(db_url)
         return db_url

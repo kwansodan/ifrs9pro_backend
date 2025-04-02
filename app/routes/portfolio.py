@@ -729,16 +729,16 @@ async def ingest_portfolio_data(
                 results["loan_details"] = {"status": "error", "message": str(e)}
 
         # Process loan guarantee data file
-        if loan_guarantee_data:
-            try:
-                results["loan_guarantee_data"] = await process_loan_guarantees(
-                    loan_guarantee_data, portfolio_id, db
-                )
-                db.commit()
-            except Exception as e:
-                db.rollback()
-                logger.error(f"Error processing loan guarantees: {str(e)}")
-                results["loan_guarantee_data"] = {"status": "error", "message": str(e)}
+        # if loan_guarantee_data:
+        #     try:
+        #         results["loan_guarantee_data"] = await process_loan_guarantees(
+        #             loan_guarantee_data, portfolio_id, db
+        #         )
+        #         db.commit()
+        #     except Exception as e:
+        #         db.rollback()
+        #         logger.error(f"Error processing loan guarantees: {str(e)}")
+        #         results["loan_guarantee_data"] = {"status": "error", "message": str(e)}
 
         # Process client data file
         if client_data:
@@ -753,16 +753,16 @@ async def ingest_portfolio_data(
                 results["client_data"] = {"status": "error", "message": str(e)}
                 
         # Process loan collateral data file
-        if loan_collateral_data:
-            try:
-                results["loan_collateral_data"] = await process_collateral_data(
-                    loan_collateral_data, portfolio_id, db
-                )
-                db.commit()
-            except Exception as e:
-                db.rollback()
-                logger.error(f"Error processing loan collateral: {str(e)}")
-                results["loan_collateral_data"] = {"status": "error", "message": str(e)}
+        # if loan_collateral_data:
+        #     try:
+        #         results["loan_collateral_data"] = await process_collateral_data(
+        #             loan_collateral_data, portfolio_id, db
+        #         )
+        #         db.commit()
+        #     except Exception as e:
+        #         db.rollback()
+        #         logger.error(f"Error processing loan collateral: {str(e)}")
+        #         results["loan_collateral_data"] = {"status": "error", "message": str(e)}
 
         # Only perform staging if at least one file was processed successfully
         if any(result.get("status") == "success" for result in results.values() if isinstance(result, dict)):
