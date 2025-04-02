@@ -4,57 +4,73 @@ from app.models import (
     Loan,
     Guarantee,
     Client,
+    Security
 )
 
 async def process_loan_details(loan_details, portfolio_id, db):
-    """Highly optimized function to process loan details."""
+    """Function to process loan details with case-insensitive column mapping."""
     try:
         content = await loan_details.read()
         df = pd.read_excel(io.BytesIO(content), dtype=str)  # Read directly as strings
 
-        # Column mapping
-        column_mapping = {
-            "Loan No.": "loan_no",
-            "Employee Id": "employee_id",
-            "Employee Name": "employee_name",
-            "Employer": "employer",
-            "Loan Issue Date": "loan_issue_date",
-            "Deduction Start Period": "deduction_start_period",
-            "Submission Period": "submission_period",
-            "Maturity Period": "maturity_period",
-            "Location Code": "location_code",
-            "Dalex Paddy": "dalex_paddy",
-            "Team Leader": "team_leader",
-            "Loan Type": "loan_type",
-            "Loan Amount": "loan_amount",
-            "Loan Term": "loan_term",
-            "Administrative Fees": "administrative_fees",
-            "Total Interest": "total_interest",
-            "Total Collectible": "total_collectible",
-            "Net Loan Amount": "net_loan_amount",
-            "Monthly Installment": "monthly_installment",
-            "Principal Due": "principal_due",
-            "Interest Due": "interest_due",
-            "Total Due": "total_due",
-            "Principal Paid": "principal_paid",
-            "Interest Paid": "interest_paid",
-            "Total Paid": "total_paid",
-            "Principal Paid2": "principal_paid2",
-            "Interest Paid2": "interest_paid2",
-            "Total Paid2": "total_paid2",
-            "Paid": "paid",
-            "Cancelled": "cancelled",
-            "Outstanding Loan Balance": "outstanding_loan_balance",
-            "Accumulated Arrears": "accumulated_arrears",
-            "NDIA": "ndia",
-            "Prevailing Posted Repayment": "prevailing_posted_repayment",
-            "Prevailing Due Payment": "prevailing_due_payment",
-            "Current Missed Deduction": "current_missed_deduction",
-            "Admin Charge": "admin_charge",
-            "Recovery Rate": "recovery_rate",
-            "Deduction Status": "deduction_status",
+        # Print original column names for debugging
+        print(f"Original columns in file: {df.columns.tolist()}")
+
+        # Target column names (lowercase for matching)
+        target_columns = {
+            "loan no.": "loan_no",
+            "employee id": "employee_id",
+            "employee name": "employee_name",
+            "employer": "employer",
+            "loan issue date": "loan_issue_date",
+            "deduction start period": "deduction_start_period",
+            "submission period": "submission_period",
+            "maturity period": "maturity_period",
+            "location code": "location_code",
+            "dalex paddy": "dalex_paddy",
+            "team leader": "team_leader",
+            "loan type": "loan_type",
+            "loan amount": "loan_amount",
+            "loan term": "loan_term",
+            "administrative fees": "administrative_fees",
+            "total interest": "total_interest",
+            "total collectible": "total_collectible",
+            "net loan amount": "net_loan_amount",
+            "monthly installment": "monthly_installment",
+            "principal due": "principal_due",
+            "interest due": "interest_due",
+            "total due": "total_due",
+            "principal paid": "principal_paid",
+            "interest paid": "interest_paid",
+            "total paid": "total_paid",
+            "principal paid2": "principal_paid2",
+            "interest paid2": "interest_paid2",
+            "total paid2": "total_paid2",
+            "paid": "paid",
+            "cancelled": "cancelled",
+            "outstanding loan balance": "outstanding_loan_balance",
+            "accumulated arrears": "accumulated_arrears",
+            "ndia": "ndia",
+            "prevailing posted repayment": "prevailing_posted_repayment",
+            "prevailing due payment": "prevailing_due_payment",
+            "current missed deduction": "current_missed_deduction",
+            "admin charge": "admin_charge",
+            "recovery rate": "recovery_rate",
+            "deduction status": "deduction_status",
         }
-        df.rename(columns=column_mapping, inplace=True)
+        
+        # Create a mapping of actual column names to our target column names
+        case_insensitive_mapping = {}
+        for col in df.columns:
+            col_lower = col.lower().strip()
+            if col_lower in target_columns:
+                case_insensitive_mapping[col] = target_columns[col_lower]
+        
+        # Report the mapping that will be used
+        print(f"Using column mapping: {case_insensitive_mapping}")
+            
+        # Rename columns using our case-insensitive mapping
+        df.rename(columns=case_insensitive_mapping, inplace=True)
 
         # Convert dates efficiently
         df["loan_issue_date"] = pd.to_datetime(df["loan_issue_date"], errors="coerce")
@@ -93,8 +109,10 @@ async def process_loan_details(loan_details, portfolio_id, db):
                 df[col] = df[col].where(pd.notna(df[col]), None)
 
         # Convert boolean columns efficiently
-        df["paid"] = df["paid"].isin(["Yes", "True"])
-        df["cancelled"] = df["cancelled"].isin(["Yes", "True"])
+        if "paid" in df.columns:
+            df["paid"] = df["paid"].isin(["Yes", "TRUE", "True", "true", "1", "Y", "y"])
+        if "cancelled" in df.columns:
+            df["cancelled"] = df["cancelled"].isin(["Yes", "TRUE", "True", "true", "1", "Y", "y"])
 
         # Clean any existing transaction state
         db.rollback()
@@ -182,9 +200,10 @@ async def process_loan_details(loan_details, portfolio_id, db):
     except Exception as e:
         # Make sure to rollback on error
         db.rollback()
-        return {"status": "error", "message": str(e), "filename": loan_details.filename}    
+        return {"status": "error", "message": str(e), "filename": loan_details.filename}
+    
 async def process_loan_guarantees(loan_guarantee_data, portfolio_id, db):
-    """Process loan guarantees file using a simplified approach."""
+    """Process loan guarantees file using a case-insensitive approach."""
     try:
         content = await loan_guarantee_data.read()
         df = pd.read_excel(io.BytesIO(content), dtype=str)
@@ -192,35 +211,51 @@ async def process_loan_guarantees(loan_guarantee_data, portfolio_id, db):
         # Print column names for debugging
         print(f"Actual columns in file: {df.columns.tolist()}")
         
-        # Create a lowercase version of column names for easy matching
-        lowercase_columns = {col.lower(): col for col in df.columns}
+        # Create a case-insensitive mapping for columns
+        # We'll check various potential column names for guarantor and amount
+        possible_guarantor_cols = ["guarantor name", "guarantor", "guarantor's name", "name", "guarantor_name"]
+        possible_amount_cols = ["pledged amount", "amount", "guarantee amount", "pledged_amount", "guarantee_amount"]
         
-        # Find 'guarantor' and 'amount' columns using simple pattern matching
         guarantor_col = None
         amount_col = None
         
-        if 'guarantor name' in lowercase_columns or 'guarantor' in lowercase_columns:
-            guarantor_col = lowercase_columns.get('guarantor name') or lowercase_columns.get('guarantor')
+        # Create a lowercase version of column names for easy matching
+        lowercase_columns = {col.lower().strip(): col for col in df.columns}
         
-        if 'pledged amount' in lowercase_columns or 'amount' in lowercase_columns:
-            amount_col = lowercase_columns.get('pledged amount') or lowercase_columns.get('amount')
+        # Find matching column names
+        for col_key in possible_guarantor_cols:
+            if col_key in lowercase_columns:
+                guarantor_col = lowercase_columns[col_key]
+                break
+                
+        for col_key in possible_amount_cols:
+            if col_key in lowercase_columns:
+                amount_col = lowercase_columns[col_key]
+                break
         
         # If we found the columns, rename them to our standard names
         rename_dict = {}
         if guarantor_col:
             rename_dict[guarantor_col] = "guarantor"
+            print(f"Using '{guarantor_col}' as guarantor column")
         else:
             raise ValueError(f"Could not find guarantor column. Available columns: {df.columns.tolist()}")
             
         if amount_col:
             rename_dict[amount_col] = "pledged_amount"
+            print(f"Using '{amount_col}' as pledged amount column")
+        else:
+            # If amount column is not found, we'll provide a warning but continue
+            # with a default value for pledged_amount
+            print(f"Warning: Could not find amount column. Using default value of 0.")
+            df["pledged_amount"] = 0
         
         # Apply the renaming
         df.rename(columns=rename_dict, inplace=True)
         
         # Convert pledged_amount to numeric if the column exists
         if "pledged_amount" in df.columns:
-            df["pledged_amount"] = pd.to_numeric(df["pledged_amount"], errors="coerce")
+            df["pledged_amount"] = pd.to_numeric(df["pledged_amount"], errors="coerce").fillna(0)
         
         # Fetch only necessary fields from DB
         existing_guarantors = (
@@ -230,6 +265,10 @@ async def process_loan_guarantees(loan_guarantee_data, portfolio_id, db):
         )
         existing_guarantors_set = {g[0] for g in existing_guarantors}
         
+        # Clean guarantor strings (trim whitespace)
+        if "guarantor" in df.columns:
+            df["guarantor"] = df["guarantor"].astype(str).str.strip()
+            
         rows_processed = len(df)
         new_guarantees = df[~df["guarantor"].isin(existing_guarantors_set)].copy()
         
@@ -242,6 +281,7 @@ async def process_loan_guarantees(loan_guarantee_data, portfolio_id, db):
         return {
             "status": "success",
             "rows_processed": rows_processed,
+            "rows_inserted": len(new_guarantees),
             "rows_skipped": len(df) - len(new_guarantees),
             "filename": loan_guarantee_data.filename,
         }
@@ -251,40 +291,53 @@ async def process_loan_guarantees(loan_guarantee_data, portfolio_id, db):
             "message": str(e),
             "filename": loan_guarantee_data.filename,
         }
-
-async def process_loan_collateral(loan_collateral_data, portfolio_id, db):
-    """Process loan collateral data file using optimized bulk operations."""
+async def process_client_data(client_data, portfolio_id, db):
+    """Process client data file using optimized bulk operations."""
     try:
-        content = await loan_collateral_data.read()
+        content = await client_data.read()
         df = pd.read_excel(
             io.BytesIO(content), dtype=str
         )  # Read all columns as strings
 
-        # Column mapping
-        column_mapping = {
-            "Employee Id": "employee_id",
-            "Lastname": "last_name",
-            "Othernames": "other_names",
-            "Residential Address": "residential_address",
-            "Postal Address": "postal_address",
-            "Phone Number": "phone_number",
-            "Title": "title",
-            "Marital Status": "marital_status",
-            "Gender": "gender",
-            "Date of Birth": "date_of_birth",
-            "Employer": "employer",
-            "Previous Employee No": "previous_employee_no",
-            "Social Security No": "social_security_no",
-            "Voters ID No": "voters_id_no",
-            "Employment Date": "employment_date",
-            "Next of Kin": "next_of_kin",
-            "Next of Kin Contact": "next_of_kin_contact",
-            "Next of Kin Address": "next_of_kin_address",
-            "Search Name": "search_name",
-            "Client Type": "client_type",
+        # Print original column names for debugging
+        print(f"Original columns in file: {df.columns.tolist()}")
+        
+        # Create a case-insensitive column mapping
+        case_insensitive_mapping = {}
+        target_columns = {
+            "employee id": "employee_id",
+            "lastname": "last_name",
+            "othernames": "other_names",
+            "residential address": "residential_address",
+            "postal address": "postal_address",
+            "phone number": "phone_number",
+            "title": "title",
+            "marital status": "marital_status",
+            "gender": "gender",
+            "date of birth": "date_of_birth",
+            "employer": "employer",
+            "previous employee no": "previous_employee_no",
+            "social security no": "social_security_no",
+            "voters id no": "voters_id_no",
+            "employment date": "employment_date",
+            "next of kin": "next_of_kin",
+            "next of kin contact": "next_of_kin_contact",
+            "next of kin address": "next_of_kin_address",
+            "search name": "search_name",
+            "client type": "client_type",
         }
-
-        df.rename(columns=column_mapping, inplace=True)
+        
+        # Create a mapping of actual column names to our target column names
+        for col in df.columns:
+            col_lower = col.lower().strip()
+            if col_lower in target_columns:
+                case_insensitive_mapping[col] = target_columns[col_lower]
+        
+        # Report the mapping that will be used
+        print(f"Using column mapping: {case_insensitive_mapping}")
+        
+        # Rename columns using our case-insensitive mapping
+        df.rename(columns=case_insensitive_mapping, inplace=True)
 
         # Convert date columns
         date_columns = ["date_of_birth", "employment_date"]
@@ -323,11 +376,157 @@ async def process_loan_collateral(loan_collateral_data, portfolio_id, db):
             "status": "success",
             "rows_processed": rows_processed,
             "rows_skipped": len(df) - len(new_clients),
-            "filename": loan_collateral_data.filename,
+            "filename": client_data.filename,
         }
     except Exception as e:
         return {
             "status": "error",
             "message": str(e),
-            "filename": loan_collateral_data.filename,
+            "filename": client_data.filename,
+        }
+
+async def process_collateral_data(collateral_data, portfolio_id, db):
+    """Process loan collateral (securities) data using optimized bulk operations."""
+    try:
+        content = await collateral_data.read()
+        df = pd.read_excel(io.BytesIO(content), dtype=str)  # Read all columns as strings
+
+        # Print original column names for debugging
+        print(f"Original columns in file: {df.columns.tolist()}")
+        
+        # Define possible column names (lowercase for matching)
+        possible_columns = {
+            "employee id": "employee_id",  # To link with client
+            "collateral description": "collateral_description",
+            "collateral value": "collateral_value",
+            "forced sale value": "forced_sale_value",
+            "method of valuation": "method_of_valuation",
+            "cash or non cash": "cash_or_non_cash"
+        }
+        
+        # Create a case-insensitive mapping of actual columns to our target columns
+        column_mapping = {}
+        for col in df.columns:
+            col_lower = col.lower().strip()
+            for possible_col, target_col in possible_columns.items():
+                if col_lower == possible_col or col_lower.replace(' ', '_') == possible_col.replace(' ', '_'):
+                    column_mapping[col] = target_col
+                    break
+        
+        # Report the mapping that will be used
+        print(f"Using column mapping: {column_mapping}")
+        
+        # Rename the columns based on our mapping
+        df.rename(columns=column_mapping, inplace=True)
+        
+        # Make sure required columns are present
+        required_columns = ["employee_id", "collateral_value"]
+        for column in required_columns:
+            if column not in df.columns:
+                raise ValueError(f"Required column '{column}' not found in the file")
+        
+        # Convert numeric columns
+        numeric_columns = ["collateral_value", "forced_sale_value"]
+        for col in numeric_columns:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        
+        # Get all clients for this portfolio to match by employee_id
+        clients = db.query(Client).filter(Client.portfolio_id == portfolio_id).all()
+        
+        # Create a mapping of employee_id to client_id
+        employee_id_to_client_id = {client.employee_id: client.id for client in clients}
+        
+        # Add client_id column based on employee_id
+        df["client_id"] = df["employee_id"].map(employee_id_to_client_id)
+        
+        # Filter out rows where client_id is missing
+        valid_df = df[df["client_id"].notna()].copy()
+        
+        # Check if we have any valid records
+        if valid_df.empty:
+            return {
+                "status": "warning",
+                "message": "No matching clients found for securities in this portfolio",
+                "rows_processed": len(df),
+                "rows_inserted": 0,
+                "rows_skipped": len(df),
+                "filename": collateral_data.filename
+            }
+        
+        # Set default values for optional columns
+        if "method_of_valuation" not in valid_df.columns:
+            valid_df["method_of_valuation"] = "market_value"
+        if "cash_or_non_cash" not in valid_df.columns:
+            valid_df["cash_or_non_cash"] = "non_cash"
+        
+        # Check for existing securities to avoid duplicates
+        # We'll consider a security a duplicate if it has the same client_id, 
+        # collateral_description, and collateral_value
+        existing_securities = (
+            db.query(Security)
+            .filter(Security.client_id.in_(valid_df["client_id"].tolist()))
+            .all()
+        )
+        
+        # Create a set of existing security identifiers (client_id + desc + value)
+        existing_identifiers = set()
+        for security in existing_securities:
+            # Create a unique identifier for this security
+            identifier = (
+                security.client_id,
+                security.collateral_description if security.collateral_description else "",
+                float(security.collateral_value)
+            )
+            existing_identifiers.add(identifier)
+        
+        # Filter out rows that already exist
+        securities_to_add = []
+        skipped_count = 0
+        
+        for _, row in valid_df.iterrows():
+            # Create a unique identifier for this row
+            row_identifier = (
+                int(row["client_id"]),
+                row.get("collateral_description", ""),
+                float(row["collateral_value"])
+            )
+            
+            # Skip if this security already exists
+            if row_identifier in existing_identifiers:
+                skipped_count += 1
+                continue
+            
+            # Create a new security from this row
+            security_data = {
+                "client_id": int(row["client_id"]),
+                "collateral_description": row.get("collateral_description"),
+                "collateral_value": float(row["collateral_value"]),
+                "forced_sale_value": float(row.get("forced_sale_value", 0)),
+                "method_of_valuation": row.get("method_of_valuation", "market_value"),
+                "cash_or_non_cash": row.get("cash_or_non_cash", "non_cash")
+            }
+            securities_to_add.append(security_data)
+        
+        # Bulk insert the new securities
+        if securities_to_add:
+            db.bulk_insert_mappings(Security, securities_to_add)
+        
+        return {
+            "status": "success",
+            "rows_processed": len(df),
+            "rows_inserted": len(securities_to_add),
+            "rows_skipped": skipped_count + (len(df) - len(valid_df)),
+            "filename": collateral_data.filename
+        }
+    
+    except Exception as e:
+        # Make sure to rollback on error
+        db.rollback()
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error", 
+            "message": str(e), 
+            "filename": collateral_data.filename
         }

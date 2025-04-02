@@ -67,7 +67,6 @@ from app.schemas import (
     QualityIssueComment,
     QualityIssueCommentCreate,
     QualityCheckSummary,
-    ECLConfig,
     StagingResponse,
     ECLStagingConfig,
     LocalImpairmentConfig,
@@ -91,8 +90,9 @@ from app.auth.utils import get_current_active_user
 from app.utils.quality_checks import create_quality_issues_if_needed
 from app.utils.processors import (
     process_loan_details,
-    process_loan_collateral,
+    process_collateral_data,
     process_loan_guarantees,
+    process_client_data,
 )
 
 logger = logging.getLogger(__name__)
@@ -284,26 +284,6 @@ def get_portfolio(
         .order_by(StagingResult.created_at.desc())
         .first()
     )
-      # Get latest staging results
-    latest_local_impairment_staging = (
-        db.query(StagingResult)
-        .filter(
-            StagingResult.portfolio_id == portfolio_id,
-            StagingResult.staging_type == "local_impairment"
-        )
-        .order_by(StagingResult.created_at.desc())
-        .first()
-    )
-    
-    latest_ecl_staging = (
-        db.query(StagingResult)
-        .filter(
-            StagingResult.portfolio_id == portfolio_id,
-            StagingResult.staging_type == "ecl"
-        )
-        .order_by(StagingResult.created_at.desc())
-        .first()
-    )
     
     # Get latest calculation results
     latest_local_impairment_calculation = (
@@ -325,7 +305,8 @@ def get_portfolio(
         .order_by(CalculationResult.created_at.desc())
         .first()
     )
-    # Create staging summary from the staging results
+    
+    # Create staging summary from the staging results, including staging configs
     staging_summary = None
     if latest_ecl_staging or latest_local_impairment_staging:
         staging_summary = {}
@@ -333,6 +314,7 @@ def get_portfolio(
         # Process ECL staging if available
         if latest_ecl_staging:
             ecl_result = latest_ecl_staging.result_summary
+            ecl_config = latest_ecl_staging.config  # Get the config
             
             # Extract data for each stage
             stage_1_data = None
@@ -381,17 +363,19 @@ def get_portfolio(
                     "outstanding_loan_balance": ecl_result.get("stage3_total", 0)
                 }
             
-            # Create ECL staging summary
+            # Create ECL staging summary with config
             staging_summary["ecl"] = {
                 "stage_1": stage_1_data,
                 "stage_2": stage_2_data,
                 "stage_3": stage_3_data,
-                "staging_date": latest_ecl_staging.created_at
+                "staging_date": latest_ecl_staging.created_at,
+                "config": ecl_config  # Add config to response
             }
         
         # Process local impairment staging if available
         if latest_local_impairment_staging:
             local_result = latest_local_impairment_staging.result_summary
+            local_config = latest_local_impairment_staging.config  # Get the config
             
             # Extract data for each category
             current_data = None
@@ -466,17 +450,18 @@ def get_portfolio(
                     "outstanding_loan_balance": local_result.get("loss_total", 0)
                 }
             
-            # Create local impairment staging summary
+            # Create local impairment staging summary with config
             staging_summary["local_impairment"] = {
                 "current": current_data,
                 "olem": olem_data,
                 "substandard": substandard_data,
                 "doubtful": doubtful_data,
                 "loss": loss_data,
-                "staging_date": latest_local_impairment_staging.created_at
+                "staging_date": latest_local_impairment_staging.created_at,
+                "config": local_config  # Add config to response
             }
 
-    # Calculate summary for calculations
+    # Calculate summary for calculations, including calculation configs
     calculation_summary = None
     if latest_ecl_calculation or latest_local_impairment_calculation:
         # Get the total loan value from earlier calculation
@@ -491,6 +476,7 @@ def get_portfolio(
         if latest_ecl_calculation:
             # Get the detailed result summary
             ecl_summary = latest_ecl_calculation.result_summary
+            ecl_config = latest_ecl_calculation.config  # Get the calculation config
             
             # Extract stage-specific data from the result_summary
             stage_1_data = {
@@ -520,13 +506,15 @@ def get_portfolio(
                 "stage_3": stage_3_data,
                 "total_provision": float(latest_ecl_calculation.total_provision),
                 "provision_percentage": float(latest_ecl_calculation.provision_percentage),
-                "calculation_date": latest_ecl_calculation.created_at
+                "calculation_date": latest_ecl_calculation.created_at,
+                "config": ecl_config  # Add config to response
             }
             
         # Add local impairment detailed summary if available
         if latest_local_impairment_calculation:
             # Get the detailed result summary
             local_summary = latest_local_impairment_calculation.result_summary
+            local_config = latest_local_impairment_calculation.config  # Get the calculation config
             
             # Extract category-specific data from the result_summary
             current_data = {
@@ -572,11 +560,9 @@ def get_portfolio(
                 "loss": loss_data,
                 "total_provision": float(latest_local_impairment_calculation.total_provision),
                 "provision_percentage": float(latest_local_impairment_calculation.provision_percentage),
-                "calculation_date": latest_local_impairment_calculation.created_at
+                "calculation_date": latest_local_impairment_calculation.created_at,
+                "config": local_config  # Add config to response
             }
-
-    # Convert repayment_source boolean to string representation
-    # repayment_source_str = "At Source" if portfolio.repayment_source else "Manual Transfer"
 
     # Create response dictionary with portfolio data and summaries
     response = PortfolioWithSummaryResponse(
@@ -614,6 +600,7 @@ def get_portfolio(
     )
 
     return response
+
 @router.put("/{portfolio_id}", response_model=PortfolioResponse)
 def update_portfolio(
     portfolio_id: int,
@@ -686,6 +673,7 @@ def delete_portfolio(
 async def ingest_portfolio_data(
     portfolio_id: int,
     loan_details: Optional[UploadFile] = File(None),
+    client_data: Optional[UploadFile] = File(None),
     loan_guarantee_data: Optional[UploadFile] = File(None),
     loan_collateral_data: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
@@ -696,16 +684,17 @@ async def ingest_portfolio_data(
 
     Accepts up to three Excel files:
     - loan_details: Primary loan information
+    - client_data: Customer information
     - loan_guarantee_data: Information about loan guarantees
     - loan_collateral_data: Information about loan collateral
     
     The function automatically performs both ECL and local impairment staging after successful ingestion.
     """
     # Check if at least one file is provided
-    if not any([loan_details, loan_guarantee_data, loan_collateral_data]):
+    if not loan_details and client_data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="At least one file must be provided",
+            detail="You must provide files for loan_details and client_data",
         )
 
     # Verify portfolio exists and belongs to current user
@@ -751,10 +740,22 @@ async def ingest_portfolio_data(
                 logger.error(f"Error processing loan guarantees: {str(e)}")
                 results["loan_guarantee_data"] = {"status": "error", "message": str(e)}
 
+        # Process client data file
+        if client_data:
+            try:
+                results["client_data"] = await process_client_data(
+                    client_data, portfolio_id, db
+                )
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Error processing client data: {str(e)}")
+                results["client_data"] = {"status": "error", "message": str(e)}
+                
         # Process loan collateral data file
         if loan_collateral_data:
             try:
-                results["loan_collateral_data"] = await process_loan_collateral(
+                results["loan_collateral_data"] = await process_collateral_data(
                     loan_collateral_data, portfolio_id, db
                 )
                 db.commit()
@@ -848,6 +849,7 @@ async def ingest_portfolio_data(
             "results": {"error": str(e)},
             "status": "error",
         }
+    
 @router.get("/{portfolio_id}/calculate-ecl", response_model=ECLSummary)
 def calculate_ecl_provision(
     portfolio_id: int,
