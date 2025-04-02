@@ -425,9 +425,6 @@ class Feedback(Base):
     liked_by = relationship("User", secondary=feedback_likes, backref="liked_feedback")
 
 
-
-# Add these to your existing models.py file at the appropriate location
-
 class StagingResult(Base):
     """
     Stores the results of loan staging operations, either for local impairment or ECL.

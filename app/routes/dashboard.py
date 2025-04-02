@@ -39,6 +39,7 @@ def get_dashboard(
 
     if not portfolios:
         return {
+            "name": current_user.first_name,
             "portfolio_overview": {
                 "total_portfolios": 0,
                 "total_loans": 0,
@@ -228,6 +229,7 @@ def get_dashboard(
     mixed_customers = total_customers - institutional_customers - individual_customers
 
     return {
+        "name": current_user.first_name,
         "portfolio_overview": {
             "total_portfolios": len(portfolios),
             "total_loans": total_loans,
