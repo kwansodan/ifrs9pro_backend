@@ -322,6 +322,7 @@ async def process_client_data(client_data, portfolio_id, db):
             "employment date": "employment_date",
             "next of kin": "next_of_kin",
             "next of kin contact": "next_of_kin_contact",
+            "next of kin contact:": "next_of_kin_contact",  
             "next of kin address": "next_of_kin_address",
             "search name": "search_name",
             "client type": "client_type",
