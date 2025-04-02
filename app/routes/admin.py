@@ -296,21 +296,70 @@ async def admin_get_all_feedback(
     Admin endpoint to get all feedback entries
     """
     feedback_list = db.query(Feedback).all()
-
-    # Prepare response with like count
+    
+    # Prepare response with manual mapping
     response_data = []
     for feedback in feedback_list:
-        liked_by_current_user = current_user in feedback.liked_by
-        like_count = len(feedback.liked_by)
-
-        feedback_response = FeedbackResponse.from_orm(feedback)
-        feedback_response.like_count = like_count
-        feedback_response.is_liked_by_user = liked_by_current_user
-
-        response_data.append(feedback_response)
-
+        # Create dictionary manually with all required fields
+        feedback_dict = {
+            "id": feedback.id,
+            "description": feedback.description,
+            "status": feedback.status,
+            "user_id": feedback.user_id,
+            "created_at": feedback.created_at,
+            "updated_at": feedback.updated_at,
+            "user": {
+                "id": feedback.user.id,
+                "email": feedback.user.email,
+                "first_name": feedback.user.first_name,
+                "last_name": feedback.user.last_name
+            } if hasattr(feedback, "user") and feedback.user else None,
+            "like_count": len(feedback.liked_by),
+            "is_liked_by_user": current_user in feedback.liked_by,
+            "is_creator": feedback.user_id == current_user.id
+        }
+        
+        # Create response object from dictionary
+        response_data.append(FeedbackResponse(**feedback_dict))
+    
     return response_data
 
+@router.get("/feedback/{feedback_id}", response_model=FeedbackResponse)
+async def admin_get_feedback(
+    feedback_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(is_admin),
+):
+    """
+    Admin endpoint to get a specific feedback entry
+    """
+    feedback = db.query(Feedback).filter(Feedback.id == feedback_id).first()
+    if not feedback:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Feedback not found"
+        )
+    
+    # Create response dictionary manually
+    response_data = {
+        "id": feedback.id,
+        "description": feedback.description,
+        "status": feedback.status,
+        "user_id": feedback.user_id,
+        "created_at": feedback.created_at,
+        "updated_at": feedback.updated_at,
+        "user": {
+            "id": feedback.user.id,
+            "email": feedback.user.email,
+            "first_name": feedback.user.first_name,
+            "last_name": feedback.user.last_name
+        } if hasattr(feedback, "user") and feedback.user else None,
+        "like_count": len(feedback.liked_by),
+        "is_liked_by_user": current_user in feedback.liked_by,
+        "is_creator": feedback.user_id == current_user.id
+    }
+    
+    # Return response directly from dictionary
+    return FeedbackResponse(**response_data)
 
 @router.put("/feedback/{feedback_id}/status", response_model=FeedbackResponse)
 async def update_feedback_status(
@@ -323,23 +372,57 @@ async def update_feedback_status(
     Admin endpoint to update feedback status
     """
     feedback = db.query(Feedback).filter(Feedback.id == feedback_id).first()
-
     if not feedback:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Feedback not found"
         )
-
+    
     # Update status
     feedback.status = status_update.status.value
     db.commit()
     db.refresh(feedback)
+    
+    # Create response dictionary manually
+    response_data = {
+        "id": feedback.id,
+        "description": feedback.description,
+        "status": feedback.status,
+        "user_id": feedback.user_id,
+        "created_at": feedback.created_at,
+        "updated_at": feedback.updated_at,
+        "user": {
+            "id": feedback.user.id,
+            "email": feedback.user.email,
+            "first_name": feedback.user.first_name,
+            "last_name": feedback.user.last_name
+        } if hasattr(feedback, "user") and feedback.user else None,
+        "like_count": len(feedback.liked_by),
+        "is_liked_by_user": current_user in feedback.liked_by,
+        "is_creator": feedback.user_id == current_user.id
+    }
+    
+    # Return response directly from dictionary
+    return FeedbackResponse(**response_data)
 
-    # Prepare response
-    liked_by_current_user = current_user in feedback.liked_by
-    like_count = len(feedback.liked_by)
-
-    feedback_response = FeedbackResponse.from_orm(feedback)
-    feedback_response.like_count = like_count
-    feedback_response.is_liked_by_user = liked_by_current_user
-
-    return feedback_response
+@router.delete("/feedback/{feedback_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_delete_feedback(
+    feedback_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(is_admin),
+):
+    """
+    Admin endpoint to delete any feedback entry
+    """
+    # Get the feedback
+    feedback = db.query(Feedback).filter(Feedback.id == feedback_id).first()
+    if not feedback:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Feedback not found"
+        )
+    
+    # Delete the feedback
+    db.delete(feedback)
+    db.commit()
+    
+    # Return no content for successful deletion
+    return None
