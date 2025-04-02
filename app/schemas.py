@@ -623,15 +623,22 @@ class LocalImpairmentStagingSummary(BaseModel):
     doubtful: Optional[StagingSummaryStageData] = None
     loss: Optional[StagingSummaryStageData] = None
     staging_date: Optional[datetime] = None
+    config: Optional[LocalImpairmentConfig] = None
 
 
 # ==================== ECL MODELS ====================
+
+class ECLStagingConfig(BaseModel):
+    stage_1: DaysRangeConfig
+    stage_2: DaysRangeConfig
+    stage_3: DaysRangeConfig
 
 class ECLStagingSummary(BaseModel):
     """Summary of ECL staging results"""
     stage_1: Optional[StagingSummaryStageData] = None
     stage_2: Optional[StagingSummaryStageData] = None
     stage_3: Optional[StagingSummaryStageData] = None
+    config: Optional[ECLStagingConfig] = None
     staging_date: Optional[datetime] = None
 
 
@@ -640,18 +647,6 @@ class ECLCategoryData(BaseModel):
     num_loans: int
     total_loan_value: float
     provision_amount: float
-
-
-class ECLConfig(BaseModel):
-    stage_1: DaysRangeConfig
-    stage_2: DaysRangeConfig
-    stage_3: DaysRangeConfig
-
-
-class ECLStagingConfig(BaseModel):
-    stage_1: DaysRangeConfig
-    stage_2: DaysRangeConfig
-    stage_3: DaysRangeConfig
 
 
 class ECLComponentConfig(BaseModel):
