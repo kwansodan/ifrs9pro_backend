@@ -794,6 +794,11 @@ class HelpCreate(HelpBase):
 class HelpUpdate(BaseModel):
     description: Optional[str] = Field(None, min_length=10)
 
+
+class HelpStatusUpdate(BaseModel):
+    """Schema for updating the status of a help request (admin only)"""
+    status: HelpStatusEnum
+    
 class HelpResponse(HelpBase):
     id: int
     user_id: int
