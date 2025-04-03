@@ -764,3 +764,44 @@ class PortfolioWithSummaryResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# Help schemas
+
+class HelpStatusEnum(str, Enum):
+    SUBMITTED = "submitted"
+    OPEN = "open"
+    CLOSED = "closed"
+    RETURNED = "returned"
+    IN_DEVELOPMENT = "in development"
+    COMPLETED = "completed"
+
+
+class UserBase(BaseModel):
+    id: int
+    email: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+
+
+class HelpBase(BaseModel):
+    description: str = Field(..., min_length=10)
+
+
+class HelpCreate(HelpBase):
+    pass
+
+class HelpUpdate(BaseModel):
+    description: Optional[str] = Field(None, min_length=10)
+
+class HelpResponse(HelpBase):
+    id: int
+    user_id: int
+    status: HelpStatusEnum
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    user: Optional[UserBase] = None
+    is_creator: bool
+
+    class Config:
+        from_attributes = True
