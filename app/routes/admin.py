@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from fastapi.responses import StreamingResponse
 from app.database import get_db
-from app.models import AccessRequest, User, Feedback
+from app.models import AccessRequest, User, Feedback, Help
 from app.schemas import (
     AccessRequestSubmit,
     AccessRequestResponse,
@@ -13,6 +13,10 @@ from app.schemas import (
     UserResponse,
     UserCreate,
     UserUpdate,
+    HelpStatusEnum,
+    HelpResponse,
+    HelpUpdate,
+    HelpStatusUpdate,
 )
 from typing import List
 from app.auth.email import (
@@ -422,6 +426,141 @@ async def admin_delete_feedback(
     
     # Delete the feedback
     db.delete(feedback)
+    db.commit()
+    
+    # Return no content for successful deletion
+    return None
+
+# Help routes for admin
+@router.get("/help", response_model=List[HelpResponse])
+async def admin_get_all_help(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(is_admin),
+):
+    """
+    Admin endpoint to get all help entries
+    """
+    help_list = db.query(Help).all()
+    
+    # Prepare response with manual mapping
+    response_data = []
+    for help_item in help_list:
+        # Create dictionary manually with all required fields
+        help_dict = {
+            "id": help_item.id,
+            "description": help_item.description,
+            "status": help_item.status,
+            "user_id": help_item.user_id,
+            "created_at": help_item.created_at,
+            "updated_at": help_item.updated_at,
+            "user": {
+                "id": help_item.user.id,
+                "email": help_item.user.email,
+                "first_name": help_item.user.first_name,
+                "last_name": help_item.user.last_name
+            } if hasattr(help_item, "user") and help_item.user else None,
+            "is_creator": help_item.user_id == current_user.id
+        }
+        
+        # Create response object from dictionary
+        response_data.append(HelpResponse(**help_dict))
+    
+    return response_data
+
+@router.get("/help/{help_id}", response_model=HelpResponse)
+async def admin_get_help(
+    help_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(is_admin),
+):
+    """
+    Admin endpoint to get a specific help entry
+    """
+    help_item = db.query(Help).filter(Help.id == help_id).first()
+    if not help_item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Help request not found"
+        )
+    
+    # Create response dictionary manually
+    response_data = {
+        "id": help_item.id,
+        "description": help_item.description,
+        "status": help_item.status,
+        "user_id": help_item.user_id,
+        "created_at": help_item.created_at,
+        "updated_at": help_item.updated_at,
+        "user": {
+            "id": help_item.user.id,
+            "email": help_item.user.email,
+            "first_name": help_item.user.first_name,
+            "last_name": help_item.user.last_name
+        } if hasattr(help_item, "user") and help_item.user else None,
+        "is_creator": help_item.user_id == current_user.id
+    }
+    
+    # Return response directly from dictionary
+    return HelpResponse(**response_data)
+
+@router.put("/help/{help_id}/status", response_model=HelpResponse)
+async def update_help_status(
+    help_id: int,
+    status_update: HelpStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(is_admin),
+):
+    """
+    Admin endpoint to update help status
+    """
+    help_item = db.query(Help).filter(Help.id == help_id).first()
+    if not help_item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Help request not found"
+        )
+    
+    # Update status
+    help_item.status = status_update.status.value
+    db.commit()
+    db.refresh(help_item)
+    
+    # Create response dictionary manually
+    response_data = {
+        "id": help_item.id,
+        "description": help_item.description,
+        "status": help_item.status,
+        "user_id": help_item.user_id,
+        "created_at": help_item.created_at,
+        "updated_at": help_item.updated_at,
+        "user": {
+            "id": help_item.user.id,
+            "email": help_item.user.email,
+            "first_name": help_item.user.first_name,
+            "last_name": help_item.user.last_name
+        } if hasattr(help_item, "user") and help_item.user else None,
+        "is_creator": help_item.user_id == current_user.id
+    }
+    
+    # Return response directly from dictionary
+    return HelpResponse(**response_data)
+
+@router.delete("/help/{help_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_delete_help(
+    help_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(is_admin),
+):
+    """
+    Admin endpoint to delete any help entry
+    """
+    # Get the help
+    help_item = db.query(Help).filter(Help.id == help_id).first()
+    if not help_item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Help request not found"
+        )
+    
+    # Delete the help
+    db.delete(help_item)
     db.commit()
     
     # Return no content for successful deletion

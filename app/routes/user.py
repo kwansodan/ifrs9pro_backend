@@ -5,8 +5,11 @@ from typing import List, Optional
 from app.database import get_db
 from app.models import User
 from app.models import Feedback, FeedbackStatus
+from app.models import User, Help, HelpStatus
 from app.auth.utils import get_current_active_user
 from app.schemas import FeedbackCreate, FeedbackResponse, FeedbackStatusEnum, FeedbackUpdate
+from app.schemas import HelpCreate, HelpResponse, HelpStatusEnum, HelpUpdate
+
 
 # Create router
 router = APIRouter(prefix="/user", tags=["user actions"])
@@ -309,3 +312,217 @@ async def like_feedback(
     
     # Return response directly from dictionary
     return FeedbackResponse(**response_data)
+
+
+
+@router.post("/help", response_model=HelpResponse)
+async def create_help(
+    help_data: HelpCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Create a new help request
+    """
+    # Create new help object
+    new_help = Help(
+        description=help_data.description,
+        user_id=current_user.id,
+        status=HelpStatus.SUBMITTED,
+    )
+    
+    # Add to database
+    db.add(new_help)
+    db.commit()
+    db.refresh(new_help)
+    
+    # Create response dictionary
+    response_data = {
+        "id": new_help.id,
+        "description": new_help.description,
+        "status": new_help.status,
+        "user_id": new_help.user_id,
+        "created_at": new_help.created_at,
+        "updated_at": new_help.updated_at,
+        "user": {
+            "id": current_user.id,
+            "email": current_user.email,
+            "first_name": current_user.first_name,
+            "last_name": current_user.last_name
+        } if hasattr(current_user, "email") else None,
+        "is_creator": True
+    }
+    
+    # Return response
+    return HelpResponse(**response_data)
+
+@router.put("/help/{help_id}", response_model=HelpResponse)
+async def update_help(
+    help_id: int,
+    help_data: HelpUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Update a help request
+    Only the creator can update their help request
+    """
+    # Get the help
+    help_item = db.query(Help).filter(Help.id == help_id).first()
+    if not help_item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Help request not found"
+        )
+    
+    # Check if user is the creator
+    if help_item.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="You can only update your own help requests"
+        )
+    
+    # Update the fields
+    if help_data.description is not None:
+        help_item.description = help_data.description
+    
+    # Save changes
+    db.commit()
+    db.refresh(help_item)
+    
+    # Create response dictionary
+    response_data = {
+        "id": help_item.id,
+        "description": help_item.description,
+        "status": help_item.status,
+        "user_id": help_item.user_id,
+        "created_at": help_item.created_at,
+        "updated_at": help_item.updated_at,
+        "user": {
+            "id": help_item.user.id,
+            "email": help_item.user.email,
+            "first_name": help_item.user.first_name,
+            "last_name": help_item.user.last_name
+        } if hasattr(help_item, "user") and help_item.user else None,
+        "is_creator": True
+    }
+    
+    # Return response
+    return HelpResponse(**response_data)
+
+@router.delete("/help/{help_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_help(
+    help_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Delete a help request
+    Only the creator can delete their help request
+    """
+    # Get the help
+    help_item = db.query(Help).filter(Help.id == help_id).first()
+    if not help_item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Help request not found"
+        )
+    
+    # Check if user is the creator
+    if help_item.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="You can only delete your own help requests"
+        )
+    
+    # Delete the help
+    db.delete(help_item)
+    db.commit()
+    
+    # Return no content for successful deletion
+    return None
+
+@router.get("/help", response_model=List[HelpResponse])
+async def get_my_help(
+    status: Optional[HelpStatusEnum] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Get all help requests for the current user
+    Optionally filter by status
+    """
+    # Start with base query for current user's help requests
+    query = db.query(Help).filter(Help.user_id == current_user.id)
+    
+    # Apply status filter if provided
+    if status:
+        query = query.filter(Help.status == status)
+    
+    # Get all help items
+    help_items = query.all()
+    
+    # Prepare response with manual mapping
+    response_data = []
+    for help_item in help_items:
+        # Create dictionary manually with all required fields
+        help_dict = {
+            "id": help_item.id,
+            "description": help_item.description,
+            "status": help_item.status,
+            "user_id": help_item.user_id,
+            "created_at": help_item.created_at,
+            "updated_at": help_item.updated_at,
+            "user": {
+                "id": help_item.user.id,
+                "email": help_item.user.email,
+                "first_name": help_item.user.first_name,
+                "last_name": help_item.user.last_name
+            } if hasattr(help_item, "user") and help_item.user else None,
+            "is_creator": True  # All help items belong to current user
+        }
+        
+        # Create response object from dictionary
+        response_data.append(HelpResponse(**help_dict))
+    
+    return response_data
+
+@router.get("/help/{help_id}", response_model=HelpResponse)
+async def get_help(
+    help_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Get a specific help request by ID
+    Users can only view their own help requests
+    """
+    # Get the help with current user check
+    help_item = db.query(Help).filter(
+        Help.id == help_id, 
+        Help.user_id == current_user.id
+    ).first()
+    
+    if not help_item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Help request not found or not authorized to view"
+        )
+    
+    # Create response dictionary
+    response_data = {
+        "id": help_item.id,
+        "description": help_item.description,
+        "status": help_item.status,
+        "user_id": help_item.user_id,
+        "created_at": help_item.created_at,
+        "updated_at": help_item.updated_at,
+        "user": {
+            "id": help_item.user.id,
+            "email": help_item.user.email,
+            "first_name": help_item.user.first_name,
+            "last_name": help_item.user.last_name
+        } if hasattr(help_item, "user") and help_item.user else None,
+        "is_creator": True
+    }
+    
+    # Return response
+    return HelpResponse(**response_data)
