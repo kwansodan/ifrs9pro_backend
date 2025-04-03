@@ -601,47 +601,133 @@ def get_portfolio(
 
     return response
 
-@router.put("/{portfolio_id}", response_model=PortfolioResponse)
+@router.put("/{portfolio_id}", response_model=PortfolioWithSummaryResponse)
 def update_portfolio(
     portfolio_id: int,
     portfolio_update: PortfolioUpdate,
+    ecl_staging_config: Optional[ECLStagingConfig] = None,
+    local_impairment_config: Optional[LocalImpairmentConfig] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
     Update a specific portfolio by ID.
+    Optionally update the ECL and local impairment staging configurations.
+    Returns the complete portfolio data including staging and calculation summaries.
     """
-    portfolio = (
-        db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
-        .first()
-    )
+    # Begin transaction
+    db.begin_nested()
 
-    if not portfolio:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
+    try:
+        # Find the portfolio
+        portfolio = (
+            db.query(Portfolio)
+            .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+            .first()
         )
 
-    # Update fields if provided
-    update_data = portfolio_update.dict(exclude_unset=True)
+        if not portfolio:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
+            )
 
-    # Convert enum values to strings for storage
-    if "asset_type" in update_data and update_data["asset_type"]:
-        update_data["asset_type"] = update_data["asset_type"].value
-    if "customer_type" in update_data and update_data["customer_type"]:
-        update_data["customer_type"] = update_data["customer_type"].value
-    if "funding_source" in update_data and update_data["funding_source"]:
-        update_data["funding_source"] = update_data["funding_source"].value
-    if "data_source" in update_data and update_data["data_source"]:
-        update_data["data_source"] = update_data["data_source"].value
+        # Update portfolio fields if provided
+        update_data = portfolio_update.dict(exclude_unset=True)
 
-    for key, value in update_data.items():
-        setattr(portfolio, key, value)
+        # Convert enum values to strings for storage
+        if "asset_type" in update_data and update_data["asset_type"]:
+            update_data["asset_type"] = update_data["asset_type"].value
+        if "customer_type" in update_data and update_data["customer_type"]:
+            update_data["customer_type"] = update_data["customer_type"].value
+        if "funding_source" in update_data and update_data["funding_source"]:
+            update_data["funding_source"] = update_data["funding_source"].value
+        if "data_source" in update_data and update_data["data_source"]:
+            update_data["data_source"] = update_data["data_source"].value
 
-    db.commit()
-    db.refresh(portfolio)
-    return portfolio
+        for key, value in update_data.items():
+            setattr(portfolio, key, value)
 
+        # Update the ECL staging configuration if provided
+        if ecl_staging_config:
+            # Create a new staging result with the updated config
+            ecl_staging_result = StagingResult(
+                portfolio_id=portfolio_id,
+                staging_type="ecl",
+                config=ecl_staging_config.dict(),
+                # Initialize an empty result_summary that will be populated after staging
+                result_summary={"staged_at": datetime.now().isoformat()}
+            )
+            db.add(ecl_staging_result)
+            db.flush()  # Flush to get the ID of the new staging result
+            
+            # Run the staging process with the new config
+            try:
+                ecl_staging = stage_loans_ecl(
+                    portfolio_id=portfolio_id,
+                    config=ecl_staging_config,
+                    db=db,
+                    current_user=current_user
+                )
+                logger.info(f"ECL staging updated with new config for portfolio {portfolio_id}")
+            except Exception as e:
+                logger.error(f"Error during ECL staging update: {str(e)}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to update ECL staging: {str(e)}"
+                )
+
+        # Update the local impairment configuration if provided
+        if local_impairment_config:
+            # Create a new staging result with the updated config
+            local_impairment_staging_result = StagingResult(
+                portfolio_id=portfolio_id,
+                staging_type="local_impairment",
+                config=local_impairment_config.dict(),
+                # Initialize an empty result_summary that will be populated after staging
+                result_summary={"staged_at": datetime.now().isoformat()}
+            )
+            db.add(local_impairment_staging_result)
+            db.flush()  # Flush to get the ID of the new staging result
+            
+            # Run the staging process with the new config
+            try:
+                local_staging = stage_loans_local_impairment(
+                    portfolio_id=portfolio_id,
+                    config=local_impairment_config,
+                    db=db,
+                    current_user=current_user
+                )
+                logger.info(f"Local impairment staging updated with new config for portfolio {portfolio_id}")
+            except Exception as e:
+                logger.error(f"Error during local impairment staging update: {str(e)}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to update local impairment staging: {str(e)}"
+                )
+
+        # Commit all changes
+        db.commit()
+
+        # Retrieve the complete portfolio data with all summaries
+        # We use the existing get_portfolio function to ensure consistent response format
+        complete_portfolio = get_portfolio(
+            portfolio_id=portfolio_id,
+            include_quality_issues=False,
+            include_report_history=False,
+            db=db,
+            current_user=current_user,
+        )
+
+        return complete_portfolio
+
+    except Exception as e:
+        # Rollback all changes in case of error
+        db.rollback()
+        logger.error(f"Error updating portfolio: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update portfolio: {str(e)}"
+        )
 
 @router.delete("/{portfolio_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_portfolio(

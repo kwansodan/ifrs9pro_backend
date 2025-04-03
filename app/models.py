@@ -50,6 +50,7 @@ class User(Base):
     portfolios = relationship("Portfolio", back_populates="user")
     quality_comments = relationship("QualityIssueComment", back_populates="user")
     feedback = relationship("Feedback", back_populates="user")
+    help = relationship("Help", back_populates="user")
 
 
 class AccessRequest(Base):
@@ -425,6 +426,35 @@ class Feedback(Base):
     liked_by = relationship("User", secondary=feedback_likes, backref="liked_feedback")
 
 
+# Help
+class HelpStatus(str, PyEnum):
+    SUBMITTED = "submitted"
+    OPEN = "open"
+    CLOSED = "closed"
+    RETURNED = "returned"
+    IN_DEVELOPMENT = "in development"
+    COMPLETED = "completed"
+
+
+    
+class Help(Base):
+    __tablename__ = "help"
+
+    id = Column(Integer, primary_key=True, index=True)
+    description = Column(Text, nullable=False)
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    status = Column(String, default=HelpStatus.SUBMITTED)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    # Relationships
+    user = relationship("User", back_populates="help")
+
+
+
+
+    
 class StagingResult(Base):
     """
     Stores the results of loan staging operations, either for local impairment or ECL.
