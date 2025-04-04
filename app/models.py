@@ -11,12 +11,14 @@ from sqlalchemy import (
     Float,
     JSON,
     Table,
+    UniqueConstraint
 )
 from sqlalchemy.sql import func
 from enum import Enum as PyEnum
 from app.database import Base
 from sqlalchemy.orm import relationship
 from datetime import datetime
+
 
 
 class RequestStatus(str, PyEnum):
@@ -205,7 +207,7 @@ class Loan(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     portfolio_id = Column(Integer, ForeignKey("portfolios.id"))
-    loan_no = Column(String, unique=True, index=True, nullable=False)
+    loan_no = Column(String, index=True, nullable=False) 
     employee_id = Column(String, nullable=False)
     employee_name = Column(String, nullable=True)
     employer = Column(String, nullable=True)
@@ -247,7 +249,6 @@ class Loan(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     portfolio = relationship("Portfolio", back_populates="loans")
-
 
 class Guarantee(Base):
     __tablename__ = "guarantees"

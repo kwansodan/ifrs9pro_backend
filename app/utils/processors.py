@@ -117,18 +117,23 @@ async def process_loan_details(loan_details, portfolio_id, db):
         # Clean any existing transaction state
         db.rollback()
 
-        # Get ALL existing loan numbers, regardless of portfolio, to be extremely cautious
-        existing_loans = db.query(Loan.loan_no).all()
-        existing_loan_nos = {loan_no for (loan_no,) in existing_loans}
+        # Get ALL existing loan numbers from the database
+        existing_loans = db.query(Loan.loan_no, Loan.id).all()
+        existing_loan_nos = {loan_no: loan_id for loan_no, loan_id in existing_loans if loan_no}
 
         print(f"Found {len(existing_loan_nos)} existing loan numbers in database")
 
+        # Track loan numbers seen in this import to handle duplicates within the sheet
+        seen_loan_nos_in_sheet = set()
+        
         # Convert DataFrame to list of dictionaries
         loan_records = df.astype(object).to_dict(orient="records")
 
-        rows_processed, rows_skipped = 0, 0
+        rows_processed = 0
+        rows_skipped = 0
+        rows_updated = 0
         loans_to_add = []
-        updates = []
+        loans_to_update = []
 
         # Process loans in bulk
         for record in loan_records:
@@ -146,13 +151,26 @@ async def process_loan_details(loan_details, portfolio_id, db):
                     if date_col in record and pd.isna(record[date_col]):
                         record[date_col] = None
 
-                # Double-check if this loan exists (by loan_no)
-                if loan_no in existing_loan_nos or db.query(Loan).filter(Loan.loan_no == loan_no).count() > 0:
-                    print(f"Skipping existing loan: {loan_no}")
-                    updates.append(record)
+                # Add portfolio_id to the record
+                record["portfolio_id"] = portfolio_id
+                
+                # Check if this loan exists in database
+                if loan_no in existing_loan_nos:
+                    print(f"Updating existing loan: {loan_no}")
+                    loan_id = existing_loan_nos[loan_no]
+                    record["id"] = loan_id  # Include ID for update
+                    loans_to_update.append(record)
+                    rows_updated += 1
                 else:
-                    print(f"Adding new loan: {loan_no}")
-                    loans_to_add.append(Loan(**record, portfolio_id=portfolio_id))
+                    # If it's a duplicate within this sheet and not in database, still add it
+                    if loan_no in seen_loan_nos_in_sheet:
+                        print(f"Adding duplicate loan from sheet: {loan_no}")
+                    else:
+                        print(f"Adding new loan: {loan_no}")
+                        seen_loan_nos_in_sheet.add(loan_no)
+                        
+                    # Create a new Loan object
+                    loans_to_add.append(Loan(**record))
 
                 rows_processed += 1
             except Exception as e:
@@ -160,7 +178,7 @@ async def process_loan_details(loan_details, portfolio_id, db):
                 print(f"Error processing loan: {e}")
                 continue  # Skip to next record on error
 
-        # Only insert new loans, skip existing ones
+        # Insert new loans
         inserted_count = 0
         if loans_to_add:
             try:
@@ -184,16 +202,45 @@ async def process_loan_details(loan_details, portfolio_id, db):
                         rows_skipped += 1
                         
                 print(f"Successfully inserted {inserted_count} loans one by one")
-            
-        # We're intentionally not updating existing loans, just skipping them
-        skipped_existing = len(updates)
-        print(f"Skipped {skipped_existing} existing loans")
+        
+        # Update existing loans
+        updated_count = 0
+        if loans_to_update:
+            try:
+                # Use bulk update
+                db.bulk_update_mappings(Loan, loans_to_update)
+                updated_count = len(loans_to_update)
+                print(f"Successfully updated {updated_count} existing loans")
+            except Exception as e:
+                db.rollback()
+                print(f"Error during bulk update: {e}")
+                # Try one by one as a fallback
+                print("Falling back to one-by-one updates")
+                updated_count = 0
+                for loan_data in loans_to_update:
+                    try:
+                        loan_id = loan_data.pop("id")
+                        loan = db.query(Loan).filter(Loan.id == loan_id).first()
+                        if loan:
+                            for key, value in loan_data.items():
+                                setattr(loan, key, value)
+                            db.flush()  # Check for errors without committing
+                            updated_count += 1
+                    except Exception as inner_e:
+                        db.rollback()  # Roll back the failed update
+                        print(f"Error updating loan {loan_data.get('loan_no', 'unknown')}: {inner_e}")
+                        rows_skipped += 1
+                
+                print(f"Successfully updated {updated_count} loans one by one")
 
+        db.commit()
+        
         return {
             "status": "success",
-            "rows_processed": rows_processed - skipped_existing,  
+            "rows_processed": rows_processed,
             "rows_inserted": inserted_count,
-            "rows_skipped": rows_skipped + skipped_existing,  
+            "rows_updated": updated_count,
+            "rows_skipped": rows_skipped,
             "filename": loan_details.filename,
         }
 

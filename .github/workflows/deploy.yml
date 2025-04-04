@@ -23,6 +23,13 @@ jobs:
       - name: Generate requirements.txt
         run: nix-shell --run "poetry export -f requirements.txt --output requirements.txt --without-hashes"
       
+      # Run database migrations with Alembic
+      - name: Run Database Migrations
+        run: nix-shell --run "poetry run alembic upgrade head"
+        env:
+          # Add any environment variables needed for database connection
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      
       - name: Deploy to Azure App Service
         uses: azure/webapps-deploy@v3
         with:
