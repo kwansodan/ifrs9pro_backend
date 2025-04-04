@@ -28,7 +28,7 @@ jobs:
         run: nix-shell --run "poetry run alembic upgrade head"
         env:
           # Add any environment variables needed for database connection
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          AZURE_POSTGRESQL_CONNECTIONSTRING: ${{ secrets.AZURE_POSTGRESQL_CONNECTIONSTRING }}
       
       - name: Deploy to Azure App Service
         uses: azure/webapps-deploy@v3
