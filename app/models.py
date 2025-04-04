@@ -249,10 +249,6 @@ class Loan(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     portfolio = relationship("Portfolio", back_populates="loans")
-    # Adding this unique contraint to allow different loan_no in different portfolios
-    __table_args__ = (
-        UniqueConstraint('portfolio_id', 'loan_no', name='uix_portfolio_loan_no'),
-    )
 
 class Guarantee(Base):
     __tablename__ = "guarantees"
