@@ -445,9 +445,12 @@ def recheck_quality_issues(
     quality_counts = create_quality_issues_if_needed(db, portfolio_id)
 
     return QualityCheckSummary(
-        duplicate_names=quality_counts["duplicate_names"],
-        duplicate_addresses=quality_counts["duplicate_addresses"],
-        missing_repayment_data=quality_counts["missing_repayment_data"],
+        duplicate_customer_ids=quality_counts["duplicate_customer_ids"],
+        duplicate_addresses_dob=quality_counts["duplicate_addresses_dob"],
+        duplicate_loan_ids=quality_counts["duplicate_loan_ids"],
+        unmatched_employee_ids=quality_counts["unmatched_employee_ids"],
+        loan_customer_mismatches=quality_counts["loan_customer_mismatches"],
+        missing_dob=quality_counts["missing_dob"],
         total_issues=quality_counts["total_issues"],
         high_severity_issues=quality_counts["high_severity_issues"],
         open_issues=quality_counts["open_issues"],
