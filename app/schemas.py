@@ -208,14 +208,17 @@ class QualityIssueCommentCreate(BaseModel):
     comment: str
 
 
-class QualityCheckSummary(BaseModel):
-    duplicate_names: int
-    duplicate_addresses: int
-    missing_repayment_data: int
-    total_issues: int
-    high_severity_issues: int
-    open_issues: int
-
+lass QualityCheckSummary(BaseModel):
+    """Quality check summary with counts of different types of issues."""
+    duplicate_customer_ids: int = 0
+    duplicate_addresses_dob: int = 0
+    duplicate_loan_ids: int = 0
+    unmatched_employee_ids: int = 0
+    loan_customer_mismatches: int = 0
+    missing_dob: int = 0
+    total_issues: int = 0
+    high_severity_issues: int = 0
+    open_issues: int = 0
 
 # ==================== FEEDBACK MODELS ====================
 
