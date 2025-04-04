@@ -446,7 +446,8 @@ def recheck_quality_issues(
 
     return QualityCheckSummary(
         duplicate_customer_ids=quality_counts["duplicate_customer_ids"],
-        duplicate_addresses_dob=quality_counts["duplicate_addresses_dob"],
+        duplicate_addresses=quality_counts["duplicate_addresses"],
+        duplicate_dob=quality_counts["duplicate_dob"],
         duplicate_loan_ids=quality_counts["duplicate_loan_ids"],
         unmatched_employee_ids=quality_counts["unmatched_employee_ids"],
         loan_customer_mismatches=quality_counts["loan_customer_mismatches"],

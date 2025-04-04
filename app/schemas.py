@@ -208,10 +208,14 @@ class QualityIssueCommentCreate(BaseModel):
     comment: str
 
 
-lass QualityCheckSummary(BaseModel):
+from pydantic import BaseModel
+from typing import Optional, List, Dict, Any
+
+class QualityCheckSummary(BaseModel):
     """Quality check summary with counts of different types of issues."""
     duplicate_customer_ids: int = 0
-    duplicate_addresses_dob: int = 0
+    duplicate_addresses: int = 0
+    duplicate_dob: int = 0 
     duplicate_loan_ids: int = 0
     unmatched_employee_ids: int = 0
     loan_customer_mismatches: int = 0
@@ -219,7 +223,6 @@ lass QualityCheckSummary(BaseModel):
     total_issues: int = 0
     high_severity_issues: int = 0
     open_issues: int = 0
-
 # ==================== FEEDBACK MODELS ====================
 
 class FeedbackStatusEnum(str, Enum):

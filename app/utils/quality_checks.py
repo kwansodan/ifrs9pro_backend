@@ -30,37 +30,61 @@ def find_duplicate_customer_ids(db: Session, portfolio_id: int) -> List[Dict]:
     return duplicates
 
 
-def find_duplicate_addresses_dob(db: Session, portfolio_id: int) -> List[Dict]:
+def find_duplicate_addresses(db: Session, portfolio_id: int) -> List[Dict]:
     """
-    Find clients with duplicate addresses AND date of birth in the portfolio.
-    Returns a list of groups of clients with the same address and DOB.
+    Find clients with duplicate addresses in the portfolio.
+    Returns a list of groups of clients with the same address.
     """
     # Get all clients in the portfolio
     clients = db.query(Client).filter(Client.portfolio_id == portfolio_id).all()
 
-    # Group clients by address and date of birth (case-insensitive for address)
-    address_dob_groups = defaultdict(list)
+    # Group clients by address (case-insensitive)
+    address_groups = defaultdict(list)
     for client in clients:
         # Create a clean address for comparison
         address = (client.residential_address or "").lower().strip()
-        dob = client.date_of_birth
-        
-        if address and dob:  # Skip if either is missing
-            # Create a combined key for address + DOB
-            key = f"{address}|{dob.isoformat() if dob else 'no-dob'}"
-            
-            address_dob_groups[key].append(
+        if address:  # Skip empty addresses
+            address_groups[address].append(
                 {
                     "id": client.id,
                     "employee_id": client.employee_id,
                     "name": f"{client.last_name} {client.other_names}",
                     "address": client.residential_address,
-                    "date_of_birth": dob.isoformat() if dob else None,
                 }
             )
 
     # Filter only groups with more than one client
-    duplicates = [group for key, group in address_dob_groups.items() if len(group) > 1]
+    duplicates = [group for address, group in address_groups.items() if len(group) > 1]
+
+    return duplicates
+
+
+def find_duplicate_dob(db: Session, portfolio_id: int) -> List[Dict]:
+    """
+    Find clients with duplicate dates of birth in the portfolio.
+    Returns a list of groups of clients with the same date of birth.
+    """
+    # Get all clients in the portfolio
+    clients = db.query(Client).filter(Client.portfolio_id == portfolio_id).all()
+
+    # Group clients by date of birth
+    dob_groups = defaultdict(list)
+    for client in clients:
+        dob = client.date_of_birth
+        
+        if dob:  # Skip clients with no DOB
+            dob_key = dob.isoformat()
+            dob_groups[dob_key].append(
+                {
+                    "id": client.id,
+                    "employee_id": client.employee_id,
+                    "name": f"{client.last_name} {client.other_names}",
+                    "date_of_birth": dob.isoformat(),
+                }
+            )
+
+    # Filter only groups with more than one client
+    duplicates = [group for dob, group in dob_groups.items() if len(group) > 1]
 
     return duplicates
 
@@ -189,7 +213,8 @@ def create_quality_issues_if_needed(db: Session, portfolio_id: int) -> Dict[str,
 
     issue_counts = {
         "duplicate_customer_ids": 0,
-        "duplicate_addresses_dob": 0,
+        "duplicate_addresses": 0,
+        "duplicate_dob": 0,
         "duplicate_loan_ids": 0,
         "unmatched_employee_ids": 0,
         "loan_customer_mismatches": 0,
@@ -261,16 +286,16 @@ def create_quality_issues_if_needed(db: Session, portfolio_id: int) -> Dict[str,
         issue_counts["duplicate_customer_ids"] = len(duplicate_customer_ids)
         issue_counts["total_issues"] += len(duplicate_customer_ids)
 
-    # 2. Find duplicate addresses and DOB
-    duplicate_addresses_dob = find_duplicate_addresses_dob(db, portfolio_id)
-    if duplicate_addresses_dob:
-        for group in duplicate_addresses_dob:
+    # 2. Find duplicate addresses
+    duplicate_addresses = find_duplicate_addresses(db, portfolio_id)
+    if duplicate_addresses:
+        for group in duplicate_addresses:
             # Check if this issue already exists
             existing_issue = (
                 db.query(QualityIssue)
                 .filter(
                     QualityIssue.portfolio_id == portfolio_id,
-                    QualityIssue.issue_type == "duplicate_address_dob",
+                    QualityIssue.issue_type == "duplicate_address",
                     QualityIssue.status != "resolved",
                 )
                 .first()
@@ -280,7 +305,7 @@ def create_quality_issues_if_needed(db: Session, portfolio_id: int) -> Dict[str,
                 # Update existing issue
                 existing_issue.affected_records = group
                 existing_issue.description = (
-                    f"Found {len(group)} clients with identical address and date of birth"
+                    f"Found {len(group)} clients with identical addresses"
                 )
                 db.flush()
             else:
@@ -294,8 +319,8 @@ def create_quality_issues_if_needed(db: Session, portfolio_id: int) -> Dict[str,
 
                 new_issue = QualityIssue(
                     portfolio_id=portfolio_id,
-                    issue_type="duplicate_address_dob",
-                    description=f"Found {len(group)} clients with identical address and date of birth",
+                    issue_type="duplicate_address",
+                    description=f"Found {len(group)} clients with identical addresses",
                     affected_records=group,
                     severity=severity,
                     status="open",
@@ -308,8 +333,58 @@ def create_quality_issues_if_needed(db: Session, portfolio_id: int) -> Dict[str,
 
                 issue_counts["open_issues"] += 1
 
-        issue_counts["duplicate_addresses_dob"] = len(duplicate_addresses_dob)
-        issue_counts["total_issues"] += len(duplicate_addresses_dob)
+        issue_counts["duplicate_addresses"] = len(duplicate_addresses)
+        issue_counts["total_issues"] += len(duplicate_addresses)
+
+    # 3. Find duplicate DOB
+    duplicate_dob = find_duplicate_dob(db, portfolio_id)
+    if duplicate_dob:
+        for group in duplicate_dob:
+            # Check if this issue already exists
+            existing_issue = (
+                db.query(QualityIssue)
+                .filter(
+                    QualityIssue.portfolio_id == portfolio_id,
+                    QualityIssue.issue_type == "duplicate_dob",
+                    QualityIssue.status != "resolved",
+                )
+                .first()
+            )
+
+            if existing_issue:
+                # Update existing issue
+                existing_issue.affected_records = group
+                existing_issue.description = (
+                    f"Found {len(group)} clients with identical date of birth"
+                )
+                db.flush()
+            else:
+                # Create new issue
+                if len(group) < 5:
+                    severity = "low"
+                elif len(group) < 15:  # Different threshold for DOB since more common
+                    severity = "medium"
+                else:
+                    severity = "high"
+
+                new_issue = QualityIssue(
+                    portfolio_id=portfolio_id,
+                    issue_type="duplicate_dob",
+                    description=f"Found {len(group)} clients with identical date of birth",
+                    affected_records=group,
+                    severity=severity,
+                    status="open",
+                )
+                db.add(new_issue)
+                db.flush()
+
+                if severity == "high":
+                    issue_counts["high_severity_issues"] += 1
+
+                issue_counts["open_issues"] += 1
+
+        issue_counts["duplicate_dob"] = len(duplicate_dob)
+        issue_counts["total_issues"] += len(duplicate_dob)
 
     # 3. Find duplicate loan IDs
     duplicate_loan_ids = find_duplicate_loan_ids(db, portfolio_id)
