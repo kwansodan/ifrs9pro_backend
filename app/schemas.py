@@ -792,7 +792,8 @@ class PortfolioResponseBase(BaseModel):
 
 class PortfolioResponse(PortfolioResponseBase):
     has_ingested_data: bool = False  
-
+    has_calculated_ecl: bool = False
+    has_calculated_local_impairment: bool = False
 
 class PortfolioList(BaseModel):
     items: List[PortfolioResponse]
@@ -828,6 +829,8 @@ class PortfolioWithSummaryResponse(BaseModel):
     loan_assets: Optional[str] = None
     ecl_impairment_account: Optional[str] = None
     has_ingested_data: bool
+    has_calculated_ecl: bool 
+    has_calculated_local_impairment: bool
     created_at: datetime
     updated_at: Optional[datetime] = None
     overview: OverviewModel
