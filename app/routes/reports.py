@@ -183,13 +183,22 @@ async def save_report(
         )
 
     try:
+        # Remove the 'file' section from report_data if it exists to avoid storing
+        # the redundant base64-encoded Excel file in the database
+        cleaned_report_data = report_data.report_data
+        if isinstance(cleaned_report_data, dict) and "file" in cleaned_report_data:
+            # Make a copy without the 'file' key
+            cleaned_report_data = {
+                k: v for k, v in cleaned_report_data.items() if k != "file"
+            }
+
         # Create a new report record
         new_report = Report(
             portfolio_id=portfolio_id,
             report_type=report_data.report_type,
             report_date=report_data.report_date,
             report_name=report_data.report_name,
-            report_data=report_data.report_data,
+            report_data=cleaned_report_data,  # Use the cleaned data without the file
             created_by=current_user.id,
         )
 
@@ -205,7 +214,6 @@ async def save_report(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error saving report: {str(e)}",
         )
-
 
 @router.get("/{portfolio_id}/history", response_model=ReportHistoryList)
 async def get_report_history(
