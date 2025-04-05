@@ -175,6 +175,23 @@ def get_portfolios(
             CalculationResult.portfolio_id == portfolio.id,
             CalculationResult.calculation_type == "local_impairment"
         ).limit(1).count() > 0
+
+
+        # Check if portfolio has quality issues at all
+        has_issues = db.query(QualityIssue).filter(
+            QualityIssue.portfolio_id == portfolio.id
+        ).first() is not None
+
+        # Only check approval status if there are issues
+        has_all_issues_approved = None
+        if has_issues:
+            has_open_issues = db.query(QualityIssue).filter(
+                QualityIssue.portfolio_id == portfolio.id,
+                QualityIssue.status != "approved"
+            ).first() is not None
+            has_all_issues_approved = not has_open_issues
+    
+
         
         # Convert to PortfolioResponse and set flags
         portfolio_dict = portfolio.__dict__.copy()
@@ -186,7 +203,8 @@ def get_portfolios(
             **portfolio_dict, 
             has_ingested_data=has_data,
             has_calculated_ecl=has_calculated_ecl,
-            has_calculated_local_impairment=has_calculated_local_impairment
+            has_calculated_local_impairment=has_calculated_local_impairment,
+            has_all_issues_approved=has_all_issues_approved
         )
         response_items.append(portfolio_response)
 
@@ -232,6 +250,23 @@ def get_portfolio(
         CalculationResult.portfolio_id == portfolio_id,
         CalculationResult.calculation_type == "local_impairment"
     ).limit(1).count() > 0
+
+    
+    # Check if portfolio has quality issues at all
+    has_issues = db.query(QualityIssue).filter(
+        QualityIssue.portfolio_id == portfolio.id
+    ).first() is not None
+
+    # Only check approval status if there are issues
+    has_all_issues_approved = None
+    if has_issues:
+        has_open_issues = db.query(QualityIssue).filter(
+            QualityIssue.portfolio_id == portfolio.id,
+            QualityIssue.status != "approved"
+        ).first() is not None
+        has_all_issues_approved = not has_open_issues
+    
+
     
     # Get clients count
     total_customers = db.query(Client).filter(Client.portfolio_id == portfolio_id).count()
@@ -619,6 +654,7 @@ def get_portfolio(
         has_ingested_data=has_ingested_data, 
         has_calculated_ecl=has_calculated_ecl,
         has_calculated_local_impairment=has_calculated_local_impairment,
+        has_all_issues_approved=has_all_issues_approved,
         created_at=portfolio.created_at,
         updated_at=portfolio.updated_at,
         overview=OverviewModel(
