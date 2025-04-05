@@ -24,7 +24,7 @@ from app.utils.report_generators import (
     generate_probability_default_report,
     generate_exposure_default_report,
     generate_loss_given_default_report,
-    generate_report_pdf,
+    generate_report_excel,  # Changed from generate_report_pdf
 )
 from app.schemas import (
     ReportTypeEnum,
@@ -52,7 +52,7 @@ async def generate_report(
     """
     Generate a report for a portfolio based on the report type.
     This endpoint does not save the report to the database.
-    Returns both JSON report data and PDF bytes as base64.
+    Returns both JSON report data and Excel file as base64.
     """
     # Verify portfolio exists and belongs to current user
     portfolio = (
@@ -121,8 +121,8 @@ async def generate_report(
                 detail=f"Unsupported report type: {report_request.report_type}",
             )
 
-        # Generate the PDF from the report data
-        pdf_bytes = generate_report_pdf(
+        # Generate the Excel file from the report data
+        excel_bytes = generate_report_excel(
             db=db,
             portfolio_id=portfolio_id,
             report_type=report_request.report_type.value,
@@ -130,22 +130,22 @@ async def generate_report(
             report_data=report_data,
         )
 
-        # Encode the PDF as base64
-        pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
+        # Encode the Excel file as base64
+        excel_base64 = base64.b64encode(excel_bytes).decode("utf-8")
 
-        # Create a file name for the PDF
-        report_name = f"{portfolio.name.replace(' ', '_')}_{report_request.report_type.value}_{report_request.report_date}.pdf"
+        # Create a file name for the Excel file
+        report_name = f"{portfolio.name.replace(' ', '_')}_{report_request.report_type.value}_{report_request.report_date}.xlsx"
 
-        # Return both the data and PDF in the response
+        # Return both the data and Excel in the response
         return {
             "portfolio_id": portfolio_id,
             "report_type": report_request.report_type,
             "report_date": report_request.report_date,
             "data": report_data,
-            "pdf": {
+            "file": {
                 "filename": report_name,
-                "content_type": "application/pdf",
-                "content": pdf_base64,
+                "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "content": excel_base64,
             },
         }
 
@@ -339,15 +339,15 @@ async def delete_report(
 @router.get(
     "/{portfolio_id}/report/{report_id}/download", status_code=status.HTTP_200_OK
 )
-async def download_report_pdf(
+async def download_report_excel(
     portfolio_id: int,
     report_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
-    Download a saved report as PDF.
-    Returns a streaming response with the PDF file for download.
+    Download a saved report as Excel.
+    Returns a streaming response with the Excel file for download.
     """
     # Verify portfolio exists and belongs to current user
     portfolio = (
@@ -374,8 +374,8 @@ async def download_report_pdf(
         )
 
     try:
-        # Generate the PDF from the saved report data
-        pdf_bytes = generate_report_pdf(
+        # Generate the Excel from the saved report data
+        excel_bytes = generate_report_excel(
             db=db,
             portfolio_id=portfolio_id,
             report_type=report.report_type,
@@ -383,18 +383,18 @@ async def download_report_pdf(
             report_data=report.report_data,
         )
 
-        # Create a file name for the PDF
-        report_name = f"{portfolio.name.replace(' ', '_')}_{report.report_type}_{report.report_date}.pdf"
+        # Create a file name for the Excel
+        report_name = f"{portfolio.name.replace(' ', '_')}_{report.report_type}_{report.report_date}.xlsx"
 
-        # Return the PDF as a downloadable file
+        # Return the Excel as a downloadable file
         return StreamingResponse(
-            BytesIO(pdf_bytes),
-            media_type="application/pdf",
+            BytesIO(excel_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f"attachment; filename={report_name}"},
         )
 
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error generating PDF report: {str(e)}",
+            detail=f"Error generating Excel report: {str(e)}",
         )
