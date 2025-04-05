@@ -193,23 +193,20 @@ class QualityIssueResponse(BaseModel):
         from_attributes = True
 
 
-class QualityIssueComment(BaseModel):
+class QualityIssueCommentModel(BaseModel):  
     id: int
     quality_issue_id: int
     user_id: int
     comment: str
     created_at: datetime
-
+    
     class Config:
-        from_attributes = True
-
+        from_attributes = True  
 
 class QualityIssueCommentCreate(BaseModel):
     comment: str
 
 
-from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
 
 class QualityCheckSummary(BaseModel):
     """Quality check summary with counts of different types of issues."""

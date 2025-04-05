@@ -16,7 +16,7 @@ from app.schemas import (
     QualityIssueResponse,
     QualityIssueUpdate,
     QualityIssueCommentCreate,
-    QualityIssueComment,
+    QualityIssueCommentModel,
     QualityCheckSummary,
 )
 from app.utils.quality_checks import create_quality_issues_if_needed
@@ -156,7 +156,7 @@ def update_quality_issue(
 
 @router.post(
     "/{portfolio_id}/quality-issues/{issue_id}/comments",
-    response_model=QualityIssueComment,
+    response_model=QualityIssueCommentModel,
 )
 def add_comment_to_quality_issue(
     portfolio_id: int,
@@ -206,7 +206,7 @@ def add_comment_to_quality_issue(
 
 @router.get(
     "/{portfolio_id}/quality-issues/{issue_id}/comments",
-    response_model=List[QualityIssueComment],
+    response_model=List[QualityIssueCommentModel],
 )
 def get_quality_issue_comments(
     portfolio_id: int,
@@ -253,7 +253,7 @@ def get_quality_issue_comments(
 
 @router.put(
     "/{portfolio_id}/quality-issues/{issue_id}/comments/{comment_id}",
-    response_model=QualityIssueComment,
+    response_model=QualityIssueCommentModel,
 )
 def edit_quality_issue_comment(
     portfolio_id: int,

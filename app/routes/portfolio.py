@@ -67,7 +67,6 @@ from app.schemas import (
     QualityIssueResponse,
     QualityIssueCreate,
     QualityIssueUpdate,
-    QualityIssueComment,
     QualityIssueCommentCreate,
     QualityCheckSummary,
     StagingResponse,
