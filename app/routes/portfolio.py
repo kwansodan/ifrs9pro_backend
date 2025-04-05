@@ -614,16 +614,19 @@ def get_portfolio(
 
     return response
 
-@router.put("/{portfolio_id}", response_model=PortfolioResponse)
+@router.put("/{portfolio_id}", response_model=PortfolioWithSummaryResponse)
 def update_portfolio(
     portfolio_id: int,
     portfolio_update: PortfolioUpdate,
+    include_quality_issues: bool = False,
+    include_report_history: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
     Update a specific portfolio by ID.
     Processes staging configurations in an optimized way if provided.
+    Returns the complete portfolio details using the optimized get_portfolio function.
     """
     try:
         # Get only the portfolio itself
@@ -705,24 +708,14 @@ def update_portfolio(
                 logger.error(f"Error during local impairment staging: {str(e)}")
                 # Continue with other operations
         
-        # Return all fields required by PortfolioResponse
-        return {
-            "id": portfolio.id,
-            "user_id": portfolio.user_id,  # Add the user_id field
-            "name": portfolio.name,
-            "description": portfolio.description,
-            "asset_type": portfolio.asset_type,
-            "customer_type": portfolio.customer_type,
-            "funding_source": portfolio.funding_source,
-            "data_source": portfolio.data_source,
-            "repayment_source": portfolio.repayment_source,
-            "credit_risk_reserve": portfolio.credit_risk_reserve,
-            "loan_assets": portfolio.loan_assets,
-            "ecl_impairment_account": portfolio.ecl_impairment_account,
-            "has_ingested_data": has_data,
-            "created_at": portfolio.created_at,
-            "updated_at": portfolio.updated_at
-        }
+        # Use the optimized get_portfolio function to return the complete portfolio data
+        return get_portfolio(
+            portfolio_id=portfolio_id, 
+            include_quality_issues=include_quality_issues,
+            include_report_history=include_report_history,
+            db=db, 
+            current_user=current_user
+        )
 
     except Exception as e:
         db.rollback()
@@ -731,7 +724,7 @@ def update_portfolio(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update portfolio: {str(e)}"
         )
-
+    
 @router.delete("/{portfolio_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_portfolio(
     portfolio_id: int,
@@ -1919,6 +1912,7 @@ def calculate_local_provision(
 
 
 
+# Fixed optimized ECL staging implementation
 def stage_loans_ecl_optimized(portfolio_id: int, config: ECLStagingConfig, db: Session):
     """
     Highly optimized implementation of ECL staging using direct SQL for large datasets.
@@ -1988,13 +1982,13 @@ def stage_loans_ecl_optimized(portfolio_id: int, config: ECLStagingConfig, db: S
         stage2_total = float(result.stage2_total or 0)
         stage3_total = float(result.stage3_total or 0)
         
-        # Update the staging result
+        # Update the staging result - fixed the query to avoid using astext
         staging_result = (
             db.query(StagingResult)
             .filter(
                 StagingResult.portfolio_id == portfolio_id,
                 StagingResult.staging_type == "ecl",
-                StagingResult.result_summary["status"].astext == "processing"
+                cast(StagingResult.result_summary['status'], String) == "processing"
             )
             .order_by(StagingResult.created_at.desc())
             .first()
@@ -2107,13 +2101,13 @@ def stage_loans_local_impairment_optimized(portfolio_id: int, config: LocalImpai
             "loss_min": loss_range[0] if loss_range[0] is not None else 366
         }).fetchone()
         
-        # Update the staging result
+        # Update the staging result - fixed the query to avoid using astext
         staging_result = (
             db.query(StagingResult)
             .filter(
                 StagingResult.portfolio_id == portfolio_id,
                 StagingResult.staging_type == "local_impairment",
-                StagingResult.result_summary["status"].astext == "processing"
+                cast(StagingResult.result_summary['status'], String) == "processing"
             )
             .order_by(StagingResult.created_at.desc())
             .first()
