@@ -67,7 +67,6 @@ from app.schemas import (
     QualityIssueResponse,
     QualityIssueCreate,
     QualityIssueUpdate,
-    QualityIssueComment,
     QualityIssueCommentCreate,
     QualityCheckSummary,
     StagingResponse,
@@ -165,14 +164,30 @@ def get_portfolios(
         # Check if portfolio has loans
         has_data = db.query(Loan).filter(Loan.portfolio_id == portfolio.id).limit(1).count() > 0
         
-        # Convert to PortfolioResponse and set has_ingested_data
+        # Check if ECL calculation exists
+        has_calculated_ecl = db.query(CalculationResult).filter(
+            CalculationResult.portfolio_id == portfolio.id,
+            CalculationResult.calculation_type == "ecl"
+        ).limit(1).count() > 0
+        
+        # Check if local impairment calculation exists
+        has_calculated_local_impairment = db.query(CalculationResult).filter(
+            CalculationResult.portfolio_id == portfolio.id,
+            CalculationResult.calculation_type == "local_impairment"
+        ).limit(1).count() > 0
+        
+        # Convert to PortfolioResponse and set flags
         portfolio_dict = portfolio.__dict__.copy()
         if '_sa_instance_state' in portfolio_dict:
             del portfolio_dict['_sa_instance_state']
             
-            
-        # Create response object with the data flag
-        portfolio_response = PortfolioResponse(**portfolio_dict, has_ingested_data=has_data)
+        # Create response object with all flags
+        portfolio_response = PortfolioResponse(
+            **portfolio_dict, 
+            has_ingested_data=has_data,
+            has_calculated_ecl=has_calculated_ecl,
+            has_calculated_local_impairment=has_calculated_local_impairment
+        )
         response_items.append(portfolio_response)
 
     return {"items": response_items, "total": total}
@@ -205,6 +220,18 @@ def get_portfolio(
     # Use count queries for faster performance
     total_loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).count()
     has_ingested_data = total_loans > 0
+
+     # Check if ECL calculation exists
+    has_calculated_ecl = db.query(CalculationResult).filter(
+        CalculationResult.portfolio_id == portfolio_id,
+        CalculationResult.calculation_type == "ecl"
+    ).limit(1).count() > 0
+    
+    # Check if local impairment calculation exists
+    has_calculated_local_impairment = db.query(CalculationResult).filter(
+        CalculationResult.portfolio_id == portfolio_id,
+        CalculationResult.calculation_type == "local_impairment"
+    ).limit(1).count() > 0
     
     # Get clients count
     total_customers = db.query(Client).filter(Client.portfolio_id == portfolio_id).count()
@@ -577,7 +604,6 @@ def get_portfolio(
                 "config": local_config
             }
 
-    # Create response dictionary with portfolio data and summaries
     response = PortfolioWithSummaryResponse(
         id=portfolio.id,
         name=portfolio.name,
@@ -591,6 +617,8 @@ def get_portfolio(
         loan_assets=portfolio.loan_assets,
         ecl_impairment_account=portfolio.ecl_impairment_account,
         has_ingested_data=has_ingested_data, 
+        has_calculated_ecl=has_calculated_ecl,
+        has_calculated_local_impairment=has_calculated_local_impairment,
         created_at=portfolio.created_at,
         updated_at=portfolio.updated_at,
         overview=OverviewModel(
@@ -613,7 +641,6 @@ def get_portfolio(
     )
 
     return response
-
 @router.put("/{portfolio_id}", response_model=PortfolioWithSummaryResponse)
 def update_portfolio(
     portfolio_id: int,

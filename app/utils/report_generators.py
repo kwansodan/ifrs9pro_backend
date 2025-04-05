@@ -8,6 +8,7 @@ from typing import Dict, List, Any, Optional
 from datetime import date
 from app.models import Portfolio, Report
 from app.utils.pdf_generator import create_report_pdf
+from app.utils.excel_generator import create_report_excel as create_excel_file
 
 from app.models import (
     Portfolio,
@@ -959,3 +960,36 @@ def generate_report_pdf(
     )
 
     return pdf_buffer.getvalue()
+
+
+def generate_report_excel(
+    db: Session,
+    portfolio_id: int,
+    report_type: str,
+    report_date: date,
+    report_data: Dict[str, Any],
+) -> bytes:
+    """
+    Generate an Excel file for a report.
+
+    Args:
+        db: Database session
+        portfolio_id: ID of the portfolio
+        report_type: Type of the report
+        report_date: Date of the report
+        report_data: Data for the report
+
+    Returns:
+        bytes: Excel file as bytes
+    """
+    portfolio_name = get_portfolio_name(db, portfolio_id)
+
+    # Generate the Excel file
+    excel_buffer = create_excel_file(
+        portfolio_name=portfolio_name,
+        report_type=report_type,
+        report_date=report_date,
+        report_data=report_data,
+    )
+
+    return excel_buffer.getvalue()
