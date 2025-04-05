@@ -344,85 +344,6 @@ class ReportSaveRequest(BaseModel):
     report_data: Dict[str, Any]
 
 
-# ==================== PORTFOLIO MODELS ====================
-
-class PortfolioCreate(BaseModel):
-    name: str
-    description: str
-    asset_type: AssetType
-    customer_type: CustomerType
-    funding_source: FundingSource
-    data_source: DataSource
-    repayment_source: bool = False
-    credit_risk_reserve: Optional[str] = None
-    loan_assets: Optional[str] = None
-    ecl_impairment_account: Optional[str] = None
-
-
-class PortfolioUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    asset_type: Optional[AssetType] = None
-    customer_type: Optional[CustomerType] = None
-    funding_source: Optional[FundingSource] = None
-    data_source: Optional[DataSource] = None
-    repayment_source: Optional[bool] = None
-    credit_risk_reserve: Optional[str] = None
-    loan_assets: Optional[str] = None
-    ecl_impairment_account: Optional[str] = None
-
-
-class PortfolioResponseBase(BaseModel):
-    id: int
-    name: str
-    description: str
-    asset_type: str
-    customer_type: str
-    funding_source: str
-    data_source: str
-    repayment_source: bool
-    credit_risk_reserve: Optional[str] = None
-    loan_assets: Optional[str] = None
-    ecl_impairment_account: Optional[str] = None
-    user_id: int
-    created_at: datetime
-    updated_at: Optional[datetime] = None
-    
-    class Config:
-        from_attributes = True
-
-class PortfolioResponse(PortfolioResponseBase):
-    has_ingested_data: bool = False  
-
-
-class PortfolioList(BaseModel):
-    items: List[PortfolioResponse]
-    total: int
-
-    class Config:
-        from_attributes = True
-
-
-class OverviewModel(BaseModel):
-    total_loans: int
-    total_loan_value: float
-    average_loan_amount: float
-    total_customers: int
-
-    class Config:
-        from_attributes = True
-
-
-class CustomerSummaryModel(BaseModel):
-    individual_customers: int
-    institutions: int
-    mixed: int
-    active_customers: int
-
-    class Config:
-        from_attributes = True
-
-
 # ==================== STAGING AND CALCULATION MODELS ====================
 
 class StagingTypeInfo(BaseModel):
@@ -745,33 +666,6 @@ class StagingSummary(BaseModel):
 
 
 
-class PortfolioWithSummaryResponse(BaseModel):
-    id: int
-    name: str
-    description: Optional[str] = None
-    asset_type: Optional[str] = None
-    customer_type: Optional[str] = None
-    funding_source: Optional[str] = None
-    data_source: Optional[str] = None
-    repayment_source: Optional[bool] = None
-    credit_risk_reserve: Optional[str] = None
-    loan_assets: Optional[str] = None
-    ecl_impairment_account: Optional[str] = None
-    has_ingested_data: bool
-    created_at: datetime
-    updated_at: Optional[datetime] = None
-    overview: OverviewModel
-    customer_summary: CustomerSummaryModel
-    quality_check: Optional[QualityCheckSummary] = None
-    quality_issues: Optional[List[QualityIssueResponse]] = None
-    report_history: Optional[List[ReportHistoryItem]] = None
-    calculation_summary: Optional[CalculationSummary] = None
-    staging_summary: Optional[StagingSummary] = None
-
-    class Config:
-        from_attributes = True
-
-
 # Help schemas
 
 class HelpStatusEnum(str, Enum):
@@ -837,3 +731,113 @@ class NotificationResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+# ==================== PORTFOLIO MODELS ====================
+class OverviewModel(BaseModel):
+    total_loans: int
+    total_loan_value: float
+    average_loan_amount: float
+    total_customers: int
+
+    class Config:
+        from_attributes = True
+
+
+class PortfolioCreate(BaseModel):
+    name: str
+    description: str
+    asset_type: AssetType
+    customer_type: CustomerType
+    funding_source: FundingSource
+    data_source: DataSource
+    repayment_source: bool = False
+    credit_risk_reserve: Optional[str] = None
+    loan_assets: Optional[str] = None
+    ecl_impairment_account: Optional[str] = None
+
+
+class PortfolioUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    asset_type: Optional[AssetType] = None
+    customer_type: Optional[CustomerType] = None
+    funding_source: Optional[FundingSource] = None
+    data_source: Optional[DataSource] = None
+    repayment_source: Optional[bool] = None
+    credit_risk_reserve: Optional[str] = None
+    loan_assets: Optional[str] = None
+    ecl_impairment_account: Optional[str] = None
+    ecl_staging_config: Optional[ECLStagingConfig] = None
+    local_impairment_config: Optional[LocalImpairmentConfig] = None
+
+
+class PortfolioResponseBase(BaseModel):
+    id: int
+    name: str
+    description: str
+    asset_type: str
+    customer_type: str
+    funding_source: str
+    data_source: str
+    repayment_source: bool
+    credit_risk_reserve: Optional[str] = None
+    loan_assets: Optional[str] = None
+    ecl_impairment_account: Optional[str] = None
+    user_id: int
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
+
+class PortfolioResponse(PortfolioResponseBase):
+    has_ingested_data: bool = False  
+
+
+class PortfolioList(BaseModel):
+    items: List[PortfolioResponse]
+    total: int
+
+    class Config:
+        from_attributes = True
+
+
+
+
+class CustomerSummaryModel(BaseModel):
+    individual_customers: int
+    institutions: int
+    mixed: int
+    active_customers: int
+
+    class Config:
+        from_attributes = True
+
+
+
+class PortfolioWithSummaryResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    asset_type: Optional[str] = None
+    customer_type: Optional[str] = None
+    funding_source: Optional[str] = None
+    data_source: Optional[str] = None
+    repayment_source: Optional[bool] = None
+    credit_risk_reserve: Optional[str] = None
+    loan_assets: Optional[str] = None
+    ecl_impairment_account: Optional[str] = None
+    has_ingested_data: bool
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    overview: OverviewModel
+    customer_summary: CustomerSummaryModel
+    quality_check: Optional[QualityCheckSummary] = None
+    quality_issues: Optional[List[QualityIssueResponse]] = None
+    report_history: Optional[List[ReportHistoryItem]] = None
+    calculation_summary: Optional[CalculationSummary] = None
+    staging_summary: Optional[StagingSummary] = None
+
+    class Config:
+        from_attributes = True
+
