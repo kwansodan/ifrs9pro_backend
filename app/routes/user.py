@@ -1,14 +1,15 @@
+import random
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
-
+from datetime import datetime, timedelta
 from app.database import get_db
 from app.models import User
 from app.models import Feedback, FeedbackStatus
 from app.models import User, Help, HelpStatus
 from app.auth.utils import get_current_active_user
 from app.schemas import FeedbackCreate, FeedbackResponse, FeedbackStatusEnum, FeedbackUpdate
-from app.schemas import HelpCreate, HelpResponse, HelpStatusEnum, HelpUpdate
+from app.schemas import HelpCreate, HelpResponse, HelpStatusEnum, HelpUpdate, NotificationTypeEnum, NotificationResponse
 
 
 # Create router
@@ -526,3 +527,111 @@ async def get_help(
     
     # Return response
     return HelpResponse(**response_data)
+
+@router.get("/notifications", response_model=List[NotificationResponse])
+async def get_notifications(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Get notifications for the current user
+    Returns dummy data for now
+    """
+    # Define notification types
+    notification_types = [
+        NotificationTypeEnum.SYSTEM,
+        NotificationTypeEnum.FEEDBACK,
+        NotificationTypeEnum.HELP,
+        NotificationTypeEnum.CALCULATION,
+        NotificationTypeEnum.REPORT,
+        NotificationTypeEnum.DATA_UPLOAD
+    ]
+    
+    # Create dummy notification texts based on type
+    notification_texts = {
+        NotificationTypeEnum.SYSTEM: [
+            "System maintenance scheduled for tomorrow",
+            "Your account has been updated successfully",
+            "New feature available: dark mode"
+        ],
+        NotificationTypeEnum.FEEDBACK: [
+            "Your feedback has been reviewed",
+            "Someone liked your feedback",
+            "Admin responded to your feedback"
+        ],
+        NotificationTypeEnum.HELP: [
+            "Your help request status has changed",
+            "Support team has responded to your request",
+            "Your help request has been resolved"
+        ],
+        NotificationTypeEnum.CALCULATION: [
+            "ECL calculation completed",
+            "Risk calculation has completed",
+            "Batch calculation process finished"
+        ],
+        NotificationTypeEnum.REPORT: [
+            "Report generated",
+            "Monthly report is now available",
+            "Custom report has been generated"
+        ],
+        NotificationTypeEnum.DATA_UPLOAD: [
+            "New data uploaded",
+            "Data upload completed successfully",
+            "Dataset is now ready for processing"
+        ]
+    }
+    
+    # Time periods for "time_ago" field
+    time_periods = [
+        "2 minutes ago",
+        "1 hour ago",
+        "3 hours ago",
+        "Yesterday",
+        "2 days ago",
+        "1 week ago"
+    ]
+    
+    # Generate 5-10 random notifications
+    num_notifications = random.randint(5, 10)
+    current_time = datetime.utcnow()
+    
+    notifications = []
+    for i in range(num_notifications):
+        # Select random type
+        notification_type = random.choice(notification_types)
+        
+        # Select random text for that type
+        notification_text = random.choice(notification_texts[notification_type])
+        
+        # Select random time ago
+        time_ago = random.choice(time_periods)
+        
+        # Calculate created_at based on time_ago (approximate)
+        if "minutes" in time_ago:
+            minutes = int(time_ago.split()[0])
+            created_at = current_time - timedelta(minutes=minutes)
+        elif "hour" in time_ago:
+            hours = int(time_ago.split()[0])
+            created_at = current_time - timedelta(hours=hours)
+        elif "Yesterday" in time_ago:
+            created_at = current_time - timedelta(days=1)
+        elif "days" in time_ago:
+            days = int(time_ago.split()[0])
+            created_at = current_time - timedelta(days=days)
+        elif "week" in time_ago:
+            created_at = current_time - timedelta(weeks=1)
+        else:
+            created_at = current_time
+        
+        # Create notification response
+        notification = {
+            "id": i + 1,
+            "text": notification_text,
+            "type": notification_type,
+            "time_ago": time_ago,
+            "created_at": created_at
+        }
+        
+        notifications.append(NotificationResponse(**notification))
+    
+    return notifications
