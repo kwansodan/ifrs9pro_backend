@@ -225,32 +225,48 @@ def calculate_probability_of_default(loan, db):
     try:
         # Import here to avoid circular imports
         import numpy as np
-        # Load the pre-trained logistic regression model
-        with open("app/ml_models/logistic_model.pkl", "rb") as file:
-            model = pickle.load(file)
+        import pandas as pd
+        import warnings
+        
+        # Suppress specific warnings
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=UserWarning, 
+                                  message="X does not have valid feature names")
+            warnings.filterwarnings("ignore", category=UserWarning, 
+                                  message="Trying to unpickle estimator")
+        
+            # Load the pre-trained logistic regression model
+            with open("app/ml_models/logistic_model.pkl", "rb") as file:
+                model = pickle.load(file)
+                
+            # Get client associated with this loan's employee_id
+            client = db.query(Client).filter(
+                Client.employee_id == loan.employee_id
+            ).first()
             
-        # Get client associated with this loan's employee_id
-        client = db.query(Client).filter(
-            Client.employee_id == loan.employee_id
-        ).first()
-        
-        if not client or not client.date_of_birth:
-            return 5.0  # Default 5% probability if client or DOB not found
-        
-        # Get year of birth from date of birth
-        year_of_birth = client.date_of_birth.year
-        
-        # Prepare input for the model (similar to predict function)
-        X_new = np.array([[year_of_birth]])
-        
-        # Get prediction and probability from model
-        prediction = model.predict(X_new)[0]
-        probability = model.predict_proba(X_new)[0][1]  # Probability of default
-        
-        # Convert to percentage
-        percentage = probability * 100
-        
-        return percentage
+            if not client or not client.date_of_birth:
+                return 5.0  # Default 5% probability if client or DOB not found
+            
+            # Get year of birth from date of birth
+            year_of_birth = client.date_of_birth.year
+            
+            # Get feature name from the model if available
+            if hasattr(model, 'feature_names_in_'):
+                feature_name = model.feature_names_in_[0]  # Assuming only one feature
+            else:
+                feature_name = 'year_of_birth'  # Default name if not found
+                
+            # Create DataFrame with proper feature name
+            X_new = pd.DataFrame({feature_name: [year_of_birth]})
+            
+            # Get prediction and probability from model
+            prediction = model.predict(X_new)[0]
+            probability = model.predict_proba(X_new)[0][1]  # Probability of default
+            
+            # Convert to percentage
+            percentage = probability * 100
+            
+            return percentage
     except Exception as e:
         # Handle exceptions but maintain return type as float
         print(f"Error calculating probability of default: {str(e)}")
