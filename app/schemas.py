@@ -620,7 +620,7 @@ class EADInput(BaseModel):
 
 
 class PDInput(BaseModel):
-    ndia: int
+    ndia: float
     loan_type: Optional[str] = None
 
 
@@ -635,7 +635,7 @@ class LoanStageInfo(BaseModel):
     employee_id: str
     stage: str
     outstanding_loan_balance: float
-    ndia: int
+    ndia: float
     loan_issue_date: date
     loan_amount: float
     monthly_installment: float
