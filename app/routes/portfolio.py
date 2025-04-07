@@ -557,8 +557,8 @@ def get_portfolio(
             stage_1_data = {
                 "num_loans": ecl_summary.get("stage1_count", 0),
                 "total_loan_value": ecl_summary.get("stage1_total", 0),
-                "provision_amount": ecl_summary.get("stage1_provision", 0),
-                "provision_rate": ecl_summary.get("stage1_provision_rate", 0),
+                "provision_amount": round(ecl_summary.get("stage1_provision", 0),2),
+                "provision_rate": ecl_summary.get("stage1_provision_rate", 0)*100,
             }
             
             stage_2_data = {
@@ -677,6 +677,7 @@ def get_portfolio(
     )
 
     return response
+
 @router.put("/{portfolio_id}", response_model=PortfolioWithSummaryResponse)
 def update_portfolio(
     portfolio_id: int,
@@ -689,6 +690,7 @@ def update_portfolio(
     """
     Update a specific portfolio by ID.
     Processes staging configurations in an optimized way if provided.
+    Allows storing configurations even when the portfolio has no loan data.
     Returns the complete portfolio details using the optimized get_portfolio function.
     """
     try:
@@ -731,42 +733,56 @@ def update_portfolio(
         # Check if the portfolio has any data
         has_data = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).limit(1).count() > 0
         
-        # Process ECL staging if requested
-        if ecl_staging_config and has_data:
+        # Process ECL staging config if provided
+        if ecl_staging_config:
             try:
-                # Create a new staging result entry
+                # Create a new staging result entry regardless of whether there's loan data
                 ecl_staging_result = StagingResult(
                     portfolio_id=portfolio_id,
                     staging_type="ecl",
                     config=ecl_staging_config.dict(),
-                    result_summary={"status": "processing", "started_at": datetime.now().isoformat()}
+                    result_summary={
+                        "status": "stored_config" if not has_data else "processing",
+                        "timestamp": datetime.now().isoformat(),
+                        "has_loan_data": has_data
+                    }
                 )
                 db.add(ecl_staging_result)
                 db.commit()
                 
-                # Optimized ECL staging implementation
-                stage_loans_ecl_optimized(portfolio_id, ecl_staging_config, db)
-                logger.info(f"ECL staging completed for portfolio {portfolio_id}")
+                # Only run the staging calculation if there's loan data
+                if has_data:
+                    stage_loans_ecl_optimized(portfolio_id, ecl_staging_config, db)
+                    logger.info(f"ECL staging completed for portfolio {portfolio_id}")
+                else:
+                    logger.info(f"ECL config stored for portfolio {portfolio_id} (no loan data to process)")
             except Exception as e:
                 logger.error(f"Error during ECL staging: {str(e)}")
                 # Continue with other operations
         
-        # Process local impairment staging if requested
-        if local_impairment_config and has_data:
+        # Process local impairment staging config if provided
+        if local_impairment_config:
             try:
-                # Create a new staging result entry
+                # Create a new staging result entry regardless of whether there's loan data
                 local_staging_result = StagingResult(
                     portfolio_id=portfolio_id,
                     staging_type="local_impairment",
                     config=local_impairment_config.dict(),
-                    result_summary={"status": "processing", "started_at": datetime.now().isoformat()}
+                    result_summary={
+                        "status": "stored_config" if not has_data else "processing",
+                        "timestamp": datetime.now().isoformat(),
+                        "has_loan_data": has_data
+                    }
                 )
                 db.add(local_staging_result)
                 db.commit()
                 
-                # Optimized local impairment staging implementation
-                stage_loans_local_impairment_optimized(portfolio_id, local_impairment_config, db)
-                logger.info(f"Local impairment staging completed for portfolio {portfolio_id}")
+                # Only run the staging calculation if there's loan data
+                if has_data:
+                    stage_loans_local_impairment_optimized(portfolio_id, local_impairment_config, db)
+                    logger.info(f"Local impairment staging completed for portfolio {portfolio_id}")
+                else:
+                    logger.info(f"Local impairment config stored for portfolio {portfolio_id} (no loan data to process)")
             except Exception as e:
                 logger.error(f"Error during local impairment staging: {str(e)}")
                 # Continue with other operations
@@ -787,6 +803,7 @@ def update_portfolio(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update portfolio: {str(e)}"
         )
+
     
 @router.delete("/{portfolio_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_portfolio(
