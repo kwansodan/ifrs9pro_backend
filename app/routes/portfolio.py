@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from fastapi import (
     APIRouter,
@@ -10,7 +11,7 @@ from fastapi import (
     Body,
 )
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import text, func, case
+from sqlalchemy import text, func, case, cast, String
 import numpy as np
 import math
 from decimal import Decimal
@@ -176,20 +177,20 @@ def get_portfolios(
             CalculationResult.calculation_type == "local_impairment"
         ).limit(1).count() > 0
 
+    
+    # Check if portfolio has quality issues at all
+    has_issues = db.query(QualityIssue).filter(
+        QualityIssue.portfolio_id == portfolio.id
+    ).first() is not None
 
-        # Check if portfolio has quality issues at all
-        has_issues = db.query(QualityIssue).filter(
-            QualityIssue.portfolio_id == portfolio.id
+    # Only check approval status if there are issues
+    has_all_issues_approved = None
+    if has_issues:
+        has_open_issues = db.query(QualityIssue).filter(
+            QualityIssue.portfolio_id == portfolio.id,
+            QualityIssue.status != "approved"
         ).first() is not None
-
-        # Only check approval status if there are issues
-        has_all_issues_approved = None
-        if has_issues:
-            has_open_issues = db.query(QualityIssue).filter(
-                QualityIssue.portfolio_id == portfolio.id,
-                QualityIssue.status != "approved"
-            ).first() is not None
-            has_all_issues_approved = not has_open_issues
+        has_all_issues_approved = not has_open_issues
     
 
         
@@ -752,7 +753,11 @@ def update_portfolio(
                 
                 # Only run the staging calculation if there's loan data
                 if has_data:
-                    stage_loans_ecl_optimized(portfolio_id, ecl_staging_config, db)
+                    ecl_staging = stage_loans_ecl_optimized(
+                        portfolio_id=portfolio_id,
+                        config=ecl_staging_config,
+                        db=db
+                    )
                     logger.info(f"ECL staging completed for portfolio {portfolio_id}")
                 else:
                     logger.info(f"ECL config stored for portfolio {portfolio_id} (no loan data to process)")
@@ -779,7 +784,11 @@ def update_portfolio(
                 
                 # Only run the staging calculation if there's loan data
                 if has_data:
-                    stage_loans_local_impairment_optimized(portfolio_id, local_impairment_config, db)
+                    local_staging = stage_loans_local_impairment_optimized(
+                        portfolio_id=portfolio_id,
+                        config=local_impairment_config,
+                        db=db
+                    )
                     logger.info(f"Local impairment staging completed for portfolio {portfolio_id}")
                 else:
                     logger.info(f"Local impairment config stored for portfolio {portfolio_id} (no loan data to process)")
@@ -875,63 +884,54 @@ async def ingest_portfolio_data(
 
     # Explicitly rollback any existing transaction to start fresh
     db.rollback()
-
-    # Process files one by one with separate transactions for each
+    
+    # Process files in parallel using asyncio tasks
     try:
-        # Process loan details file
+        # Create tasks for processing files
+        tasks = []
+        file_types = []
+        
+        # Add tasks for each file that is provided
         if loan_details:
-            try:
-                results["loan_details"] = await process_loan_details(
-                    loan_details, portfolio_id, db
-                )
-                db.commit()
-            except Exception as e:
-                db.rollback()
-                logger.error(f"Error processing loan details: {str(e)}")
-                results["loan_details"] = {"status": "error", "message": str(e)}
-
-        # Process loan guarantee data file
-        # if loan_guarantee_data:
-        #     try:
-        #         results["loan_guarantee_data"] = await process_loan_guarantees(
-        #             loan_guarantee_data, portfolio_id, db
-        #         )
-        #         db.commit()
-        #     except Exception as e:
-        #         db.rollback()
-        #         logger.error(f"Error processing loan guarantees: {str(e)}")
-        #         results["loan_guarantee_data"] = {"status": "error", "message": str(e)}
-
-        # Process client data file
+            tasks.append(process_loan_details(loan_details, portfolio_id, db))
+            file_types.append("loan_details")
+            
         if client_data:
-            try:
-                results["client_data"] = await process_client_data(
-                    client_data, portfolio_id, db
-                )
-                db.commit()
-            except Exception as e:
-                db.rollback()
-                logger.error(f"Error processing client data: {str(e)}")
-                results["client_data"] = {"status": "error", "message": str(e)}
-                
-        # Process loan collateral data file
-        # if loan_collateral_data:
-        #     try:
-        #         results["loan_collateral_data"] = await process_collateral_data(
-        #             loan_collateral_data, portfolio_id, db
-        #         )
-        #         db.commit()
-        #     except Exception as e:
-        #         db.rollback()
-        #         logger.error(f"Error processing loan collateral: {str(e)}")
-        #         results["loan_collateral_data"] = {"status": "error", "message": str(e)}
-
+            tasks.append(process_client_data(client_data, portfolio_id, db))
+            file_types.append("client_data")
+            
+        if loan_guarantee_data:
+            tasks.append(process_loan_guarantees(loan_guarantee_data, portfolio_id, db))
+            file_types.append("loan_guarantee_data")
+            
+        if loan_collateral_data:
+            tasks.append(process_collateral_data(loan_collateral_data, portfolio_id, db))
+            file_types.append("loan_collateral_data")
+        
+        # Run all tasks concurrently and gather results
+        if tasks:
+            # Execute all tasks concurrently
+            file_results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Map results to file types
+            for i, result in enumerate(file_results):
+                if i < len(file_types):
+                    file_type = file_types[i]
+                    if isinstance(result, Exception):
+                        logger.error(f"Error processing {file_type}: {str(result)}")
+                        results[file_type] = {"status": "error", "message": str(result)}
+                    else:
+                        results[file_type] = result
+        
+        # Commit all successful file processing at once
+        db.commit()
+        
         # Only perform staging if at least one file was processed successfully
         if any(result.get("status") == "success" for result in results.values() if isinstance(result, dict)):
-            # Automatically perform both types of staging
+            # Use optimized staging functions
             staging_results = {}
             
-            # 1. Perform ECL staging
+            # 1. Perform ECL staging with optimized implementation
             try:
                 # Create default ECL staging config
                 ecl_config = ECLStagingConfig(
@@ -940,18 +940,17 @@ async def ingest_portfolio_data(
                     stage_3={"days_range": "240+"}
                 )
                 
-                # Call the staging function
-                ecl_staging = stage_loans_ecl(
+                # Call the optimized staging function
+                ecl_staging = stage_loans_ecl_optimized(
                     portfolio_id=portfolio_id,
                     config=ecl_config,
-                    db=db,
-                    current_user=current_user
+                    db=db
                 )
                 
-                staging_results["ecl"] = {
-                    "status": "success",
-                    "loans_staged": len(ecl_staging.loans)
-                }
+                # Commit after ECL staging
+                db.commit()
+                
+                staging_results["ecl"] = ecl_staging
                 
             except Exception as e:
                 db.rollback()
@@ -961,7 +960,7 @@ async def ingest_portfolio_data(
                     "error": str(e)
                 }
             
-            # 2. Perform local impairment staging
+            # 2. Perform local impairment staging with optimized implementation
             try:
                 # Create default local impairment config
                 local_config = LocalImpairmentConfig(
@@ -972,18 +971,17 @@ async def ingest_portfolio_data(
                     loss={"days_range": "366+", "rate": 100}
                 )
                 
-                # Call the staging function
-                local_staging = stage_loans_local_impairment(
+                # Call the optimized staging function
+                local_staging = stage_loans_local_impairment_optimized(
                     portfolio_id=portfolio_id,
                     config=local_config,
-                    db=db,
-                    current_user=current_user
+                    db=db
                 )
                 
-                staging_results["local_impairment"] = {
-                    "status": "success",
-                    "loans_staged": len(local_staging.loans)
-                }
+                # Commit after local impairment staging
+                db.commit()
+                
+                staging_results["local_impairment"] = local_staging
                 
             except Exception as e:
                 db.rollback()
@@ -995,6 +993,14 @@ async def ingest_portfolio_data(
             
             # Add staging results to the response
             results["staging"] = staging_results
+
+        # Create quality issues asynchronously without blocking the response
+        try:
+            create_quality_issues_if_needed(portfolio_id, db)
+            db.commit()
+        except Exception as e:
+            logger.error(f"Error creating quality issues: {str(e)}")
+            db.rollback()
 
         return {
             "portfolio_id": portfolio_id, 
@@ -1094,7 +1100,7 @@ def calculate_ecl_provision(
                 continue
                 
             ndia = loan.ndia
-            
+                
             # Stage based on NDIA
             if is_in_range(ndia, stage_1_range):
                 stage = "Stage 1"
@@ -1482,7 +1488,7 @@ def stage_loans_local_impairment(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
-
+    
     # Parse day ranges from config
     try:
         current_range = parse_days_range(config.current.days_range)
@@ -2004,10 +2010,9 @@ def stage_loans_ecl_optimized(portfolio_id: int, config: ECLStagingConfig, db: S
         stage_3_range = parse_days_range(config.stage_3.days_range)
     except ValueError as e:
         logger.error(f"Error parsing ECL staging ranges: {str(e)}")
-        return
+        return {"status": "error", "error": str(e)}
     
     # Use a direct SQL update to classify and store results
-    # This is MUCH faster than fetching all loans and updating them in Python
     try:
         # Get the current timestamp
         staged_at = datetime.now()
@@ -2089,11 +2094,17 @@ def stage_loans_ecl_optimized(portfolio_id: int, config: ECLStagingConfig, db: S
             }
             db.commit()
             
-        return True
+        return {
+            "status": "success", 
+            "loans_staged": int(result.total_count or 0),
+            "stage1_count": stage1_count,
+            "stage2_count": stage2_count,
+            "stage3_count": stage3_count
+        }
     except Exception as e:
         logger.error(f"Error in optimized ECL staging: {str(e)}")
         db.rollback()
-        return False
+        return {"status": "error", "error": str(e)}
 
 # Optimized local impairment staging implementation
 def stage_loans_local_impairment_optimized(portfolio_id: int, config: LocalImpairmentConfig, db: Session):
@@ -2109,7 +2120,7 @@ def stage_loans_local_impairment_optimized(portfolio_id: int, config: LocalImpai
         loss_range = parse_days_range(config.loss.days_range)
     except ValueError as e:
         logger.error(f"Error parsing local impairment ranges: {str(e)}")
-        return
+        return {"status": "error", "error": str(e)}
     
     # Use a direct SQL update to classify and store results
     try:
@@ -2212,8 +2223,16 @@ def stage_loans_local_impairment_optimized(portfolio_id: int, config: LocalImpai
             }
             db.commit()
             
-        return True
+        return {
+            "status": "success",
+            "loans_staged": int(result.total_count or 0),
+            "current_count": int(result.current_count or 0),
+            "olem_count": int(result.olem_count or 0),
+            "substandard_count": int(result.substandard_count or 0),
+            "doubtful_count": int(result.doubtful_count or 0),
+            "loss_count": int(result.loss_count or 0)
+        }
     except Exception as e:
         logger.error(f"Error in optimized local impairment staging: {str(e)}")
         db.rollback()
-        return False
+        return {"status": "error", "error": str(e)}

@@ -2,6 +2,8 @@ import io
 import pandas as pd
 import numpy as np
 from datetime import datetime  # Import datetime for type checking
+import concurrent.futures
+from sqlalchemy import text
 from app.models import (
     Loan,
     Guarantee,
@@ -10,16 +12,12 @@ from app.models import (
 )
 
 async def process_loan_details(loan_details, portfolio_id, db):
-    """Function to process loan details with case-insensitive column mapping and improved memory efficiency."""
+    """Function to process loan details with high-performance optimizations for large datasets."""
     try:
         content = await loan_details.read()
         
         # Use ExcelFile for better memory management
         xlsx = pd.ExcelFile(io.BytesIO(content))
-        
-        # Read first row to get column names
-        df_columns = pd.read_excel(xlsx, nrows=0)
-        print(f"Original columns in file: {df_columns.columns.tolist()}")
         
         # Target column names (lowercase for matching)
         target_columns = {
@@ -64,9 +62,13 @@ async def process_loan_details(loan_details, portfolio_id, db):
             "deduction status": "deduction_status",
         }
         
-        # Get existing loan numbers from the database FOR THIS PORTFOLIO ONLY
-        existing_loans = db.query(Loan.loan_no, Loan.id).filter(Loan.portfolio_id == portfolio_id).all()
-        existing_loan_nos = {loan_no: loan_id for loan_no, loan_id in existing_loans if loan_no}
+        # Get existing loan numbers from the database using raw SQL for performance
+        existing_loans_query = text("""
+            SELECT loan_no, id FROM loans 
+            WHERE portfolio_id = :portfolio_id AND loan_no IS NOT NULL
+        """)
+        result = db.execute(existing_loans_query, {"portfolio_id": portfolio_id})
+        existing_loan_nos = {loan_no: loan_id for loan_no, loan_id in result if loan_no}
         
         print(f"Found {len(existing_loan_nos)} existing loan numbers in portfolio {portfolio_id}")
         
@@ -76,224 +78,137 @@ async def process_loan_details(loan_details, portfolio_id, db):
         rows_updated = 0
         inserted_count = 0
 
-        # Instead of batch processing, just read the entire file
-        print(f"Reading entire Excel file...")
-        df = pd.read_excel(xlsx, dtype=str)
+        # Define batch size for reading Excel
+        batch_size = 10000  # Increased batch size for better performance
         
-        # Show the shape to confirm how many rows were read
-        print(f"Read {df.shape[0]} rows and {df.shape[1]} columns")
+        # Process the file in batches to reduce memory usage
+        sheet_name = xlsx.sheet_names[0]  # Get first sheet
         
-        # Create a mapping of actual column names to our target column names
-        case_insensitive_mapping = {}
-        for col in df.columns:
-            # Ensure col is a string before calling lower()
-            if isinstance(col, str):
-                col_lower = col.lower().strip()
-                if col_lower in target_columns:
-                    case_insensitive_mapping[col] = target_columns[col_lower]
-            else:
-                # Handle non-string column names (like datetime objects)
-                col_str = str(col)
-                print(f"Warning: Non-string column name encountered: {col_str} of type {type(col)}")
-                
-        print(f"Using column mapping: {case_insensitive_mapping}")
+        # Get total number of rows in the sheet - use pandas to get row count
+        # Read just the first column to minimize memory usage
+        total_rows = len(pd.read_excel(xlsx, sheet_name=sheet_name, usecols=[0])) - 1  # Subtract header row
+        
+        for batch_start in range(0, total_rows, batch_size):
+            batch_end = min(batch_start + batch_size, total_rows)
+            print(f"Processing batch {batch_start}-{batch_end} of {total_rows} rows")
             
-        # Rename columns using our case-insensitive mapping
-        df.rename(columns=case_insensitive_mapping, inplace=True)
-
-        # Convert dates
-        if "loan_issue_date" in df.columns:
-            df["loan_issue_date"] = pd.to_datetime(df["loan_issue_date"], errors="coerce")
-
-        # Process date columns with mixed formats
-        for col in ["deduction_start_period", "submission_period", "maturity_period"]:
-            if col in df.columns:
-                # First, convert potential datetime objects to strings
-                df[col] = df[col].apply(lambda x: x.strftime("%b-%Y") if isinstance(x, datetime) else x)
+            # Skip header row for first batch, otherwise skip header + processed rows
+            skiprows = None if batch_start == 0 else 1 + batch_start
+            nrows = batch_size if batch_start == 0 else batch_end - batch_start
+            
+            # Read a batch of data
+            df = pd.read_excel(xlsx, dtype=str, skiprows=skiprows, nrows=nrows)
+            
+            # If we're at the end of the file and got no data, break
+            if df.empty:
+                break
                 
-                # Only process non-null values
-                mask = df[col].notna()
-                if mask.any():
-                    str_cols = df.loc[mask, col].astype(str)
-                    
-                    # Format without hyphen (e.g., "SEP2022")
-                    no_hyphen_mask = str_cols.str.len() == 7
-                    if no_hyphen_mask.any():
-                        temp = str_cols[no_hyphen_mask]
-                        month = temp.str[:3]
-                        year = temp.str[3:]
-                        full_year_mask = year.str.len() == 4
-                        year.loc[full_year_mask] = year.loc[full_year_mask].str[2:]
-                        str_cols.loc[no_hyphen_mask] = month + '-' + year
-                    
-                    # Update the original dataframe
-                    df.loc[mask, col] = str_cols
+            # Create a mapping of actual column names to our target column names
+            case_insensitive_mapping = {}
+            for col in df.columns:
+                # Ensure col is a string before calling lower()
+                if isinstance(col, str):
+                    col_lower = col.lower().strip()
+                    if col_lower in target_columns:
+                        case_insensitive_mapping[col] = target_columns[col_lower]
                 
-                # Parse dates
-                try:
-                    df[col] = pd.to_datetime(df[col], format="%b-%y", errors="coerce") + pd.offsets.MonthEnd(0)
-                except:
+            # Rename columns using our case-insensitive mapping
+            df.rename(columns=case_insensitive_mapping, inplace=True)
+
+            # Process date columns in a vectorized way
+            if "loan_issue_date" in df.columns:
+                df["loan_issue_date"] = pd.to_datetime(df["loan_issue_date"], errors="coerce")
+
+            # Process date columns with mixed formats - vectorized operations
+            for col in ["deduction_start_period", "submission_period", "maturity_period"]:
+                if col in df.columns:
+                    # Convert to datetime in a vectorized way
                     df[col] = pd.to_datetime(df[col], errors="coerce")
-                
-                # Handle NaT values
-                df[col] = df[col].where(pd.notna(df[col]), None)
+                    # Handle NaT values
+                    df[col] = df[col].where(pd.notna(df[col]), None)
 
-        # Convert boolean columns
-        if "paid" in df.columns:
-            bool_values = ["Yes", "TRUE", "True", "true", "1", "Y", "y"]
-            df["paid"] = np.isin(df["paid"].values, bool_values)
+            # Clean numeric columns - convert string values like " -   " to None or 0
+            numeric_columns = [
+                "loan_amount", "loan_term", "administrative_fees", "total_interest",
+                "total_collectible", "net_loan_amount", "monthly_installment",
+                "principal_due", "interest_due", "total_due", "principal_paid",
+                "interest_paid", "total_paid", "principal_paid2", "interest_paid2",
+                "total_paid2", "outstanding_loan_balance", "accumulated_arrears",
+                "ndia", "prevailing_posted_repayment", "prevailing_due_payment",
+                "current_missed_deduction", "admin_charge", "recovery_rate"
+            ]
             
-        if "cancelled" in df.columns:
+            for col in numeric_columns:
+                if col in df.columns:
+                    # First, strip whitespace
+                    if df[col].dtype == 'object':
+                        df[col] = df[col].astype(str).str.strip()
+                        # Replace dash-only or empty strings with NaN
+                        df[col] = df[col].replace([r'^\s*-\s*$', r'^\s*$', 'None', 'NaN', 'nan', '-'], np.nan, regex=True)
+                    # Convert to numeric, coercing errors to NaN
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+                    # Replace NaN with 0
+                    df[col] = df[col].fillna(0)
+
+            # Convert boolean columns in a vectorized way
             bool_values = ["Yes", "TRUE", "True", "true", "1", "Y", "y"]
-            df["cancelled"] = np.isin(df["cancelled"].values, bool_values)
-
-        # Initialize counters
-        rows_processed = 0
-        rows_skipped = 0
-        rows_updated = 0
-        inserted_count = 0
-
-        # Process rows in chunks for better performance
-        loans_to_add = []
-        loans_to_update = []
+            if "paid" in df.columns:
+                df["paid"] = np.isin(df["paid"].values, bool_values)
+                
+            if "cancelled" in df.columns:
+                df["cancelled"] = np.isin(df["cancelled"].values, bool_values)
+            
+            # Add portfolio_id to all records
+            df["portfolio_id"] = portfolio_id
+            
+            # Split into new and existing loans using vectorized operations
+            if "loan_no" in df.columns:
+                # Filter out rows with no loan_no
+                df = df[df["loan_no"].notna()]
+                
+                # Split into updates and inserts
+                mask_update = df["loan_no"].isin(existing_loan_nos.keys())
+                df_update = df[mask_update].copy()
+                df_insert = df[~mask_update].copy()
+                
+                # Add id column to updates
+                if not df_update.empty:
+                    df_update["id"] = df_update["loan_no"].map(existing_loan_nos)
+                
+                # Convert to records for database operations
+                loans_to_update = df_update.to_dict(orient="records") if not df_update.empty else []
+                
+                # For inserts, create Loan objects directly
+                loans_to_add = []
+                if not df_insert.empty:
+                    # Use a more efficient approach to create objects
+                    for record in df_insert.to_dict(orient="records"):
+                        loans_to_add.append(Loan(**record))
+                
+                # Update counters
+                rows_processed += len(df)
+                rows_skipped += len(df) - len(df_update) - len(df_insert)
+                rows_updated += len(df_update)
+                
+                # Perform bulk operations with larger batch sizes
+                if loans_to_add:
+                    # Use bulk_save_objects with a larger batch size
+                    db.bulk_save_objects(loans_to_add)
+                    inserted_count += len(loans_to_add)
+                
+                if loans_to_update:
+                    # Use bulk_update_mappings with a larger batch size
+                    db.bulk_update_mappings(Loan, loans_to_update)
+            
+            # Clean up to free memory
+            del df
+            if 'df_update' in locals(): del df_update
+            if 'df_insert' in locals(): del df_insert
+            if 'loans_to_add' in locals(): del loans_to_add
+            if 'loans_to_update' in locals(): del loans_to_update
         
-        # Track unique loan_no values to handle duplicates within file
-        seen_loan_nos_in_batch = set()
-        
-        # Process each row
-        for _, record in df.iterrows():
-            try:
-                # Convert Series to dict
-                record_dict = record.to_dict()
-                
-                loan_no = record_dict.get("loan_no")
-                
-                # Skip completely if loan_no is None or empty
-                if not loan_no:
-                    rows_skipped += 1
-                    print(f"Skipping record with no loan_no. Row data: {record_dict}")
-                    continue
-
-                # Replace NaT values with None for SQL compatibility
-                for date_col in ["loan_issue_date", "deduction_start_period", "submission_period", "maturity_period"]:
-                    if date_col in record_dict and (pd.isna(record_dict[date_col]) or record_dict[date_col] == 'NaT'):
-                        record_dict[date_col] = None
-
-                # Add portfolio_id to the record
-                record_dict["portfolio_id"] = portfolio_id
-                
-                # Check if this loan exists in THIS portfolio
-                if loan_no in existing_loan_nos:
-                    loan_id = existing_loan_nos[loan_no]
-                    record_dict["id"] = loan_id  # Include ID for update
-                    loans_to_update.append(record_dict)
-                    rows_updated += 1
-                else:
-                    # Add it even if it's a duplicate within this file
-                    if loan_no in seen_loan_nos_in_batch:
-                        print(f"Adding duplicate loan from file: {loan_no}")
-                    else:
-                        seen_loan_nos_in_batch.add(loan_no)
-                        
-                    # Create a new Loan object
-                    loans_to_add.append(Loan(**record_dict))
-
-                rows_processed += 1
-                
-                # Process in batches of 100 for better memory management
-                if len(loans_to_add) >= 100:
-                    try:
-                        db.bulk_save_objects(loans_to_add)
-                        db.flush()
-                        inserted_count += len(loans_to_add)
-                        loans_to_add = []  # Reset the list
-                    except Exception as e:
-                        db.rollback()
-                        print(f"Error during bulk save: {e}")
-                        # Individual inserts as fallback
-                        for loan in loans_to_add:
-                            try:
-                                db.add(loan)
-                                db.flush()
-                                inserted_count += 1
-                            except Exception as inner_e:
-                                db.rollback()
-                                print(f"Error inserting loan {getattr(loan, 'loan_no', 'unknown')}: {inner_e}")
-                                rows_skipped += 1
-                        loans_to_add = []  # Reset after processing
-                
-                if len(loans_to_update) >= 100:
-                    try:
-                        db.bulk_update_mappings(Loan, loans_to_update)
-                        db.flush()
-                        loans_to_update = []  # Reset the list
-                    except Exception as e:
-                        db.rollback()
-                        print(f"Error during bulk update: {e}")
-                        # Individual updates as fallback
-                        for loan_data in loans_to_update:
-                            try:
-                                loan_id = loan_data.pop("id")
-                                loan = db.query(Loan).filter(Loan.id == loan_id).first()
-                                if loan:
-                                    for key, value in loan_data.items():
-                                        setattr(loan, key, value)
-                                    db.flush()
-                            except Exception as inner_e:
-                                db.rollback()
-                                print(f"Error updating loan {loan_data.get('loan_no', 'unknown')}: {inner_e}")
-                                rows_skipped += 1
-                        loans_to_update = []  # Reset after processing
-                
-            except Exception as e:
-                rows_skipped += 1
-                print(f"Error processing loan: {e}")
-                continue
-
-        # Process any remaining loans
-        if loans_to_add:
-            try:
-                db.bulk_save_objects(loans_to_add)
-                db.flush()
-                inserted_count += len(loans_to_add)
-            except Exception as e:
-                db.rollback()
-                print(f"Error during final bulk save: {e}")
-                for loan in loans_to_add:
-                    try:
-                        db.add(loan)
-                        db.flush()
-                        inserted_count += 1
-                    except Exception as inner_e:
-                        db.rollback()
-                        print(f"Error inserting loan {getattr(loan, 'loan_no', 'unknown')}: {inner_e}")
-                        rows_skipped += 1
-        
-        if loans_to_update:
-            try:
-                db.bulk_update_mappings(Loan, loans_to_update)
-                db.flush()
-            except Exception as e:
-                db.rollback()
-                print(f"Error during final bulk update: {e}")
-                for loan_data in loans_to_update:
-                    try:
-                        loan_id = loan_data.pop("id")
-                        loan = db.query(Loan).filter(Loan.id == loan_id).first()
-                        if loan:
-                            for key, value in loan_data.items():
-                                setattr(loan, key, value)
-                            db.flush()
-                    except Exception as inner_e:
-                        db.rollback()
-                        print(f"Error updating loan {loan_data.get('loan_no', 'unknown')}: {inner_e}")
-                        rows_skipped += 1
-        
-        # Commit all changes at the end
-        db.commit()
-        
-        # Commit all changes at the end
-        db.commit()
+        # Flush all changes at once instead of multiple times
+        db.flush()
         
         return {
             "status": "success",
@@ -321,7 +236,7 @@ async def process_loan_guarantees(loan_guarantee_data, portfolio_id, db):
         df_columns = pd.read_excel(xlsx, nrows=0)
         print(f"Actual columns in file: {df_columns.columns.tolist()}")
         
-        # Create a case-insensitive mapping for columns
+        # Create a case-insensitive column mapping
         # We'll check various potential column names for guarantor and amount
         possible_guarantor_cols = ["guarantor name", "guarantor", "guarantor's name", "name", "guarantor_name"]
         possible_amount_cols = ["pledged amount", "amount", "guarantee amount", "pledged_amount", "guarantee_amount"]
@@ -472,16 +387,12 @@ async def process_loan_guarantees(loan_guarantee_data, portfolio_id, db):
         }
 
 async def process_client_data(client_data, portfolio_id, db):
-    """Process client data file using optimized bulk operations with improved memory efficiency."""
+    """Process client data file using high-performance optimizations for large datasets."""
     try:
         content = await client_data.read()
         
         # Use ExcelFile for better memory management
         xlsx = pd.ExcelFile(io.BytesIO(content))
-        
-        # Read first row to get column names
-        df_columns = pd.read_excel(xlsx, nrows=0)
-        print(f"Original columns in file: {df_columns.columns.tolist()}")
         
         # Create a case-insensitive column mapping
         target_columns = {
@@ -513,25 +424,25 @@ async def process_client_data(client_data, portfolio_id, db):
         rows_inserted = 0
         rows_skipped = 0
         
-        # Fetch existing employee IDs FOR THIS PORTFOLIO ONLY
-        existing_clients = (
-            db.query(Client.employee_id)
-            .filter(Client.portfolio_id == portfolio_id)
-            .all()
-        )
-        existing_clients_set = {c[0] for c in existing_clients}
+        # Fetch existing employee IDs using raw SQL for better performance
+        existing_clients_query = text("""
+            SELECT employee_id FROM clients 
+            WHERE portfolio_id = :portfolio_id AND employee_id IS NOT NULL
+        """)
+        result = db.execute(existing_clients_query, {"portfolio_id": portfolio_id})
+        existing_clients_set = {c[0] for c in result}
         
         print(f"Found {len(existing_clients_set)} existing clients in portfolio {portfolio_id}")
         
-        # Get number of rows in the file (minus header)
-        try:
-            total_rows = len(pd.read_excel(xlsx, usecols=[0]))
-        except:
-            # Fallback in case of errors
-            total_rows = 1000000  # Arbitrarily large number
+        # Get sheet information
+        sheet_name = xlsx.sheet_names[0]  # Get first sheet
         
-        # Define batch size for reading Excel
-        batch_size = 1000
+        # Get total number of rows in the sheet - use pandas to get row count
+        # Read just the first column to minimize memory usage
+        total_rows = len(pd.read_excel(xlsx, sheet_name=sheet_name, usecols=[0])) - 1  # Subtract header row
+        
+        # Define batch size for reading Excel - smaller batch size to avoid transaction issues
+        batch_size = 5000
         
         # Process the file in batches
         for batch_start in range(0, total_rows, batch_size):
@@ -540,12 +451,10 @@ async def process_client_data(client_data, portfolio_id, db):
             
             # Skip the header row on the first batch, otherwise skip header + processed rows
             skiprows = None if batch_start == 0 else 1 + batch_start
+            nrows = batch_size if batch_start == 0 else batch_end - batch_start
             
             # Read a batch of data
-            if batch_start == 0:
-                df = pd.read_excel(xlsx, dtype=str, nrows=batch_size)
-            else:
-                df = pd.read_excel(xlsx, dtype=str, skiprows=skiprows, nrows=batch_end - batch_start)
+            df = pd.read_excel(xlsx, dtype=str, skiprows=skiprows, nrows=nrows)
             
             # If we're at the end of the file and got no data, break
             if df.empty:
@@ -554,41 +463,36 @@ async def process_client_data(client_data, portfolio_id, db):
             # Create a mapping of actual column names to our target column names
             case_insensitive_mapping = {}
             for col in df.columns:
-                col_lower = col.lower().strip()
-                if col_lower in target_columns:
-                    case_insensitive_mapping[col] = target_columns[col_lower]
-            
-            if batch_start == 0:
-                # Report the mapping that will be used (first batch only)
-                print(f"Using column mapping: {case_insensitive_mapping}")
+                if isinstance(col, str):
+                    col_lower = col.lower().strip()
+                    if col_lower in target_columns:
+                        case_insensitive_mapping[col] = target_columns[col_lower]
             
             # Rename columns using our case-insensitive mapping
             df.rename(columns=case_insensitive_mapping, inplace=True)
 
-            # Convert date columns
+            # Convert date columns in a vectorized way and handle NaT values properly
             date_columns = ["date_of_birth", "employment_date"]
             for col in date_columns:
                 if col in df.columns:
+                    # Convert to datetime with coercion
                     df[col] = pd.to_datetime(df[col], errors="coerce")
+                    # Replace NaT values with None to avoid database errors
+                    df[col] = df[col].where(pd.notna(df[col]), None)
 
             # Convert employee_id to string (if it's numeric)
             if "employee_id" in df.columns:
                 df["employee_id"] = df["employee_id"].astype(str)
-
-            rows_processed += len(df)
-            
-            # Process in smaller batches to reduce memory pressure
-            sub_batch_size = 100
-            df_length = len(df)
-            
-            for sub_batch_start in range(0, df_length, sub_batch_size):
-                sub_batch_end = min(sub_batch_start + sub_batch_size, df_length)
-                sub_batch_df = df.iloc[sub_batch_start:sub_batch_end]
+                
+                # Remove rows with missing employee_id
+                df = df[df["employee_id"].notna()]
                 
                 # Filter new clients - only keep employees not in existing_clients_set
-                new_clients = sub_batch_df[~sub_batch_df["employee_id"].isin(existing_clients_set)].copy()
+                mask_new = ~df["employee_id"].isin(existing_clients_set)
+                new_clients = df[mask_new].copy()
                 
-                rows_skipped += len(sub_batch_df) - len(new_clients)
+                rows_processed += len(df)
+                rows_skipped += len(df) - len(new_clients)
                 
                 # Prepare new clients for bulk insert
                 if not new_clients.empty:
@@ -596,28 +500,39 @@ async def process_client_data(client_data, portfolio_id, db):
                     if "client_type" in new_clients.columns:
                         new_clients["client_type"].fillna("consumer", inplace=True)
                         
+                    # Add portfolio_id to all records
                     new_clients["portfolio_id"] = portfolio_id
-                    clients_to_add = new_clients.to_dict(orient="records")
                     
-                    # Insert in database
-                    db.bulk_insert_mappings(Client, clients_to_add)
-                    db.flush()
+                    # Use ORM bulk insert instead of direct SQL to avoid parameter limit issues
+                    # Create Client objects directly
+                    clients_to_add = []
+                    for _, row in new_clients.iterrows():
+                        # Filter out columns that aren't in the target model
+                        client_dict = {k: v for k, v in row.items() if k in target_columns.values() or k == "portfolio_id"}
+                        # Ensure date fields are properly handled
+                        for date_col in date_columns:
+                            if date_col in client_dict and pd.isna(client_dict[date_col]):
+                                client_dict[date_col] = None
+                        clients_to_add.append(Client(**client_dict))
+                    
+                    # Insert in smaller sub-batches to avoid transaction issues
+                    sub_batch_size = 1000
+                    for i in range(0, len(clients_to_add), sub_batch_size):
+                        sub_batch = clients_to_add[i:i+sub_batch_size]
+                        db.add_all(sub_batch)
+                        db.flush()
                     
                     # Update counter and existing_clients_set for future reference
                     rows_inserted += len(new_clients)
                     existing_clients_set.update(new_clients["employee_id"].tolist())
-                    
-                # Explicitly clean up to reduce memory usage
-                del sub_batch_df
-                if 'new_clients' in locals():
-                    del new_clients
             
-            # Explicitly clean up the DataFrame to free memory
+            # Clean up to free memory
             del df
+            if 'new_clients' in locals(): del new_clients
         
-        # Commit all changes at the end
+        # Commit all changes
         db.commit()
-
+        
         return {
             "status": "success",
             "rows_processed": rows_processed,
