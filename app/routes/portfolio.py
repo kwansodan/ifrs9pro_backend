@@ -880,6 +880,7 @@ async def ingest_portfolio_data(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
 
+    # Initialize results dictionary
     results = {}
 
     # Explicitly rollback any existing transaction to start fresh
@@ -891,25 +892,33 @@ async def ingest_portfolio_data(
         tasks = []
         file_types = []
         
+        # Add debug logging
+        logger.info(f"Starting portfolio ingestion for portfolio_id={portfolio_id}")
+        
         # Add tasks for each file that is provided
         if loan_details:
+            logger.info("Processing loan_details file")
             tasks.append(process_loan_details(loan_details, portfolio_id, db))
             file_types.append("loan_details")
             
         if client_data:
+            logger.info("Processing client_data file")
             tasks.append(process_client_data(client_data, portfolio_id, db))
             file_types.append("client_data")
             
         if loan_guarantee_data:
+            logger.info("Processing loan_guarantee_data file")
             tasks.append(process_loan_guarantees(loan_guarantee_data, portfolio_id, db))
             file_types.append("loan_guarantee_data")
             
         if loan_collateral_data:
+            logger.info("Processing loan_collateral_data file")
             tasks.append(process_collateral_data(loan_collateral_data, portfolio_id, db))
             file_types.append("loan_collateral_data")
         
         # Run all tasks concurrently and gather results
         if tasks:
+            logger.info(f"Executing {len(tasks)} tasks concurrently")
             # Execute all tasks concurrently
             file_results = await asyncio.gather(*tasks, return_exceptions=True)
             
@@ -921,17 +930,39 @@ async def ingest_portfolio_data(
                         logger.error(f"Error processing {file_type}: {str(result)}")
                         results[file_type] = {"status": "error", "message": str(result)}
                     else:
-                        results[file_type] = result
+                        logger.info(f"Successfully processed {file_type}")
+                        # Debug log the result type
+                        logger.info(f"Result type for {file_type}: {type(result)}")
+                        # Make sure result is a dictionary
+                        if isinstance(result, dict):
+                            results[file_type] = result
+                        else:
+                            logger.error(f"Unexpected result type for {file_type}: {type(result)}")
+                            results[file_type] = {"status": "error", "message": f"Unexpected result type: {type(result)}"}
         
         # Commit all successful file processing at once
         db.commit()
         
         # Only perform staging if at least one file was processed successfully
-        if any(result.get("status") == "success" for result in results.values() if isinstance(result, dict)):
+        has_success = False
+        has_error = False
+        
+        # Check results safely
+        for key, value in results.items():
+            if isinstance(value, dict) and value.get("status") == "success":
+                has_success = True
+            if isinstance(value, dict) and value.get("status") == "error":
+                has_error = True
+        
+        if has_success:
             # Use optimized staging functions
             staging_results = {}
             
-            # 1. Perform ECL staging with optimized implementation
+            # ULTRA-OPTIMIZED: Run both staging operations in parallel
+            staging_tasks = []
+            staging_types = []
+            
+            # 1. Prepare ECL staging task
             try:
                 # Create default ECL staging config
                 ecl_config = ECLStagingConfig(
@@ -940,27 +971,34 @@ async def ingest_portfolio_data(
                     stage_3={"days_range": "240+"}
                 )
                 
-                # Call the optimized staging function
-                ecl_staging = stage_loans_ecl_optimized(
+                # Create a new staging result entry
+                ecl_staging_result = StagingResult(
+                    portfolio_id=portfolio_id,
+                    staging_type="ecl",
+                    config=ecl_config.dict(),
+                    result_summary={
+                        "status": "processing",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                )
+                db.add(ecl_staging_result)
+                db.flush()
+                
+                # Add ECL staging task
+                staging_tasks.append(stage_loans_ecl_optimized(
                     portfolio_id=portfolio_id,
                     config=ecl_config,
                     db=db
-                )
-                
-                # Commit after ECL staging
-                db.commit()
-                
-                staging_results["ecl"] = ecl_staging
-                
+                ))
+                staging_types.append("ecl")
             except Exception as e:
-                db.rollback()
-                logger.error(f"Error during ECL staging: {str(e)}")
+                logger.error(f"Error preparing ECL staging: {str(e)}")
                 staging_results["ecl"] = {
                     "status": "error",
                     "error": str(e)
                 }
             
-            # 2. Perform local impairment staging with optimized implementation
+            # 2. Prepare local impairment staging task
             try:
                 # Create default local impairment config
                 local_config = LocalImpairmentConfig(
@@ -971,50 +1009,98 @@ async def ingest_portfolio_data(
                     loss={"days_range": "366+", "rate": 100}
                 )
                 
-                # Call the optimized staging function
-                local_staging = stage_loans_local_impairment_optimized(
+                # Create a new staging result entry
+                local_staging_result = StagingResult(
+                    portfolio_id=portfolio_id,
+                    staging_type="local_impairment",
+                    config=local_config.dict(),
+                    result_summary={
+                        "status": "processing",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                )
+                db.add(local_staging_result)
+                db.flush()
+                
+                # Add local impairment staging task
+                staging_tasks.append(stage_loans_local_impairment_optimized(
                     portfolio_id=portfolio_id,
                     config=local_config,
                     db=db
-                )
-                
-                # Commit after local impairment staging
-                db.commit()
-                
-                staging_results["local_impairment"] = local_staging
-                
+                ))
+                staging_types.append("local_impairment")
             except Exception as e:
-                db.rollback()
-                logger.error(f"Error during local impairment staging: {str(e)}")
+                logger.error(f"Error preparing local impairment staging: {str(e)}")
                 staging_results["local_impairment"] = {
                     "status": "error",
                     "error": str(e)
                 }
+            
+            # Commit the staging result entries
+            db.commit()
+            
+            # Run staging tasks concurrently if there are any
+            if staging_tasks:
+                # Execute all staging tasks concurrently
+                staging_results_list = await asyncio.gather(*staging_tasks, return_exceptions=True)
+                
+                # Map results to staging types
+                for i, result in enumerate(staging_results_list):
+                    if i < len(staging_types):
+                        staging_type = staging_types[i]
+                        if isinstance(result, Exception):
+                            logger.error(f"Error during {staging_type} staging: {str(result)}")
+                            staging_results[staging_type] = {
+                                "status": "error",
+                                "error": str(result)
+                            }
+                        else:
+                            # Make sure result is a dictionary
+                            if isinstance(result, dict):
+                                staging_results[staging_type] = result
+                            else:
+                                logger.error(f"Unexpected result type for {staging_type}: {type(result)}")
+                                staging_results[staging_type] = {
+                                    "status": "error", 
+                                    "error": f"Unexpected result type: {type(result)}"
+                                }
+                
+                # Commit after all staging operations
+                db.commit()
             
             # Add staging results to the response
             results["staging"] = staging_results
 
         # Create quality issues asynchronously without blocking the response
         try:
-            create_quality_issues_if_needed(portfolio_id, db)
+            create_quality_issues_if_needed(db, portfolio_id)
             db.commit()
         except Exception as e:
             logger.error(f"Error creating quality issues: {str(e)}")
             db.rollback()
 
-        return {
-            "portfolio_id": portfolio_id, 
-            "results": results, 
-            "status": "success" if not any(result.get("status") == "error" for result in results.values() if isinstance(result, dict)) else "partial_success"
+        # Prepare the final response
+        response = {
+            "portfolio_id": portfolio_id,
+            "results": results,
+            "status": "success" if not has_error else "partial_success"
         }
+        
+        # Log the response structure
+        logger.info(f"Response structure: {response}")
+        
+        return response
 
     except Exception as e:
         # Rollback in case of a general error
         db.rollback()
+        import traceback
+        error_traceback = traceback.format_exc()
         logger.error(f"General error during ingestion: {str(e)}")
+        logger.error(f"Traceback: {error_traceback}")
         return {
             "portfolio_id": portfolio_id,
-            "results": {"error": str(e)},
+            "results": {"error": str(e), "traceback": error_traceback},
             "status": "error",
         }
     
@@ -1464,7 +1550,6 @@ def stage_loans_ecl(
     db.commit()
     
     return StagingResponse(loans=staged_loans)
-
 
 @router.post("/{portfolio_id}/stage-loans-local", response_model=StagingResponse)
 def stage_loans_local_impairment(
@@ -1999,7 +2084,7 @@ def calculate_local_provision(
 
 
 # Fixed optimized ECL staging implementation
-def stage_loans_ecl_optimized(portfolio_id: int, config: ECLStagingConfig, db: Session):
+async def stage_loans_ecl_optimized(portfolio_id: int, config: ECLStagingConfig, db: Session):
     """
     Highly optimized implementation of ECL staging using direct SQL for large datasets.
     """
@@ -2107,7 +2192,7 @@ def stage_loans_ecl_optimized(portfolio_id: int, config: ECLStagingConfig, db: S
         return {"status": "error", "error": str(e)}
 
 # Optimized local impairment staging implementation
-def stage_loans_local_impairment_optimized(portfolio_id: int, config: LocalImpairmentConfig, db: Session):
+async def stage_loans_local_impairment_optimized(portfolio_id: int, config: LocalImpairmentConfig, db: Session):
     """
     Highly optimized implementation of local impairment staging using direct SQL for large datasets.
     """
