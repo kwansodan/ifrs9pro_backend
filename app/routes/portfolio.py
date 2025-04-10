@@ -91,12 +91,10 @@ from app.schemas import (
 )
 from app.auth.utils import get_current_active_user
 from app.utils.quality_checks import create_quality_issues_if_needed
-from app.utils.processors import (
-    process_loan_details,
-    process_collateral_data,
-    process_loan_guarantees,
-    process_client_data,
-)
+from app.utils.background_processors import process_loan_details_with_progress as process_loan_details, process_client_data_with_progress as process_client_data
+from app.utils.background_ingestion import start_background_ingestion
+from app.utils.staging import parse_days_range
+import os
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/portfolios", tags=["portfolios"])
@@ -177,22 +175,19 @@ def get_portfolios(
             CalculationResult.calculation_type == "local_impairment"
         ).limit(1).count() > 0
 
-    
-    # Check if portfolio has quality issues at all
-    has_issues = db.query(QualityIssue).filter(
-        QualityIssue.portfolio_id == portfolio.id
-    ).first() is not None
-
-    # Only check approval status if there are issues
-    has_all_issues_approved = None
-    if has_issues:
-        has_open_issues = db.query(QualityIssue).filter(
-            QualityIssue.portfolio_id == portfolio.id,
-            QualityIssue.status != "approved"
+        # Check if portfolio has quality issues at all
+        has_issues = db.query(QualityIssue).filter(
+            QualityIssue.portfolio_id == portfolio.id
         ).first() is not None
-        has_all_issues_approved = not has_open_issues
-    
 
+        # Only check approval status if there are issues
+        has_all_issues_approved = None
+        if has_issues:
+            has_open_issues = db.query(QualityIssue).filter(
+                QualityIssue.portfolio_id == portfolio.id,
+                QualityIssue.status != "approved"
+            ).first() is not None
+            has_all_issues_approved = not has_open_issues
         
         # Convert to PortfolioResponse and set flags
         portfolio_dict = portfolio.__dict__.copy()
@@ -214,14 +209,12 @@ def get_portfolios(
 @router.get("/{portfolio_id}", response_model=PortfolioWithSummaryResponse)
 def get_portfolio(
     portfolio_id: int,
-    include_quality_issues: bool = False,
-    include_report_history: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
     Retrieve a specific portfolio by ID including overview, customer summary, quality checks,
-    latest staging and calculation results, and optionally report history.
+    latest staging and calculation results, and report history.
     """
     # First, fetch just the portfolio metadata (without joins)
     portfolio = (
@@ -319,25 +312,21 @@ def get_portfolio(
         open_issues=quality_counts["open_issues"],
     )
     
-    # Only fetch quality issues if requested
-    quality_issues = []
-    if include_quality_issues:
-        quality_issues = (
-            db.query(QualityIssue)
-            .filter(QualityIssue.portfolio_id == portfolio_id)
-            .order_by(QualityIssue.severity.desc(), QualityIssue.created_at.desc())
-            .all()
-        )
+    # Fetch quality issues
+    quality_issues = (
+        db.query(QualityIssue)
+        .filter(QualityIssue.portfolio_id == portfolio_id)
+        .order_by(QualityIssue.severity.desc(), QualityIssue.created_at.desc())
+        .all()
+    )
 
-    # Only fetch report history if requested
-    report_history = []
-    if include_report_history:
-        report_history = (
-            db.query(Report)
-            .filter(Report.portfolio_id == portfolio_id)
-            .order_by(Report.created_at.desc())
-            .all()
-        )
+    # Fetch report history
+    report_history = (
+        db.query(Report)
+        .filter(Report.portfolio_id == portfolio_id)
+        .order_by(Report.created_at.desc())
+        .all()
+    )
 
     # OPTIMIZATION: Use separate queries for staging and calculation results
     # Get latest staging results
@@ -683,8 +672,6 @@ def get_portfolio(
 def update_portfolio(
     portfolio_id: int,
     portfolio_update: PortfolioUpdate,
-    include_quality_issues: bool = False,
-    include_report_history: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -753,10 +740,11 @@ def update_portfolio(
                 
                 # Only run the staging calculation if there's loan data
                 if has_data:
-                    ecl_staging = stage_loans_ecl_optimized(
+                    ecl_staging = stage_loans_ecl(
                         portfolio_id=portfolio_id,
                         config=ecl_staging_config,
-                        db=db
+                        db=db,
+                        current_user=current_user
                     )
                     logger.info(f"ECL staging completed for portfolio {portfolio_id}")
                 else:
@@ -784,10 +772,11 @@ def update_portfolio(
                 
                 # Only run the staging calculation if there's loan data
                 if has_data:
-                    local_staging = stage_loans_local_impairment_optimized(
+                    local_staging = stage_loans_local_impairment(
                         portfolio_id=portfolio_id,
                         config=local_impairment_config,
-                        db=db
+                        db=db,
+                        current_user=current_user
                     )
                     logger.info(f"Local impairment staging completed for portfolio {portfolio_id}")
                 else:
@@ -799,8 +788,6 @@ def update_portfolio(
         # Use the optimized get_portfolio function to return the complete portfolio data
         return get_portfolio(
             portfolio_id=portfolio_id, 
-            include_quality_issues=include_quality_issues,
-            include_report_history=include_report_history,
             db=db, 
             current_user=current_user
         )
@@ -840,7 +827,7 @@ def delete_portfolio(
     return None
 
 
-@router.post("/{portfolio_id}/ingest", status_code=status.HTTP_200_OK)
+@router.post("/{portfolio_id}/ingest", status_code=status.HTTP_202_ACCEPTED)
 async def ingest_portfolio_data(
     portfolio_id: int,
     loan_details: Optional[UploadFile] = File(None),
@@ -852,258 +839,52 @@ async def ingest_portfolio_data(
 ):
     """
     Ingest Excel files containing portfolio data and automatically perform both types of staging.
-
+    
     Accepts up to three Excel files:
     - loan_details: Primary loan information
     - client_data: Customer information
     - loan_guarantee_data: Information about loan guarantees
     - loan_collateral_data: Information about loan collateral
     
-    The function automatically performs both ECL and local impairment staging after successful ingestion.
+    The function starts a background task for processing and returns a task ID
+    that can be used to track progress via WebSocket.
     """
-    # Check if at least one file is provided
-    if not loan_details or not client_data:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="You must provide files for loan_details and client_data",
-        )
-
-    # Verify portfolio exists and belongs to current user
-    portfolio = (
-        db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
-        .first()
-    )
-
+    # Check if portfolio exists and belongs to user
+    portfolio = db.query(Portfolio).filter(
+        Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id
+    ).first()
+    
     if not portfolio:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Portfolio with ID {portfolio_id} not found or does not belong to you",
         )
-
-    # Initialize results dictionary
-    results = {}
-
-    # Explicitly rollback any existing transaction to start fresh
-    db.rollback()
     
-    # Process files in parallel using asyncio tasks
-    try:
-        # Create tasks for processing files
-        tasks = []
-        file_types = []
-        
-        # Add debug logging
-        logger.info(f"Starting portfolio ingestion for portfolio_id={portfolio_id}")
-        
-        # Add tasks for each file that is provided
-        if loan_details:
-            logger.info("Processing loan_details file")
-            tasks.append(process_loan_details(loan_details, portfolio_id, db))
-            file_types.append("loan_details")
-            
-        if client_data:
-            logger.info("Processing client_data file")
-            tasks.append(process_client_data(client_data, portfolio_id, db))
-            file_types.append("client_data")
-            
-        if loan_guarantee_data:
-            logger.info("Processing loan_guarantee_data file")
-            tasks.append(process_loan_guarantees(loan_guarantee_data, portfolio_id, db))
-            file_types.append("loan_guarantee_data")
-            
-        if loan_collateral_data:
-            logger.info("Processing loan_collateral_data file")
-            tasks.append(process_collateral_data(loan_collateral_data, portfolio_id, db))
-            file_types.append("loan_collateral_data")
-        
-        # Run all tasks concurrently and gather results
-        if tasks:
-            logger.info(f"Executing {len(tasks)} tasks concurrently")
-            # Execute all tasks concurrently
-            file_results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            # Map results to file types
-            for i, result in enumerate(file_results):
-                if i < len(file_types):
-                    file_type = file_types[i]
-                    if isinstance(result, Exception):
-                        logger.error(f"Error processing {file_type}: {str(result)}")
-                        results[file_type] = {"status": "error", "message": str(result)}
-                    else:
-                        logger.info(f"Successfully processed {file_type}")
-                        # Debug log the result type
-                        logger.info(f"Result type for {file_type}: {type(result)}")
-                        # Make sure result is a dictionary
-                        if isinstance(result, dict):
-                            results[file_type] = result
-                        else:
-                            logger.error(f"Unexpected result type for {file_type}: {type(result)}")
-                            results[file_type] = {"status": "error", "message": f"Unexpected result type: {type(result)}"}
-        
-        # Commit all successful file processing at once
-        db.commit()
-        
-        # Only perform staging if at least one file was processed successfully
-        has_success = False
-        has_error = False
-        
-        # Check results safely
-        for key, value in results.items():
-            if isinstance(value, dict) and value.get("status") == "success":
-                has_success = True
-            if isinstance(value, dict) and value.get("status") == "error":
-                has_error = True
-        
-        if has_success:
-            # Use optimized staging functions
-            staging_results = {}
-            
-            # ULTRA-OPTIMIZED: Run both staging operations in parallel
-            staging_tasks = []
-            staging_types = []
-            
-            # 1. Prepare ECL staging task
-            try:
-                # Create default ECL staging config
-                ecl_config = ECLStagingConfig(
-                    stage_1={"days_range": "0-120"},
-                    stage_2={"days_range": "120-240"},
-                    stage_3={"days_range": "240+"}
-                )
-                
-                # Create a new staging result entry
-                ecl_staging_result = StagingResult(
-                    portfolio_id=portfolio_id,
-                    staging_type="ecl",
-                    config=ecl_config.dict(),
-                    result_summary={
-                        "status": "processing",
-                        "timestamp": datetime.now().isoformat()
-                    }
-                )
-                db.add(ecl_staging_result)
-                db.flush()
-                
-                # Add ECL staging task
-                staging_tasks.append(stage_loans_ecl_optimized(
-                    portfolio_id=portfolio_id,
-                    config=ecl_config,
-                    db=db
-                ))
-                staging_types.append("ecl")
-            except Exception as e:
-                logger.error(f"Error preparing ECL staging: {str(e)}")
-                staging_results["ecl"] = {
-                    "status": "error",
-                    "error": str(e)
-                }
-            
-            # 2. Prepare local impairment staging task
-            try:
-                # Create default local impairment config
-                local_config = LocalImpairmentConfig(
-                    current={"days_range": "0-30", "rate": 1},
-                    olem={"days_range": "31-90", "rate": 5},
-                    substandard={"days_range": "91-180", "rate": 25},
-                    doubtful={"days_range": "181-365", "rate": 50},
-                    loss={"days_range": "366+", "rate": 100}
-                )
-                
-                # Create a new staging result entry
-                local_staging_result = StagingResult(
-                    portfolio_id=portfolio_id,
-                    staging_type="local_impairment",
-                    config=local_config.dict(),
-                    result_summary={
-                        "status": "processing",
-                        "timestamp": datetime.now().isoformat()
-                    }
-                )
-                db.add(local_staging_result)
-                db.flush()
-                
-                # Add local impairment staging task
-                staging_tasks.append(stage_loans_local_impairment_optimized(
-                    portfolio_id=portfolio_id,
-                    config=local_config,
-                    db=db
-                ))
-                staging_types.append("local_impairment")
-            except Exception as e:
-                logger.error(f"Error preparing local impairment staging: {str(e)}")
-                staging_results["local_impairment"] = {
-                    "status": "error",
-                    "error": str(e)
-                }
-            
-            # Commit the staging result entries
-            db.commit()
-            
-            # Run staging tasks concurrently if there are any
-            if staging_tasks:
-                # Execute all staging tasks concurrently
-                staging_results_list = await asyncio.gather(*staging_tasks, return_exceptions=True)
-                
-                # Map results to staging types
-                for i, result in enumerate(staging_results_list):
-                    if i < len(staging_types):
-                        staging_type = staging_types[i]
-                        if isinstance(result, Exception):
-                            logger.error(f"Error during {staging_type} staging: {str(result)}")
-                            staging_results[staging_type] = {
-                                "status": "error",
-                                "error": str(result)
-                            }
-                        else:
-                            # Make sure result is a dictionary
-                            if isinstance(result, dict):
-                                staging_results[staging_type] = result
-                            else:
-                                logger.error(f"Unexpected result type for {staging_type}: {type(result)}")
-                                staging_results[staging_type] = {
-                                    "status": "error", 
-                                    "error": f"Unexpected result type: {type(result)}"
-                                }
-                
-                # Commit after all staging operations
-                db.commit()
-            
-            # Add staging results to the response
-            results["staging"] = staging_results
-
-        # Create quality issues asynchronously without blocking the response
-        try:
-            create_quality_issues_if_needed(db, portfolio_id)
-            db.commit()
-        except Exception as e:
-            logger.error(f"Error creating quality issues: {str(e)}")
-            db.rollback()
-
-        # Prepare the final response
-        response = {
-            "portfolio_id": portfolio_id,
-            "results": results,
-            "status": "success" if not has_error else "partial_success"
-        }
-        
-        # Log the response structure
-        logger.info(f"Response structure: {response}")
-        
-        return response
-
-    except Exception as e:
-        # Rollback in case of a general error
-        db.rollback()
-        import traceback
-        error_traceback = traceback.format_exc()
-        logger.error(f"General error during ingestion: {str(e)}")
-        logger.error(f"Traceback: {error_traceback}")
-        return {
-            "portfolio_id": portfolio_id,
-            "results": {"error": str(e), "traceback": error_traceback},
-            "status": "error",
-        }
+    # Check if at least one file is provided
+    if not any([loan_details, client_data, loan_guarantee_data, loan_collateral_data]):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one file must be provided",
+        )
     
+    # Start background processing
+    task_id = await start_background_ingestion(
+        portfolio_id=portfolio_id,
+        loan_details=loan_details,
+        client_data=client_data,
+        loan_guarantee_data=loan_guarantee_data,
+        loan_collateral_data=loan_collateral_data,
+        db=db
+    )
+    
+    # Return task ID for tracking progress
+    return {
+        "task_id": task_id,
+        "message": "Data ingestion started in the background",
+        "status": "processing",
+        "websocket_url": f"ws://{os.getenv('BASE_URL', 'localhost:8000')}/ws/tasks/{task_id}"
+    }
+
 @router.get("/{portfolio_id}/calculate-ecl", response_model=ECLSummary)
 def calculate_ecl_provision(
     portfolio_id: int,
