@@ -882,7 +882,7 @@ async def ingest_portfolio_data(
         "task_id": task_id,
         "message": "Data ingestion started in the background",
         "status": "processing",
-        "websocket_url": f"ws://{os.getenv('BASE_URL', 'localhost:8000')}/ws/tasks/{task_id}"
+        "websocket_url": f"wss://{os.getenv('BASE_URL', 'localhost:8000').replace('https://', '')}/ws/tasks/{task_id}"
     }
 
 @router.get("/{portfolio_id}/calculate-ecl", response_model=ECLSummary)
