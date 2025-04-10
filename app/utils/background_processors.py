@@ -16,13 +16,16 @@ from app.models import (
     Client,
     Security
 )
-from app.utils.background_tasks import task_manager
+from app.utils.background_tasks import get_task_manager
 
 logger = logging.getLogger(__name__)
 
 async def process_loan_details_with_progress(task_id: str, file_content: bytes, portfolio_id: int, db):
     """Function to process loan details with progress reporting."""
     try:
+        # Get task manager
+        task_manager = get_task_manager()
+        
         # Update task status
         task_manager.update_task(task_id, status_message="Reading loan details file")
         
@@ -382,6 +385,9 @@ async def process_loan_details_with_progress(task_id: str, file_content: bytes, 
 async def process_client_data_with_progress(task_id: str, file_content: bytes, portfolio_id: int, db):
     """Process client data file with progress reporting."""
     try:
+        # Get task manager
+        task_manager = get_task_manager()
+        
         # Update task status
         task_manager.update_task(task_id, status_message="Reading client data file")
         

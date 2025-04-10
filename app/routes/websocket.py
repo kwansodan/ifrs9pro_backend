@@ -3,7 +3,7 @@ from typing import Dict, List, Any, Optional
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.auth.utils import verify_token, get_current_active_user_ws, get_token_from_query_param
-from app.utils.background_tasks import task_manager
+from app.utils.background_tasks import get_task_manager
 from app.models import User
 from jose import jwt, JWTError
 import json
@@ -69,6 +69,7 @@ async def websocket_task_progress(
         await websocket.accept()
         
         # Check if the task exists
+        task_manager = get_task_manager()
         task = task_manager.get_task(task_id)
         if not task:
             await websocket.send_json({"error": "Task not found"})

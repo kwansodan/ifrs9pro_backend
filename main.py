@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from sqlalchemy.orm import Session
 from app.database import get_db, init_db
+# Import all routers including websocket
 from app.routes import auth, portfolio, admin, reports, dashboard, user as user_router, quality_issues, websocket
 from app.models import User, UserRole
 from app.auth.utils import get_password_hash
@@ -203,16 +204,9 @@ async def startup_event():
     """
     Application startup event handler
     - First responds to health checks
-    - Then initializes database and creates admin user in background
     """
     logger.info("Application startup event triggered")
     
-    # Schedule these tasks to run in the background
-    # This allows the health check to respond immediately
-    loop = asyncio.get_event_loop()
-    loop.create_task(init_db_async())
-    loop.create_task(create_admin_user_async())
-
 if __name__ == "__main__":
     import uvicorn
 

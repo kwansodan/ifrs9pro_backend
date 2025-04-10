@@ -5,7 +5,6 @@ import uuid
 import time
 from datetime import datetime
 import json
-import threading
 
 logger = logging.getLogger(__name__)
 
@@ -240,14 +239,25 @@ class BackgroundTaskManager:
         for task_id in to_remove:
             del self.tasks[task_id]
 
-# Create a global instance of the task manager
-task_manager = BackgroundTaskManager()
+# Use a lazy-loaded singleton pattern instead
+_task_manager_instance = None
+
+def get_task_manager():
+    """
+    Get or create the task manager instance.
+    Uses lazy initialization to avoid startup overhead.
+    """
+    global _task_manager_instance
+    if _task_manager_instance is None:
+        _task_manager_instance = BackgroundTaskManager()
+    return _task_manager_instance
 
 # Function to run a task in the background
 async def run_background_task(task_id: str, func, *args, **kwargs):
     """
     Run a function as a background task with progress tracking.
     """
+    task_manager = get_task_manager()
     try:
         task_manager.mark_as_started(task_id)
         result = await func(task_id=task_id, *args, **kwargs)

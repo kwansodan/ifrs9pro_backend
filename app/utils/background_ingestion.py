@@ -7,7 +7,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
-from app.utils.background_tasks import task_manager, run_background_task
+from app.utils.background_tasks import get_task_manager, run_background_task
 from app.utils.background_processors import (
     process_loan_details_with_progress,
     process_client_data_with_progress
@@ -68,7 +68,7 @@ async def process_portfolio_ingestion(
         
         # If no files provided, return early
         if not files_to_process:
-            task_manager.update_task(
+            get_task_manager().update_task(
                 task_id, 
                 status_message="No files provided for ingestion",
                 progress=100
@@ -79,7 +79,7 @@ async def process_portfolio_ingestion(
         for i, (file_type, file_content, filename) in enumerate(files_to_process):
             # Update overall task progress
             overall_progress = (i / len(files_to_process)) * 70
-            task_manager.update_progress(
+            get_task_manager().update_progress(
                 task_id,
                 progress=overall_progress,
                 status_message=f"Processing {file_type} ({i+1}/{len(files_to_process)})"
@@ -87,12 +87,12 @@ async def process_portfolio_ingestion(
             
             # Process based on file type
             if file_type == "loan_details":
-                task_manager.update_task(task_id, status_message=f"Processing loan details from {filename}")
+                get_task_manager().update_task(task_id, status_message=f"Processing loan details from {filename}")
                 file_result = await process_loan_details_with_progress(task_id, file_content, portfolio_id, db)
                 results["details"]["loan_details"] = file_result
                 
             elif file_type == "client_data":
-                task_manager.update_task(task_id, status_message=f"Processing client data from {filename}")
+                get_task_manager().update_task(task_id, status_message=f"Processing client data from {filename}")
                 file_result = await process_client_data_with_progress(task_id, file_content, portfolio_id, db)
                 results["details"]["client_data"] = file_result
                 
@@ -101,14 +101,14 @@ async def process_portfolio_ingestion(
             
             # Update overall progress
             overall_progress = ((i + 1) / len(files_to_process)) * 70
-            task_manager.update_progress(
+            get_task_manager().update_progress(
                 task_id,
                 progress=overall_progress,
                 status_message=f"Completed processing {file_type}"
             )
         
         # Now perform staging operations - 20% of progress
-        task_manager.update_progress(
+        get_task_manager().update_progress(
             task_id,
             progress=75,
             status_message="Starting loan staging operations"
@@ -118,7 +118,7 @@ async def process_portfolio_ingestion(
         
         # 1. Perform ECL staging
         try:
-            task_manager.update_progress(
+            get_task_manager().update_progress(
                 task_id,
                 progress=80,
                 status_message="Performing ECL staging"
@@ -162,7 +162,7 @@ async def process_portfolio_ingestion(
         
         # 2. Perform local impairment staging
         try:
-            task_manager.update_progress(
+            get_task_manager().update_progress(
                 task_id,
                 progress=85,
                 status_message="Performing local impairment staging"
@@ -214,7 +214,7 @@ async def process_portfolio_ingestion(
         
         # Finally, create quality issues - 10% of progress
         try:
-            task_manager.update_progress(
+            get_task_manager().update_progress(
                 task_id,
                 progress=90,
                 status_message="Checking data quality"
@@ -234,7 +234,7 @@ async def process_portfolio_ingestion(
             db.rollback()
         
         # Complete the task
-        task_manager.update_progress(
+        get_task_manager().update_progress(
             task_id,
             progress=100,
             status_message=f"Completed processing {results['files_processed']} files"
@@ -244,7 +244,7 @@ async def process_portfolio_ingestion(
         
     except Exception as e:
         logger.error(f"Error in portfolio ingestion: {str(e)}")
-        task_manager.update_task(
+        get_task_manager().update_task(
             task_id,
             status="error",
             error=str(e),
@@ -267,7 +267,7 @@ async def start_background_ingestion(
     Returns the task ID that can be used to track progress.
     """
     # Create a new task
-    task_id = task_manager.create_task(
+    task_id = get_task_manager().create_task(
         task_type="portfolio_ingestion",
         description=f"Ingesting data for portfolio {portfolio_id}"
     )
@@ -333,7 +333,7 @@ async def start_background_ingestion(
                 
         except Exception as e:
             logger.exception(f"Error in background task thread: {e}")
-            task_manager.mark_as_failed(task_id, str(e))
+            get_task_manager().mark_as_failed(task_id, str(e))
         finally:
             # Close the database session
             thread_db.close()
