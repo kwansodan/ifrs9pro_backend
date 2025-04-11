@@ -15,8 +15,6 @@ from app.config import settings
 
 
 ALGORITHM = "HS256"
-settings.ACCESS_TOKEN_EXPIRE_MINUTES = 30
-settings.INVITATION_EXPIRE_HOURS = 24
 
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
