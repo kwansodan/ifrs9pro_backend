@@ -79,15 +79,15 @@ async def stage_loans_ecl_orm(portfolio_id: int, config: ECLStagingConfig, db: S
                 "status": "completed",
                 "timestamp": timestamp.isoformat(),
                 "total_loans": len(loans),
-                "stage_1": {
+                "Stage 1": {
                     "num_loans": stage_counts.get(1, 0),
                     "outstanding_loan_balance": stage_balances.get(1, 0)
                 },
-                "stage_2": {
+                "Stage 2": {
                     "num_loans": stage_counts.get(2, 0),
                     "outstanding_loan_balance": stage_balances.get(2, 0)
                 },
-                "stage_3": {
+                "Stage 3": {
                     "num_loans": stage_counts.get(3, 0),
                     "outstanding_loan_balance": stage_balances.get(3, 0)
                 },
@@ -106,15 +106,15 @@ async def stage_loans_ecl_orm(portfolio_id: int, config: ECLStagingConfig, db: S
         return {
             "status": "success",
             "total_loans": len(loans),
-            "stage_1": {
+            "Stage 1": {
                 "num_loans": stage_counts.get(1, 0),
                 "outstanding_loan_balance": stage_balances.get(1, 0)
             },
-            "stage_2": {
+            "Stage 2": {
                 "num_loans": stage_counts.get(2, 0),
                 "outstanding_loan_balance": stage_balances.get(2, 0)
             },
-            "stage_3": {
+            "Stage 3": {
                 "num_loans": stage_counts.get(3, 0),
                 "outstanding_loan_balance": stage_balances.get(3, 0)
             }
@@ -154,18 +154,18 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, config: LocalImpai
         
         # Initialize counters
         category_counts = {
-            "current": 0,
-            "olem": 0,
-            "substandard": 0,
-            "doubtful": 0,
-            "loss": 0
+            "Current": 0,
+            "OLEM": 0,
+            "Substandard": 0,
+            "Doubtful": 0,
+            "Loss": 0
         }
         category_balances = {
-            "current": 0.0,
-            "olem": 0.0,
-            "substandard": 0.0,
-            "doubtful": 0.0,
-            "loss": 0.0
+            "Current": 0.0,
+            "OLEM": 0.0,
+            "Substandard": 0.0,
+            "Doubtful": 0.0,
+            "Loss": 0.0
         }
         timestamp = datetime.now()
         
@@ -179,25 +179,25 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, config: LocalImpai
             
             # Determine the impairment category based on ndia
             if ndia >= loss_min:
-                loan.impairment_category = "loss"
-                category_counts["loss"] += 1
-                category_balances["loss"] += balance
+                loan.impairment_category = "Loss"
+                category_counts["Loss"] += 1
+                category_balances["Loss"] += balance
             elif ndia >= doubtful_min and (doubtful_max is None or ndia < doubtful_max):
-                loan.impairment_category = "doubtful"
-                category_counts["doubtful"] += 1
-                category_balances["doubtful"] += balance
+                loan.impairment_category = "Doubtful"
+                category_counts["Doubtful"] += 1
+                category_balances["Doubtful"] += balance
             elif ndia >= substandard_min and (substandard_max is None or ndia < substandard_max):
-                loan.impairment_category = "substandard"
-                category_counts["substandard"] += 1
-                category_balances["substandard"] += balance
+                loan.impairment_category = "Substandard"
+                category_counts["Substandard"] += 1
+                category_balances["Substandard"] += balance
             elif ndia >= olem_min and (olem_max is None or ndia < olem_max):
-                loan.impairment_category = "olem"
-                category_counts["olem"] += 1
-                category_balances["olem"] += balance
+                loan.impairment_category = "OLEM"
+                category_counts["OLEM"] += 1
+                category_balances["OLEM"] += balance
             else:
-                loan.impairment_category = "current"
-                category_counts["current"] += 1
-                category_balances["current"] += balance
+                loan.impairment_category = "Current"
+                category_counts["Current"] += 1
+                category_balances["Current"] += balance
             
             # Update the last staged timestamp
             loan.last_staged_at = timestamp
@@ -219,25 +219,25 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, config: LocalImpai
                 "status": "completed",
                 "timestamp": timestamp.isoformat(),
                 "total_loans": len(loans),
-                "current": {
-                    "num_loans": category_counts["current"],
-                    "outstanding_loan_balance": category_balances["current"]
+                "Current": {
+                    "num_loans": category_counts["Current"],
+                    "outstanding_loan_balance": category_balances["Current"]
                 },
-                "olem": {
-                    "num_loans": category_counts["olem"],
-                    "outstanding_loan_balance": category_balances["olem"]
+                "OLEM": {
+                    "num_loans": category_counts["OLEM"],
+                    "outstanding_loan_balance": category_balances["OLEM"]
                 },
-                "substandard": {
-                    "num_loans": category_counts["substandard"],
-                    "outstanding_loan_balance": category_balances["substandard"]
+                "Substandard": {
+                    "num_loans": category_counts["Substandard"],
+                    "outstanding_loan_balance": category_balances["Substandard"]
                 },
-                "doubtful": {
-                    "num_loans": category_counts["doubtful"],
-                    "outstanding_loan_balance": category_balances["doubtful"]
+                "Doubtful": {
+                    "num_loans": category_counts["Doubtful"],
+                    "outstanding_loan_balance": category_balances["Doubtful"]
                 },
-                "loss": {
-                    "num_loans": category_counts["loss"],
-                    "outstanding_loan_balance": category_balances["loss"]
+                "Loss": {
+                    "num_loans": category_counts["Loss"],
+                    "outstanding_loan_balance": category_balances["Loss"]
                 },
                 "config": {
                     "current": {"days_range": current_range},
@@ -256,25 +256,25 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, config: LocalImpai
         return {
             "status": "success",
             "total_loans": len(loans),
-            "current": {
-                "num_loans": category_counts["current"],
-                "outstanding_loan_balance": category_balances["current"]
+            "Current": {
+                "num_loans": category_counts["Current"],
+                "outstanding_loan_balance": category_balances["Current"]
             },
-            "olem": {
-                "num_loans": category_counts["olem"],
-                "outstanding_loan_balance": category_balances["olem"]
+            "OLEM": {
+                "num_loans": category_counts["OLEM"],
+                "outstanding_loan_balance": category_balances["OLEM"]
             },
-            "substandard": {
-                "num_loans": category_counts["substandard"],
-                "outstanding_loan_balance": category_balances["substandard"]
+            "Substandard": {
+                "num_loans": category_counts["Substandard"],
+                "outstanding_loan_balance": category_balances["Substandard"]
             },
-            "doubtful": {
-                "num_loans": category_counts["doubtful"],
-                "outstanding_loan_balance": category_balances["doubtful"]
+            "Doubtful": {
+                "num_loans": category_counts["Doubtful"],
+                "outstanding_loan_balance": category_balances["Doubtful"]
             },
-            "loss": {
-                "num_loans": category_counts["loss"],
-                "outstanding_loan_balance": category_balances["loss"]
+            "Loss": {
+                "num_loans": category_counts["Loss"],
+                "outstanding_loan_balance": category_balances["Loss"]
             }
         }
     

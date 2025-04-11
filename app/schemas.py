@@ -374,23 +374,35 @@ class CategoryData(BaseModel):
 
 class ECLCalculationDetail(BaseModel):
     """Detailed ECL calculation results for a portfolio"""
-    stage_1: Optional[CategoryData] = None
-    stage_2: Optional[CategoryData] = None
-    stage_3: Optional[CategoryData] = None
+    stage_1: Optional[CategoryData] = Field(None, alias="Stage 1")
+    stage_2: Optional[CategoryData] = Field(None, alias="Stage 2")
+    stage_3: Optional[CategoryData] = Field(None, alias="Stage 3")
     total_provision: float = 0
     provision_percentage: float = 0
     calculation_date: Optional[datetime] = None
+    
+    class Config:
+        allow_population_by_field_name = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None
+        }
 
 class LocalImpairmentDetail(BaseModel):
     """Detailed local impairment calculation results for a portfolio"""
-    current: Optional[CategoryData] = None
-    olem: Optional[CategoryData] = None
-    substandard: Optional[CategoryData] = None
-    doubtful: Optional[CategoryData] = None
-    loss: Optional[CategoryData] = None
+    current: Optional[CategoryData] = Field(None, alias="Current")
+    olem: Optional[CategoryData] = Field(None, alias="OLEM")
+    substandard: Optional[CategoryData] = Field(None, alias="Substandard")
+    doubtful: Optional[CategoryData] = Field(None, alias="Doubtful")
+    loss: Optional[CategoryData] = Field(None, alias="Loss")
     total_provision: float = 0
     provision_percentage: float = 0
     calculation_date: Optional[datetime] = None
+    
+    class Config:
+        allow_population_by_field_name = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None
+        }
 
 class CalculationSummary(BaseModel):
     """Summary of calculation results for a portfolio"""
@@ -540,32 +552,45 @@ class StagingSummaryStageData(BaseModel):
     outstanding_loan_balance: float
 
 
-class LocalImpairmentStagingSummary(BaseModel):
-    """Summary of local impairment staging results"""
-    current: Optional[StagingSummaryStageData] = None
-    olem: Optional[StagingSummaryStageData] = None
-    substandard: Optional[StagingSummaryStageData] = None
-    doubtful: Optional[StagingSummaryStageData] = None
-    loss: Optional[StagingSummaryStageData] = None
-    staging_date: Optional[datetime] = None
-    config: Optional[LocalImpairmentConfig] = None
-
-
-# ==================== ECL MODELS ====================
-
 class ECLStagingConfig(BaseModel):
     stage_1: DaysRangeConfig
     stage_2: DaysRangeConfig
     stage_3: DaysRangeConfig
 
+
 class ECLStagingSummary(BaseModel):
     """Summary of ECL staging results"""
-    stage_1: Optional[StagingSummaryStageData] = None
-    stage_2: Optional[StagingSummaryStageData] = None
-    stage_3: Optional[StagingSummaryStageData] = None
+    stage_1: Optional[StagingSummaryStageData] = Field(None, alias="Stage 1")
+    stage_2: Optional[StagingSummaryStageData] = Field(None, alias="Stage 2")
+    stage_3: Optional[StagingSummaryStageData] = Field(None, alias="Stage 3")
     config: Optional[ECLStagingConfig] = None
     staging_date: Optional[datetime] = None
+    
+    class Config:
+        allow_population_by_field_name = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None
+        }
 
+
+class LocalImpairmentStagingSummary(BaseModel):
+    """Summary of local impairment staging results"""
+    current: Optional[StagingSummaryStageData] = Field(None, alias="Current")
+    olem: Optional[StagingSummaryStageData] = Field(None, alias="OLEM")
+    substandard: Optional[StagingSummaryStageData] = Field(None, alias="Substandard")
+    doubtful: Optional[StagingSummaryStageData] = Field(None, alias="Doubtful")
+    loss: Optional[StagingSummaryStageData] = Field(None, alias="Loss")
+    staging_date: Optional[datetime] = None
+    config: Optional[LocalImpairmentConfig] = None
+    
+    class Config:
+        allow_population_by_field_name = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None
+        }
+
+
+# ==================== ECL MODELS ====================
 
 class ECLCategoryData(BaseModel):
     """Data for each delinquency category row in the ECL grid"""
@@ -597,10 +622,13 @@ class ECLSummaryMetrics(BaseModel):
 class ECLSummary(BaseModel):
     portfolio_id: int
     calculation_date: str
-    stage_1: CategoryData
-    stage_2: CategoryData
-    stage_3: CategoryData
+    Stage_1: CategoryData = Field(alias="Stage 1")
+    Stage_2: CategoryData = Field(alias="Stage 2")
+    Stage_3: CategoryData = Field(alias="Stage 3")
     summary_metrics: ECLSummaryMetrics
+    
+    class Config:
+        allow_population_by_field_name = True
 
 
 # ==================== CALCULATOR MODELS ====================
@@ -658,11 +686,14 @@ class CalculatorResponse(BaseModel):
 
 class StagingSummary(BaseModel):
     """Combined staging summary for both ECL and local impairment"""
-    ecl: Optional[ECLStagingSummary] = None
-    local_impairment: Optional[LocalImpairmentStagingSummary] = None
+    ecl: Optional[ECLStagingSummary] = Field(None, alias="ecl")
+    local_impairment: Optional[LocalImpairmentStagingSummary] = Field(None, alias="local_impairment")
+    
+    class Config:
+        allow_population_by_field_name = True
+        
 
-
-
+        
 # Help schemas
 
 class HelpStatusEnum(str, Enum):
@@ -842,4 +873,3 @@ class PortfolioWithSummaryResponse(BaseModel):
 
     class Config:
         from_attributes = True
-
