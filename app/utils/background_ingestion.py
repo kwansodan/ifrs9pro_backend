@@ -12,7 +12,16 @@ from app.utils.background_processors import (
     process_loan_details_with_progress,
     process_client_data_with_progress
 )
-from app.models import Portfolio, StagingResult
+from app.models import (
+    Portfolio,
+    Loan,
+    Client,
+    Guarantee,
+    Security,
+    QualityIssue,
+    StagingResult,
+    CalculationResult
+)
 from app.database import SessionLocal
 from app.schemas import ECLStagingConfig, LocalImpairmentConfig, DaysRangeConfig
 from app.utils.staging import stage_loans_ecl_orm, stage_loans_local_impairment_orm
@@ -48,6 +57,54 @@ async def process_portfolio_ingestion(
             "details": {}
         }
         
+        # Check for and delete existing data for this portfolio
+        try:
+            get_task_manager().update_progress(
+                task_id,
+                progress=5,
+                status_message=f"Checking for existing data in portfolio {portfolio_id}"
+            )
+            
+            # Delete existing data in reverse order of dependencies
+            # First delete staging results and calculation results
+            staging_count = db.query(StagingResult).filter(StagingResult.portfolio_id == portfolio_id).delete()
+            calculation_count = db.query(CalculationResult).filter(CalculationResult.portfolio_id == portfolio_id).delete()
+            
+            # Delete quality issues
+            quality_count = db.query(QualityIssue).filter(QualityIssue.portfolio_id == portfolio_id).delete()
+            
+            # Delete loans, guarantees, and clients
+            loan_count = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).delete()
+            guarantee_count = db.query(Guarantee).filter(Guarantee.portfolio_id == portfolio_id).delete()
+            client_count = db.query(Client).filter(Client.portfolio_id == portfolio_id).delete()
+            
+            # Commit the deletions
+            db.commit()
+            
+            get_task_manager().update_progress(
+                task_id,
+                progress=10,
+                status_message=f"Cleared existing data: {loan_count} loans, {client_count} clients, {guarantee_count} guarantees"
+            )
+            
+            # Add deletion results to the overall results
+            results["data_cleared"] = {
+                "loans": loan_count,
+                "clients": client_count,
+                "guarantees": guarantee_count,
+                "quality_issues": quality_count,
+                "staging_results": staging_count,
+                "calculation_results": calculation_count
+            }
+            
+        except Exception as e:
+            logger.error(f"Error clearing existing data: {str(e)}")
+            db.rollback()
+            results["data_cleared"] = {
+                "status": "error",
+                "error": str(e)
+            }
+        
         # Count total files to process
         files_to_process = []
         if loan_details_content:
@@ -78,7 +135,7 @@ async def process_portfolio_ingestion(
         # Process each file in sequence - this takes 70% of the progress
         for i, (file_type, file_content, filename) in enumerate(files_to_process):
             # Update overall task progress
-            overall_progress = (i / len(files_to_process)) * 70
+            overall_progress = (i / len(files_to_process)) * 70 + 10
             get_task_manager().update_progress(
                 task_id,
                 progress=overall_progress,
@@ -100,7 +157,7 @@ async def process_portfolio_ingestion(
             results["files_processed"] += 1
             
             # Update overall progress
-            overall_progress = ((i + 1) / len(files_to_process)) * 70
+            overall_progress = ((i + 1) / len(files_to_process)) * 70 + 10
             get_task_manager().update_progress(
                 task_id,
                 progress=overall_progress,
@@ -110,7 +167,7 @@ async def process_portfolio_ingestion(
         # Now perform staging operations - 20% of progress
         get_task_manager().update_progress(
             task_id,
-            progress=75,
+            progress=80,
             status_message="Starting loan staging operations"
         )
         
@@ -120,7 +177,7 @@ async def process_portfolio_ingestion(
         try:
             get_task_manager().update_progress(
                 task_id,
-                progress=80,
+                progress=85,
                 status_message="Performing ECL staging"
             )
             
@@ -164,7 +221,7 @@ async def process_portfolio_ingestion(
         try:
             get_task_manager().update_progress(
                 task_id,
-                progress=85,
+                progress=90,
                 status_message="Performing local impairment staging"
             )
             
@@ -212,11 +269,264 @@ async def process_portfolio_ingestion(
         # Commit after all staging operations
         db.commit()
         
-        # Finally, create quality issues - 10% of progress
+        # Perform calculations - 10% of progress
+        calculation_results = {}
+        
+        # 1. Perform ECL calculation
         try:
             get_task_manager().update_progress(
                 task_id,
-                progress=90,
+                progress=92,
+                status_message="Calculating ECL provisions"
+            )
+            
+            # Get the portfolio's ECL calculation config
+            portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
+            
+            # Create a simplified ECL calculation result
+            # Get the latest ECL staging result
+            latest_ecl_staging = (
+                db.query(StagingResult)
+                .filter(
+                    StagingResult.portfolio_id == portfolio_id,
+                    StagingResult.staging_type == "ecl"
+                )
+                .order_by(StagingResult.created_at.desc())
+                .first()
+            )
+            
+            if latest_ecl_staging and latest_ecl_staging.result_summary:
+                # Extract stage data
+                ecl_result = latest_ecl_staging.result_summary
+                
+                # Get stage data
+                stage_1_data = ecl_result.get("stage_1", {})
+                stage_2_data = ecl_result.get("stage_2", {})
+                stage_3_data = ecl_result.get("stage_3", {})
+                
+                # Get loan counts and balances
+                stage_1_count = stage_1_data.get("num_loans", 0)
+                stage_1_balance = stage_1_data.get("outstanding_loan_balance", 0)
+                stage_2_count = stage_2_data.get("num_loans", 0)
+                stage_2_balance = stage_2_data.get("outstanding_loan_balance", 0)
+                stage_3_count = stage_3_data.get("num_loans", 0)
+                stage_3_balance = stage_3_data.get("outstanding_loan_balance", 0)
+                
+                # Calculate provisions (simplified)
+                stage_1_provision_rate = 0.01  # 1% for stage 1
+                stage_2_provision_rate = 0.05  # 5% for stage 2
+                stage_3_provision_rate = 0.15  # 15% for stage 3
+                
+                stage_1_provision = stage_1_balance * stage_1_provision_rate
+                stage_2_provision = stage_2_balance * stage_2_provision_rate
+                stage_3_provision = stage_3_balance * stage_3_provision_rate
+                
+                # Calculate total provision and percentage
+                total_provision = stage_1_provision + stage_2_provision + stage_3_provision
+                total_balance = stage_1_balance + stage_2_balance + stage_3_balance
+                provision_percentage = (total_provision / total_balance) * 100 if total_balance > 0 else 0
+                
+                # Round all values to 2 decimal places
+                stage_1_provision = round(stage_1_provision, 2)
+                stage_2_provision = round(stage_2_provision, 2)
+                stage_3_provision = round(stage_3_provision, 2)
+                total_provision = round(total_provision, 2)
+                provision_percentage = round(provision_percentage, 2)
+                
+                # Create calculation result
+                ecl_calculation_result = CalculationResult(
+                    portfolio_id=portfolio_id,
+                    calculation_type="ecl",
+                    total_provision=total_provision,
+                    provision_percentage=provision_percentage,
+                    reporting_date=datetime.now().date(),
+                    config={
+                        "stage_1": {"provision_rate": stage_1_provision_rate},
+                        "stage_2": {"provision_rate": stage_2_provision_rate},
+                        "stage_3": {"provision_rate": stage_3_provision_rate}
+                    },
+                    result_summary={
+                        "status": "completed",
+                        "timestamp": datetime.now().isoformat(),
+                        "stage1_count": stage_1_count,
+                        "stage1_total": round(stage_1_balance, 2),
+                        "stage1_provision": stage_1_provision,
+                        "stage1_provision_rate": round(stage_1_provision_rate * 100, 2),
+                        "stage2_count": stage_2_count,
+                        "stage2_total": round(stage_2_balance, 2),
+                        "stage2_provision": stage_2_provision,
+                        "stage2_provision_rate": round(stage_2_provision_rate * 100, 2),
+                        "stage3_count": stage_3_count,
+                        "stage3_total": round(stage_3_balance, 2),
+                        "stage3_provision": stage_3_provision,
+                        "stage3_provision_rate": round(stage_3_provision_rate * 100, 2),
+                        "total_provision": total_provision,
+                        "provision_percentage": provision_percentage
+                    }
+                )
+                db.add(ecl_calculation_result)
+                db.commit()
+                
+                calculation_results["ecl"] = {
+                    "status": "success",
+                    "total_provision": total_provision,
+                    "provision_percentage": provision_percentage
+                }
+            else:
+                calculation_results["ecl"] = {
+                    "status": "error",
+                    "error": "No ECL staging results found"
+                }
+            
+        except Exception as e:
+            logger.error(f"Error during ECL calculation: {str(e)}")
+            calculation_results["ecl"] = {
+                "status": "error",
+                "error": str(e)
+            }
+        
+        # 2. Perform local impairment calculation
+        try:
+            get_task_manager().update_progress(
+                task_id,
+                progress=94,
+                status_message="Calculating local impairment provisions"
+            )
+            
+            # Get the latest local impairment staging result
+            latest_local_staging = (
+                db.query(StagingResult)
+                .filter(
+                    StagingResult.portfolio_id == portfolio_id,
+                    StagingResult.staging_type == "local_impairment"
+                )
+                .order_by(StagingResult.created_at.desc())
+                .first()
+            )
+            
+            if latest_local_staging and latest_local_staging.result_summary:
+                # Extract category data
+                local_result = latest_local_staging.result_summary
+                
+                # Get category data
+                current_data = local_result.get("current", {})
+                olem_data = local_result.get("olem", {})
+                substandard_data = local_result.get("substandard", {})
+                doubtful_data = local_result.get("doubtful", {})
+                loss_data = local_result.get("loss", {})
+                
+                # Get loan counts and balances
+                current_count = current_data.get("num_loans", 0)
+                current_balance = current_data.get("outstanding_loan_balance", 0)
+                olem_count = olem_data.get("num_loans", 0)
+                olem_balance = olem_data.get("outstanding_loan_balance", 0)
+                substandard_count = substandard_data.get("num_loans", 0)
+                substandard_balance = substandard_data.get("outstanding_loan_balance", 0)
+                doubtful_count = doubtful_data.get("num_loans", 0)
+                doubtful_balance = doubtful_data.get("outstanding_loan_balance", 0)
+                loss_count = loss_data.get("num_loans", 0)
+                loss_balance = loss_data.get("outstanding_loan_balance", 0)
+                
+                # Calculate provisions (simplified)
+                current_provision_rate = 0.01  # 1% for current
+                olem_provision_rate = 0.05  # 5% for OLEM
+                substandard_provision_rate = 0.20  # 20% for substandard
+                doubtful_provision_rate = 0.50  # 50% for doubtful
+                loss_provision_rate = 1.00  # 100% for loss
+                
+                current_provision = current_balance * current_provision_rate
+                olem_provision = olem_balance * olem_provision_rate
+                substandard_provision = substandard_balance * substandard_provision_rate
+                doubtful_provision = doubtful_balance * doubtful_provision_rate
+                loss_provision = loss_balance * loss_provision_rate
+                
+                # Calculate total provision and percentage
+                total_provision = current_provision + olem_provision + substandard_provision + doubtful_provision + loss_provision
+                total_balance = current_balance + olem_balance + substandard_balance + doubtful_balance + loss_balance
+                provision_percentage = (total_provision / total_balance) * 100 if total_balance > 0 else 0
+                
+                # Round all values to 2 decimal places
+                current_provision = round(current_provision, 2)
+                olem_provision = round(olem_provision, 2)
+                substandard_provision = round(substandard_provision, 2)
+                doubtful_provision = round(doubtful_provision, 2)
+                loss_provision = round(loss_provision, 2)
+                total_provision = round(total_provision, 2)
+                provision_percentage = round(provision_percentage, 2)
+                
+                # Create calculation result
+                local_calculation_result = CalculationResult(
+                    portfolio_id=portfolio_id,
+                    calculation_type="local_impairment",
+                    total_provision=total_provision,
+                    provision_percentage=provision_percentage,
+                    reporting_date=datetime.now().date(),
+                    config={
+                        "current": {"provision_rate": current_provision_rate},
+                        "olem": {"provision_rate": olem_provision_rate},
+                        "substandard": {"provision_rate": substandard_provision_rate},
+                        "doubtful": {"provision_rate": doubtful_provision_rate},
+                        "loss": {"provision_rate": loss_provision_rate}
+                    },
+                    result_summary={
+                        "status": "completed",
+                        "timestamp": datetime.now().isoformat(),
+                        "current_count": current_count,
+                        "current_total": round(current_balance, 2),
+                        "current_provision": current_provision,
+                        "current_provision_rate": round(current_provision_rate * 100, 2),
+                        "olem_count": olem_count,
+                        "olem_total": round(olem_balance, 2),
+                        "olem_provision": olem_provision,
+                        "olem_provision_rate": round(olem_provision_rate * 100, 2),
+                        "substandard_count": substandard_count,
+                        "substandard_total": round(substandard_balance, 2),
+                        "substandard_provision": substandard_provision,
+                        "substandard_provision_rate": round(substandard_provision_rate * 100, 2),
+                        "doubtful_count": doubtful_count,
+                        "doubtful_total": round(doubtful_balance, 2),
+                        "doubtful_provision": doubtful_provision,
+                        "doubtful_provision_rate": round(doubtful_provision_rate * 100, 2),
+                        "loss_count": loss_count,
+                        "loss_total": round(loss_balance, 2),
+                        "loss_provision": loss_provision,
+                        "loss_provision_rate": round(loss_provision_rate * 100, 2),
+                        "total_provision": total_provision,
+                        "provision_percentage": provision_percentage
+                    }
+                )
+                db.add(local_calculation_result)
+                db.commit()
+                
+                calculation_results["local_impairment"] = {
+                    "status": "success",
+                    "total_provision": total_provision,
+                    "provision_percentage": provision_percentage
+                }
+            else:
+                calculation_results["local_impairment"] = {
+                    "status": "error",
+                    "error": "No local impairment staging results found"
+                }
+            
+        except Exception as e:
+            logger.error(f"Error during local impairment calculation: {str(e)}")
+            calculation_results["local_impairment"] = {
+                "status": "error",
+                "error": str(e)
+            }
+        
+        # Add calculation results to the overall results
+        results["calculation"] = calculation_results
+        
+        # Commit after all calculation operations
+        db.commit()
+        
+        # Finally, create quality issues - 5% of progress
+        try:
+            get_task_manager().update_progress(
+                task_id,
+                progress=95,
                 status_message="Checking data quality"
             )
             

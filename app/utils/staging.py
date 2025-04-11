@@ -34,6 +34,7 @@ async def stage_loans_ecl_orm(portfolio_id: int, config: ECLStagingConfig, db: S
         
         # Initialize counters
         stage_counts = {1: 0, 2: 0, 3: 0}
+        stage_balances = {1: 0.0, 2: 0.0, 3: 0.0}
         timestamp = datetime.now()
         
         # Process each loan
@@ -41,19 +42,28 @@ async def stage_loans_ecl_orm(portfolio_id: int, config: ECLStagingConfig, db: S
             # Get the ndia value (days past due)
             ndia = loan.ndia if loan.ndia is not None else 0
             
+            # Get outstanding loan balance
+            balance = float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance is not None else 0.0
+            
             # Determine the stage based on ndia
             if ndia >= stage_3_min:
                 loan.ecl_stage = 3
                 stage_counts[3] += 1
+                stage_balances[3] += balance
             elif ndia >= stage_2_min and (stage_2_max is None or ndia < stage_2_max):
                 loan.ecl_stage = 2
                 stage_counts[2] += 1
+                stage_balances[2] += balance
             else:
                 loan.ecl_stage = 1
                 stage_counts[1] += 1
+                stage_balances[1] += balance
             
             # Update the last staged timestamp
             loan.last_staged_at = timestamp
+        
+        # Round balances to 2 decimal places
+        stage_balances = {k: round(v, 2) for k, v in stage_balances.items()}
         
         # Commit all changes
         db.commit()
@@ -69,13 +79,22 @@ async def stage_loans_ecl_orm(portfolio_id: int, config: ECLStagingConfig, db: S
                 "status": "completed",
                 "timestamp": timestamp.isoformat(),
                 "total_loans": len(loans),
-                "stage_1": stage_counts.get(1, 0),
-                "stage_2": stage_counts.get(2, 0),
-                "stage_3": stage_counts.get(3, 0),
+                "stage_1": {
+                    "num_loans": stage_counts.get(1, 0),
+                    "outstanding_loan_balance": stage_balances.get(1, 0)
+                },
+                "stage_2": {
+                    "num_loans": stage_counts.get(2, 0),
+                    "outstanding_loan_balance": stage_balances.get(2, 0)
+                },
+                "stage_3": {
+                    "num_loans": stage_counts.get(3, 0),
+                    "outstanding_loan_balance": stage_balances.get(3, 0)
+                },
                 "config": {
-                    "stage_1": stage_1_range,
-                    "stage_2": stage_2_range,
-                    "stage_3": stage_3_range
+                    "stage_1": {"days_range": stage_1_range},
+                    "stage_2": {"days_range": stage_2_range},
+                    "stage_3": {"days_range": stage_3_range}
                 }
             }
             db.add(staging_result)
@@ -87,9 +106,18 @@ async def stage_loans_ecl_orm(portfolio_id: int, config: ECLStagingConfig, db: S
         return {
             "status": "success",
             "total_loans": len(loans),
-            "stage_1": stage_counts.get(1, 0),
-            "stage_2": stage_counts.get(2, 0),
-            "stage_3": stage_counts.get(3, 0)
+            "stage_1": {
+                "num_loans": stage_counts.get(1, 0),
+                "outstanding_loan_balance": stage_balances.get(1, 0)
+            },
+            "stage_2": {
+                "num_loans": stage_counts.get(2, 0),
+                "outstanding_loan_balance": stage_balances.get(2, 0)
+            },
+            "stage_3": {
+                "num_loans": stage_counts.get(3, 0),
+                "outstanding_loan_balance": stage_balances.get(3, 0)
+            }
         }
     
     except Exception as e:
@@ -132,6 +160,13 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, config: LocalImpai
             "doubtful": 0,
             "loss": 0
         }
+        category_balances = {
+            "current": 0.0,
+            "olem": 0.0,
+            "substandard": 0.0,
+            "doubtful": 0.0,
+            "loss": 0.0
+        }
         timestamp = datetime.now()
         
         # Process each loan
@@ -139,25 +174,36 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, config: LocalImpai
             # Get the ndia value (days past due)
             ndia = loan.ndia if loan.ndia is not None else 0
             
+            # Get outstanding loan balance
+            balance = float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance is not None else 0.0
+            
             # Determine the impairment category based on ndia
             if ndia >= loss_min:
                 loan.impairment_category = "loss"
                 category_counts["loss"] += 1
+                category_balances["loss"] += balance
             elif ndia >= doubtful_min and (doubtful_max is None or ndia < doubtful_max):
                 loan.impairment_category = "doubtful"
                 category_counts["doubtful"] += 1
+                category_balances["doubtful"] += balance
             elif ndia >= substandard_min and (substandard_max is None or ndia < substandard_max):
                 loan.impairment_category = "substandard"
                 category_counts["substandard"] += 1
+                category_balances["substandard"] += balance
             elif ndia >= olem_min and (olem_max is None or ndia < olem_max):
                 loan.impairment_category = "olem"
                 category_counts["olem"] += 1
+                category_balances["olem"] += balance
             else:
                 loan.impairment_category = "current"
                 category_counts["current"] += 1
+                category_balances["current"] += balance
             
             # Update the last staged timestamp
             loan.last_staged_at = timestamp
+        
+        # Round balances to 2 decimal places
+        category_balances = {k: round(v, 2) for k, v in category_balances.items()}
         
         # Commit all changes
         db.commit()
@@ -173,17 +219,32 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, config: LocalImpai
                 "status": "completed",
                 "timestamp": timestamp.isoformat(),
                 "total_loans": len(loans),
-                "current": category_counts["current"],
-                "olem": category_counts["olem"],
-                "substandard": category_counts["substandard"],
-                "doubtful": category_counts["doubtful"],
-                "loss": category_counts["loss"],
+                "current": {
+                    "num_loans": category_counts["current"],
+                    "outstanding_loan_balance": category_balances["current"]
+                },
+                "olem": {
+                    "num_loans": category_counts["olem"],
+                    "outstanding_loan_balance": category_balances["olem"]
+                },
+                "substandard": {
+                    "num_loans": category_counts["substandard"],
+                    "outstanding_loan_balance": category_balances["substandard"]
+                },
+                "doubtful": {
+                    "num_loans": category_counts["doubtful"],
+                    "outstanding_loan_balance": category_balances["doubtful"]
+                },
+                "loss": {
+                    "num_loans": category_counts["loss"],
+                    "outstanding_loan_balance": category_balances["loss"]
+                },
                 "config": {
-                    "current": current_range,
-                    "olem": olem_range,
-                    "substandard": substandard_range,
-                    "doubtful": doubtful_range,
-                    "loss": loss_range
+                    "current": {"days_range": current_range},
+                    "olem": {"days_range": olem_range},
+                    "substandard": {"days_range": substandard_range},
+                    "doubtful": {"days_range": doubtful_range},
+                    "loss": {"days_range": loss_range}
                 }
             }
             db.add(staging_result)
@@ -195,11 +256,26 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, config: LocalImpai
         return {
             "status": "success",
             "total_loans": len(loans),
-            "current": category_counts["current"],
-            "olem": category_counts["olem"],
-            "substandard": category_counts["substandard"],
-            "doubtful": category_counts["doubtful"],
-            "loss": category_counts["loss"]
+            "current": {
+                "num_loans": category_counts["current"],
+                "outstanding_loan_balance": category_balances["current"]
+            },
+            "olem": {
+                "num_loans": category_counts["olem"],
+                "outstanding_loan_balance": category_balances["olem"]
+            },
+            "substandard": {
+                "num_loans": category_counts["substandard"],
+                "outstanding_loan_balance": category_balances["substandard"]
+            },
+            "doubtful": {
+                "num_loans": category_counts["doubtful"],
+                "outstanding_loan_balance": category_balances["doubtful"]
+            },
+            "loss": {
+                "num_loans": category_counts["loss"],
+                "outstanding_loan_balance": category_balances["loss"]
+            }
         }
     
     except Exception as e:

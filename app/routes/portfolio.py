@@ -411,6 +411,11 @@ def get_portfolio(
                     "num_loans": len(stage_3_loans),
                     "outstanding_loan_balance": stage_3_balance
                 }
+            # Check if we have the new nested format
+            elif "stage_1" in ecl_result and isinstance(ecl_result["stage_1"], dict):
+                stage_1_data = ecl_result["stage_1"]
+                stage_2_data = ecl_result["stage_2"]
+                stage_3_data = ecl_result["stage_3"]
             else:
                 # Use summary statistics if available
                 stage_1_data = {
@@ -488,6 +493,13 @@ def get_portfolio(
                     "num_loans": stage_counts["Loss"],
                     "outstanding_loan_balance": stage_totals["Loss"]
                 }
+            # Check if we have the new nested format
+            elif "current" in local_result and isinstance(local_result["current"], dict):
+                current_data = local_result["current"]
+                olem_data = local_result["olem"]
+                substandard_data = local_result["substandard"]
+                doubtful_data = local_result["doubtful"]
+                loss_data = local_result["loss"]
             else:
                 # Use summary statistics if available
                 current_data = {
