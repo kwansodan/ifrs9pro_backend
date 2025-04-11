@@ -2,10 +2,12 @@ from datetime import date
 from typing import Dict, Any, List
 from io import BytesIO
 import pandas as pd
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.chart import BarChart, Reference, PieChart
+import os
+from datetime import datetime
 
 
 def create_report_excel(
@@ -26,7 +28,13 @@ def create_report_excel(
     Returns:
         BytesIO: Excel file as a bytes buffer
     """
-    wb = Workbook()
+    wb = load_excel_template(report_type)
+    
+    # Handle specialized report types
+    if report_type.lower() == "ecl_detailed_report":
+        return populate_ecl_detailed_report(wb, portfolio_name, report_date, report_data)
+    
+    # Default handling for other report types
     ws = wb.active
     ws.title = "Summary"
     
@@ -223,3 +231,137 @@ def create_report_excel(
     wb.save(buffer)
     buffer.seek(0)
     return buffer
+
+
+def populate_ecl_detailed_report(
+    wb: Workbook, 
+    portfolio_name: str, 
+    report_date: date, 
+    report_data: Dict[str, Any]
+) -> BytesIO:
+    """
+    Populate the ECL detailed report template with data.
+    
+    Args:
+        wb: Excel workbook (template)
+        portfolio_name: Name of the portfolio
+        report_date: Date of the report
+        report_data: Data for the report
+        
+    Returns:
+        BytesIO: Excel file as bytes buffer
+    """
+    # Get the main worksheet (should be the first one)
+    ws = wb.active
+    
+    # Define number formats
+    currency_format = '#,##0.00'
+    percentage_format = '0.00%'
+    
+    # Populate header information
+    ws['B3'] = report_date
+    ws['B4'] = report_data.get('report_run_date', datetime.now().strftime("%Y-%m-%d"))
+    ws['B6'] = report_data.get('description', f"ECL Detailed Report for {portfolio_name}")
+    
+    # Populate summary values
+    ws['B9'] = report_data.get('total_ead', 0)
+    ws['B9'].number_format = currency_format
+    
+    ws['B10'] = report_data.get('total_lgd', 0)
+    ws['B10'].number_format = currency_format
+    
+    ws['B12'] = report_data.get('total_ecl', 0)
+    ws['B12'].number_format = currency_format
+    
+    # Populate loan details starting from row 15
+    loans = report_data.get('loans', [])
+    start_row = 15
+    
+    for i, loan in enumerate(loans, start=0):
+        row = start_row + i
+        
+        # Map loan data to columns
+        ws.cell(row=row, column=1, value=loan.get('loan_id', ''))
+        ws.cell(row=row, column=2, value=loan.get('employee_id', ''))
+        ws.cell(row=row, column=3, value=loan.get('employee_name', ''))
+        
+        # Loan value with currency format
+        ws.cell(row=row, column=4, value=loan.get('loan_value', 0))
+        ws.cell(row=row, column=4).number_format = currency_format
+        
+        # Outstanding loan balance with currency format
+        ws.cell(row=row, column=5, value=loan.get('outstanding_loan_balance', 0))
+        ws.cell(row=row, column=5).number_format = currency_format
+        
+        # Accumulated arrears with currency format
+        ws.cell(row=row, column=6, value=loan.get('accumulated_arrears', 0))
+        ws.cell(row=row, column=6).number_format = currency_format
+        
+        # NDIA with currency format
+        ws.cell(row=row, column=7, value=loan.get('ndia', 0))
+        ws.cell(row=row, column=7).number_format = currency_format
+        
+        # Stage
+        ws.cell(row=row, column=8, value=loan.get('stage', ''))
+        
+        # EAD with currency format
+        ws.cell(row=row, column=9, value=loan.get('ead', 0))
+        ws.cell(row=row, column=9).number_format = currency_format
+        
+        # LGD as percentage
+        ws.cell(row=row, column=10, value=loan.get('lgd', 0))
+        ws.cell(row=row, column=10).number_format = percentage_format
+        
+        # EIR as percentage
+        ws.cell(row=row, column=11, value=loan.get('eir', 0))
+        ws.cell(row=row, column=11).number_format = percentage_format
+        
+        # PD as percentage
+        ws.cell(row=row, column=12, value=loan.get('pd', 0))
+        ws.cell(row=row, column=12).number_format = percentage_format
+        
+        # ECL with currency format
+        ws.cell(row=row, column=13, value=loan.get('ecl', 0))
+        ws.cell(row=row, column=13).number_format = currency_format
+    
+    # Save to BytesIO
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+def load_excel_template(report_type: str) -> Workbook:
+    """
+    Load an Excel template for a specific report type.
+    
+    Args:
+        report_type: Type of the report
+        
+    Returns:
+        Workbook: Excel workbook template
+    """
+    import os
+    from openpyxl import load_workbook
+    
+    # Define template paths
+    template_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "reports")
+    
+    # Map report types to template files
+    template_map = {
+        "ecl_detailed_report": "ecl_detailed_report.xlsx",
+        "ecl_report_summarised": "ecl_report_summarised.xlsx",
+        "local_impairment_details_report": "local_impairment_details_report.xlsx",
+        "local_impairment_report_summarised": "local_impairment_report_summarised.xlsx",
+        "journals_report": "journals_report.xlsx",
+    }
+    
+    # Get the template file name
+    template_file = template_map.get(report_type.lower())
+    
+    # If we have a template for this report type, load it
+    if template_file and os.path.exists(os.path.join(template_dir, template_file)):
+        return load_workbook(os.path.join(template_dir, template_file))
+    
+    # If no template exists, return a new workbook
+    return Workbook()

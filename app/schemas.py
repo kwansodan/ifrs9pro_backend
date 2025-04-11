@@ -52,6 +52,11 @@ class ReportTypeEnum(str, Enum):
     PROBABILITY_DEFAULT = "probability_default"
     EXPOSURE_DEFAULT = "exposure_default"
     LOSS_GIVEN_DEFAULT = "loss_given_default"
+    ECL_DETAILED_REPORT = "ecl_detailed_report"
+    ECL_REPORT_SUMMARISED = "ecl_report_summarised"
+    LOCAL_IMPAIRMENT_DETAILS_REPORT = "local_impairment_details_report"
+    LOCAL_IMPAIRMENT_REPORT_SUMMARISED = "local_impairment_report_summarised"
+    JOURNALS_REPORT = "journals_report"
 
 
 class FeedbackStatusEnum(str, Enum):

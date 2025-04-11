@@ -324,6 +324,8 @@ async def process_ecl_calculation(
         get_task_manager().update_progress(
             task_id,
             progress=100,
+            processed_items=total_loans,
+            total_items=total_loans,
             status_message="ECL calculation completed successfully"
         )
         
@@ -487,11 +489,26 @@ async def process_local_impairment_calculation(
 
         # Get provision rates from config
         try:
-            current_rate = Decimal(config.get("current", {}).get("rate", 0))
-            olem_rate = Decimal(config.get("olem", {}).get("rate", 0))
-            substandard_rate = Decimal(config.get("substandard", {}).get("rate", 0))
-            doubtful_rate = Decimal(config.get("doubtful", {}).get("rate", 0))
-            loss_rate = Decimal(config.get("loss", {}).get("rate", 0))
+            # Check if we have a provision_config object
+            provision_config = config.get("provision_config", {})
+            if provision_config:
+                # Get rates from provision_config
+                current_rate = Decimal(provision_config.get("current", 0.01))
+                olem_rate = Decimal(provision_config.get("olem", 0.03))
+                substandard_rate = Decimal(provision_config.get("substandard", 0.2))
+                doubtful_rate = Decimal(provision_config.get("doubtful", 0.5))
+                loss_rate = Decimal(provision_config.get("loss", 1.0))
+            else:
+                # Fall back to old structure
+                current_rate = Decimal(config.get("current", {}).get("rate", 0.01))
+                olem_rate = Decimal(config.get("olem", {}).get("rate", 0.03))
+                substandard_rate = Decimal(config.get("substandard", {}).get("rate", 0.2))
+                doubtful_rate = Decimal(config.get("doubtful", {}).get("rate", 0.5))
+                loss_rate = Decimal(config.get("loss", {}).get("rate", 1.0))
+            
+            # Log the rates being used
+            logger.info(f"Using provision rates - Current: {current_rate}, OLEM: {olem_rate}, Substandard: {substandard_rate}, Doubtful: {doubtful_rate}, Loss: {loss_rate}")
+            
         except (KeyError, ValueError) as e:
             logger.error(f"Error parsing provision rates: {str(e)}")
             raise ValueError(f"Could not parse provision rates from configuration: {str(e)}")
@@ -554,7 +571,9 @@ async def process_local_impairment_calculation(
         get_task_manager().update_progress(
             task_id,
             progress=90,
-            status_message="Finalizing local impairment calculation results"
+            status_message="Finalizing local impairment calculation results",
+            processed_items=len(staging_data),
+            total_items=len(staging_data)
         )
         
         # Calculate provisions for each category
@@ -623,6 +642,8 @@ async def process_local_impairment_calculation(
         get_task_manager().update_progress(
             task_id,
             progress=100,
+            processed_items=len(staging_data),
+            total_items=len(staging_data),
             status_message="Local impairment calculation completed successfully"
         )
         

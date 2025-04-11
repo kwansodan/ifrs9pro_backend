@@ -6,10 +6,6 @@ from decimal import Decimal
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Any, Optional
 from datetime import date
-from app.models import Portfolio, Report
-from app.utils.pdf_generator import create_report_pdf
-from app.utils.excel_generator import create_report_excel as create_excel_file
-
 from app.models import (
     Portfolio,
     Loan,
@@ -17,7 +13,12 @@ from app.models import (
     Security,
     Guarantee,
     Report,
+    CalculationResult,
+    StagingResult
 )
+from app.utils.pdf_generator import create_report_pdf
+from app.utils.excel_generator import create_report_excel as create_excel_file
+
 from app.calculators.ecl import (
     calculate_effective_interest_rate,
     calculate_exposure_at_default_percentage,
@@ -57,20 +58,20 @@ def generate_collateral_summary(
     )
 
     # Calculate security statistics
-    total_security_value = sum(security.security_value or 0 for security in securities)
-    average_security_value = total_security_value / len(securities) if securities else 0
+    total_security_value = sum(security.security_value or Decimal(0) for security in securities)
+    average_security_value = total_security_value / len(securities) if securities else Decimal(0)
 
     # Count security types
     security_types = {}
     for security in securities:
         if security.security_type:
             security_types[security.security_type] = (
-                security_types.get(security.security_type, 0) + 1
+                security_types.get(security.security_type, Decimal(0)) + Decimal(1)
             )
 
     # Get top 10 most valuable securities
     top_securities = sorted(
-        securities, key=lambda x: x.security_value or 0, reverse=True
+        securities, key=lambda x: x.security_value or Decimal(0), reverse=True
     )[:10]
 
     top_securities_data = [
@@ -85,9 +86,9 @@ def generate_collateral_summary(
     ]
 
     # Calculate collateral coverage ratio
-    total_loan_value = sum(loan.outstanding_loan_balance or 0 for loan in loans)
+    total_loan_value = sum(loan.outstanding_loan_balance or Decimal(0) for loan in loans)
     collateral_coverage_ratio = (
-        total_security_value / total_loan_value if total_loan_value > 0 else 0
+        total_security_value / total_loan_value if total_loan_value > Decimal(0) else Decimal(0)
     )
 
     # Count clients with and without collateral
@@ -120,24 +121,24 @@ def generate_guarantee_summary(
 
     # Calculate guarantee statistics
     total_guarantee_value = sum(
-        guarantee.pledged_amount or 0 for guarantee in guarantees
+        guarantee.pledged_amount or Decimal(0) for guarantee in guarantees
     )
     average_guarantee_value = (
-        total_guarantee_value / len(guarantees) if guarantees else 0
+        total_guarantee_value / len(guarantees) if guarantees else Decimal(0)
     )
 
     # Get loans for the portfolio
     loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
-    total_loan_value = sum(loan.outstanding_loan_balance or 0 for loan in loans)
+    total_loan_value = sum(loan.outstanding_loan_balance or Decimal(0) for loan in loans)
 
     # Calculate guarantee coverage ratio
     guarantee_coverage_ratio = (
-        total_guarantee_value / total_loan_value if total_loan_value > 0 else 0
+        total_guarantee_value / total_loan_value if total_loan_value > Decimal(0) else Decimal(0)
     )
 
     # Get top guarantors by pledged amount
     top_guarantors = sorted(
-        guarantees, key=lambda x: x.pledged_amount or 0, reverse=True
+        guarantees, key=lambda x: x.pledged_amount or Decimal(0), reverse=True
     )[:10]
 
     top_guarantors_data = [
@@ -154,7 +155,7 @@ def generate_guarantee_summary(
     for guarantee in guarantees:
         if hasattr(guarantee, "guarantor_type") and guarantee.guarantor_type:
             guarantor_types[guarantee.guarantor_type] = (
-                guarantor_types.get(guarantee.guarantor_type, 0) + 1
+                guarantor_types.get(guarantee.guarantor_type, Decimal(0)) + Decimal(1)
             )
 
     return {
@@ -182,8 +183,8 @@ def generate_interest_rate_summary(
     for loan in loans:
         if loan.loan_amount and loan.monthly_installment and loan.loan_term:
             eir = calculate_effective_interest_rate(
-                loan_amount=loan.loan_amount,
-                monthly_installment=loan.monthly_installment,
+                loan_amount=Decimal(loan.loan_amount),
+                monthly_installment=Decimal(loan.monthly_installment),
                 loan_term=loan.loan_term,
             )
             loan_eirs.append((loan, eir))
@@ -196,34 +197,34 @@ def generate_interest_rate_summary(
         max_eir = max(all_eirs)
         median_eir = sorted(all_eirs)[len(all_eirs) // 2]
     else:
-        average_eir = min_eir = max_eir = median_eir = 0
+        average_eir = min_eir = max_eir = median_eir = Decimal(0)
 
     # Group loans by EIR ranges
     eir_ranges = {
-        "0-5%": 0,
-        "5-10%": 0,
-        "10-15%": 0,
-        "15-20%": 0,
-        "20-25%": 0,
-        "25-30%": 0,
-        "30%+": 0,
+        "0-5%": Decimal(0),
+        "5-10%": Decimal(0),
+        "10-15%": Decimal(0),
+        "15-20%": Decimal(0),
+        "20-25%": Decimal(0),
+        "25-30%": Decimal(0),
+        "30%+": Decimal(0),
     }
 
     for _, eir in loan_eirs:
-        if eir < 0.05:
-            eir_ranges["0-5%"] += 1
-        elif eir < 0.10:
-            eir_ranges["5-10%"] += 1
-        elif eir < 0.15:
-            eir_ranges["10-15%"] += 1
-        elif eir < 0.20:
-            eir_ranges["15-20%"] += 1
-        elif eir < 0.25:
-            eir_ranges["20-25%"] += 1
-        elif eir < 0.30:
-            eir_ranges["25-30%"] += 1
+        if eir < Decimal(0.05):
+            eir_ranges["0-5%"] += Decimal(1)
+        elif eir < Decimal(0.10):
+            eir_ranges["5-10%"] += Decimal(1)
+        elif eir < Decimal(0.15):
+            eir_ranges["10-15%"] += Decimal(1)
+        elif eir < Decimal(0.20):
+            eir_ranges["15-20%"] += Decimal(1)
+        elif eir < Decimal(0.25):
+            eir_ranges["20-25%"] += Decimal(1)
+        elif eir < Decimal(0.30):
+            eir_ranges["25-30%"] += Decimal(1)
         else:
-            eir_ranges["30%+"] += 1
+            eir_ranges["30%+"] += Decimal(1)
 
     # Group by loan type if available
     loan_type_eirs = {}
@@ -247,19 +248,19 @@ def generate_interest_rate_summary(
             "loan_amount": loan.loan_amount,
             "loan_term": loan.loan_term,
             "monthly_installment": loan.monthly_installment,
-            "effective_interest_rate": round(eir * 100, 2),  # as percentage
+            "effective_interest_rate": round(eir * Decimal(100), 2),  # as percentage
         }
         for loan, eir in top_eir_loans
     ]
 
     return {
-        "average_eir": round(average_eir * 100, 2),  # as percentage
-        "min_eir": round(min_eir * 100, 2),
-        "max_eir": round(max_eir * 100, 2),
-        "median_eir": round(median_eir * 100, 2),
+        "average_eir": round(average_eir * Decimal(100), 2),  # as percentage
+        "min_eir": round(min_eir * Decimal(100), 2),
+        "max_eir": round(max_eir * Decimal(100), 2),
+        "median_eir": round(median_eir * Decimal(100), 2),
         "eir_distribution": eir_ranges,
         "loan_type_avg_eirs": {
-            k: round(v * 100, 2) for k, v in loan_type_avg_eirs.items()
+            k: round(v * Decimal(100), 2) for k, v in loan_type_avg_eirs.items()
         },
         "top_eir_loans": top_eir_loans_data,
         "total_loans_analyzed": len(loan_eirs),
@@ -277,22 +278,22 @@ def generate_repayment_summary(
     loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
 
     # Calculate repayment statistics
-    total_principal_due = sum(loan.principal_due or 0 for loan in loans)
-    total_interest_due = sum(loan.interest_due or 0 for loan in loans)
-    total_due = sum(loan.total_due or 0 for loan in loans)
+    total_principal_due = sum(loan.principal_due or Decimal(0) for loan in loans)
+    total_interest_due = sum(loan.interest_due or Decimal(0) for loan in loans)
+    total_due = sum(loan.total_due or Decimal(0) for loan in loans)
 
-    total_principal_paid = sum(loan.principal_paid or 0 for loan in loans)
-    total_interest_paid = sum(loan.interest_paid or 0 for loan in loans)
-    total_paid = sum(loan.total_paid or 0 for loan in loans)
+    total_principal_paid = sum(loan.principal_paid or Decimal(0) for loan in loans)
+    total_interest_paid = sum(loan.interest_paid or Decimal(0) for loan in loans)
+    total_paid = sum(loan.total_paid or Decimal(0) for loan in loans)
 
     # Calculate repayment ratios
     principal_repayment_ratio = (
-        total_principal_paid / total_principal_due if total_principal_due > 0 else 0
+        total_principal_paid / total_principal_due if total_principal_due > Decimal(0) else Decimal(0)
     )
     interest_repayment_ratio = (
-        total_interest_paid / total_interest_due if total_interest_due > 0 else 0
+        total_interest_paid / total_interest_due if total_interest_due > Decimal(0) else Decimal(0)
     )
-    overall_repayment_ratio = total_paid / total_due if total_due > 0 else 0
+    overall_repayment_ratio = total_paid / total_due if total_due > Decimal(0) else Decimal(0)
 
     # Group loans by status
     paid_loans = sum(1 for loan in loans if loan.paid is True)
@@ -300,36 +301,36 @@ def generate_repayment_summary(
 
     # Calculate delinquency statistics
     delinquent_loans = sum(1 for loan in loans if loan.ndia and loan.ndia > 0)
-    delinquency_rate = delinquent_loans / len(loans) if loans else 0
+    delinquency_rate = delinquent_loans / len(loans) if loans else Decimal(0)
 
     # Group loans by NDIA ranges
     ndia_ranges = {
-        "Current (0)": 0,
-        "1-30 days": 0,
-        "31-90 days": 0,
-        "91-180 days": 0,
-        "181-360 days": 0,
-        "360+ days": 0,
+        "Current (0)": Decimal(0),
+        "1-30 days": Decimal(0),
+        "31-90 days": Decimal(0),
+        "91-180 days": Decimal(0),
+        "181-360 days": Decimal(0),
+        "360+ days": Decimal(0),
     }
 
     for loan in loans:
-        ndia = loan.ndia or 0
-        if ndia == 0:
-            ndia_ranges["Current (0)"] += 1
-        elif ndia <= 30:
-            ndia_ranges["1-30 days"] += 1
-        elif ndia <= 90:
-            ndia_ranges["31-90 days"] += 1
-        elif ndia <= 180:
-            ndia_ranges["91-180 days"] += 1
-        elif ndia <= 360:
-            ndia_ranges["181-360 days"] += 1
+        ndia = loan.ndia or Decimal(0)
+        if ndia == Decimal(0):
+            ndia_ranges["Current (0)"] += Decimal(1)
+        elif ndia <= Decimal(30):
+            ndia_ranges["1-30 days"] += Decimal(1)
+        elif ndia <= Decimal(90):
+            ndia_ranges["31-90 days"] += Decimal(1)
+        elif ndia <= Decimal(180):
+            ndia_ranges["91-180 days"] += Decimal(1)
+        elif ndia <= Decimal(360):
+            ndia_ranges["181-360 days"] += Decimal(1)
         else:
-            ndia_ranges["360+ days"] += 1
+            ndia_ranges["360+ days"] += Decimal(1)
 
     # Top 10 loans with highest accumulated arrears
     top_arrears_loans = sorted(
-        loans, key=lambda x: x.accumulated_arrears or 0, reverse=True
+        loans, key=lambda x: x.accumulated_arrears or Decimal(0), reverse=True
     )[:10]
 
     top_arrears_loans_data = [
@@ -378,14 +379,14 @@ def generate_assumptions_summary(
     loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
 
     # Calculate PD, LGD, and EAD assumptions
-    avg_pd = 0
-    avg_lgd = 0
-    avg_ead = 0
+    avg_pd = Decimal(0)
+    avg_lgd = Decimal(0)
+    avg_ead = Decimal(0)
 
     # Get client IDs for these loans
     employee_ids = [loan.employee_id for loan in loans if loan.employee_id]
 
-    # Get securities for these clients
+    # Get clients
     clients = (
         db.query(Client)
         .filter(Client.portfolio_id == portfolio_id)
@@ -412,7 +413,7 @@ def generate_assumptions_summary(
 
     for loan in loans:
         # Calculate PD
-        ndia = loan.ndia or 0
+        ndia = loan.ndia or Decimal(0)
         pd = calculate_probability_of_default(loan, db)
         pd_values.append(pd)
 
@@ -436,26 +437,24 @@ def generate_assumptions_summary(
         avg_ead = sum(ead_values) / len(ead_values)
 
     # Other assumptions
-    macro_economic_factor = (
-        1.0  # Example value, could be adjusted based on economic conditions
-    )
-    recovery_rate = 0.4  # Example value, could be adjusted based on historical data
+    macro_economic_factor = Decimal(1.0)  # Example value, could be adjusted based on economic conditions
+    recovery_rate = Decimal(0.4)  # Example value, could be adjusted based on historical data
 
     # Based on portfolio type
     if portfolio:
         if portfolio.asset_type == "mortgage":
-            recovery_rate = 0.7  # Higher recovery rate for mortgage loans
+            recovery_rate = Decimal(0.7)  # Higher recovery rate for mortgage loans
         elif portfolio.asset_type == "unsecured":
-            recovery_rate = 0.3  # Lower recovery rate for unsecured loans
+            recovery_rate = Decimal(0.3)  # Lower recovery rate for unsecured loans
 
     # Group loans by NDIA ranges for PD curve
     ndia_pd_curve = {
-        "0 days": 0.02,
-        "1-30 days": 0.05,
-        "31-90 days": 0.20,
-        "91-180 days": 0.40,
-        "181-360 days": 0.75,
-        "360+ days": 0.99,
+        "0 days": Decimal(0.02),
+        "1-30 days": Decimal(0.05),
+        "31-90 days": Decimal(0.20),
+        "91-180 days": Decimal(0.40),
+        "181-360 days": Decimal(0.75),
+        "360+ days": Decimal(0.99),
     }
 
     return {
@@ -483,47 +482,47 @@ def generate_amortised_loan_balances(
     loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
 
     # Create summary statistics
-    total_original_loan_amount = sum(loan.loan_amount or 0 for loan in loans)
+    total_original_loan_amount = sum(loan.loan_amount or Decimal(0) for loan in loans)
     total_current_loan_balance = sum(
-        loan.outstanding_loan_balance or 0 for loan in loans
+        loan.outstanding_loan_balance or Decimal(0) for loan in loans
     )
     total_amortisation = total_original_loan_amount - total_current_loan_balance
 
     # Calculate percentage amortised
     percent_amortised = (
-        (total_amortisation / total_original_loan_amount * 100)
-        if total_original_loan_amount > 0
-        else 0
+        (total_amortisation / total_original_loan_amount * Decimal(100))
+        if total_original_loan_amount > Decimal(0)
+        else Decimal(0)
     )
 
     # Group loans by amortisation percentage
     amortisation_ranges = {
-        "0-20%": 0,
-        "21-40%": 0,
-        "41-60%": 0,
-        "61-80%": 0,
-        "81-100%": 0,
+        "0-20%": Decimal(0),
+        "21-40%": Decimal(0),
+        "41-60%": Decimal(0),
+        "61-80%": Decimal(0),
+        "81-100%": Decimal(0),
     }
 
     for loan in loans:
         if (
             loan.loan_amount
-            and loan.loan_amount > 0
+            and loan.loan_amount > Decimal(0)
             and loan.outstanding_loan_balance is not None
         ):
             amortised_amount = loan.loan_amount - loan.outstanding_loan_balance
-            amortised_percent = (amortised_amount / loan.loan_amount) * 100
+            amortised_percent = (amortised_amount / loan.loan_amount) * Decimal(100)
 
-            if amortised_percent <= 20:
-                amortisation_ranges["0-20%"] += 1
-            elif amortised_percent <= 40:
-                amortisation_ranges["21-40%"] += 1
-            elif amortised_percent <= 60:
-                amortisation_ranges["41-60%"] += 1
-            elif amortised_percent <= 80:
-                amortisation_ranges["61-80%"] += 1
+            if amortised_percent <= Decimal(20):
+                amortisation_ranges["0-20%"] += Decimal(1)
+            elif amortised_percent <= Decimal(40):
+                amortisation_ranges["21-40%"] += Decimal(1)
+            elif amortised_percent <= Decimal(60):
+                amortisation_ranges["41-60%"] += Decimal(1)
+            elif amortised_percent <= Decimal(80):
+                amortisation_ranges["61-80%"] += Decimal(1)
             else:
-                amortisation_ranges["81-100%"] += 1
+                amortisation_ranges["81-100%"] += Decimal(1)
 
     # Calculate expected final amortisation dates
     loan_status = []
@@ -531,20 +530,20 @@ def generate_amortised_loan_balances(
         if loan.loan_term and loan.loan_issue_date and loan.outstanding_loan_balance:
             # Calculate expected end date
             expected_end_date = loan.loan_issue_date + timedelta(
-                days=30 * loan.loan_term
+                days=Decimal(30) * loan.loan_term
             )
 
             # Calculate days remaining
             if expected_end_date > report_date:
                 days_remaining = (expected_end_date - report_date).days
             else:
-                days_remaining = 0
+                days_remaining = Decimal(0)
 
             # Calculate expected monthly amortisation
             monthly_amortisation = (
                 loan.principal_due
                 if loan.principal_due
-                else (loan.loan_amount / loan.loan_term if loan.loan_term > 0 else 0)
+                else (loan.loan_amount / loan.loan_term if loan.loan_term > Decimal(0) else Decimal(0))
             )
 
             loan_status.append(
@@ -556,17 +555,17 @@ def generate_amortised_loan_balances(
                     "amortised_amount": (
                         loan.loan_amount - loan.outstanding_loan_balance
                         if loan.loan_amount
-                        else 0
+                        else Decimal(0)
                     ),
                     "amortised_percent": round(
                         (
                             (
                                 (loan.loan_amount - loan.outstanding_loan_balance)
                                 / loan.loan_amount
-                                * 100
+                                * Decimal(100)
                             )
-                            if loan.loan_amount and loan.loan_amount > 0
-                            else 0
+                            if loan.loan_amount and loan.loan_amount > Decimal(0)
+                            else Decimal(0)
                         ),
                         2,
                     ),
@@ -608,7 +607,7 @@ def generate_probability_default_report(
     pd_values = []
 
     for loan in loans:
-        ndia = loan.ndia or 0
+        ndia = loan.ndia or Decimal(0)
         pd = calculate_probability_of_default(loan, db)
         pd_values.append(pd)
 
@@ -630,47 +629,47 @@ def generate_probability_default_report(
         max_pd = max(pd_values)
         median_pd = sorted(pd_values)[len(pd_values) // 2]
     else:
-        avg_pd = min_pd = max_pd = median_pd = 0
+        avg_pd = min_pd = max_pd = median_pd = Decimal(0)
 
     # Group loans by PD ranges
     pd_ranges = {
-        "0-10%": 0,
-        "11-25%": 0,
-        "26-50%": 0,
-        "51-75%": 0,
-        "76-90%": 0,
-        "91-100%": 0,
+        "0-10%": Decimal(0),
+        "11-25%": Decimal(0),
+        "26-50%": Decimal(0),
+        "51-75%": Decimal(0),
+        "76-90%": Decimal(0),
+        "91-100%": Decimal(0),
     }
 
-    weighted_pd_sum = 0
-    total_outstanding_balance = 0
+    weighted_pd_sum = Decimal(0)
+    total_outstanding_balance = Decimal(0)
 
     for loan_pd in loan_pds:
-        pd_percent = loan_pd["pd"] * 100
-        outstanding_balance = loan_pd["outstanding_balance"] or 0
+        pd_percent = loan_pd["pd"] * Decimal(100)
+        outstanding_balance = loan_pd["outstanding_balance"] or Decimal(0)
 
         # Add to weighted PD calculation
         weighted_pd_sum += loan_pd["pd"] * outstanding_balance
         total_outstanding_balance += outstanding_balance
 
-        if pd_percent <= 10:
-            pd_ranges["0-10%"] += 1
-        elif pd_percent <= 25:
-            pd_ranges["11-25%"] += 1
-        elif pd_percent <= 50:
-            pd_ranges["26-50%"] += 1
-        elif pd_percent <= 75:
-            pd_ranges["51-75%"] += 1
-        elif pd_percent <= 90:
-            pd_ranges["76-90%"] += 1
+        if pd_percent <= Decimal(10):
+            pd_ranges["0-10%"] += Decimal(1)
+        elif pd_percent <= Decimal(25):
+            pd_ranges["11-25%"] += Decimal(1)
+        elif pd_percent <= Decimal(50):
+            pd_ranges["26-50%"] += Decimal(1)
+        elif pd_percent <= Decimal(75):
+            pd_ranges["51-75%"] += Decimal(1)
+        elif pd_percent <= Decimal(90):
+            pd_ranges["76-90%"] += Decimal(1)
         else:
-            pd_ranges["91-100%"] += 1
+            pd_ranges["91-100%"] += Decimal(1)
 
     # Calculate portfolio weighted PD
     weighted_portfolio_pd = (
         weighted_pd_sum / total_outstanding_balance
-        if total_outstanding_balance > 0
-        else 0
+        if total_outstanding_balance > Decimal(0)
+        else Decimal(0)
     )
 
     # Sort loans by PD (descending)
@@ -710,7 +709,7 @@ def generate_exposure_default_report(
         ead_amount = (
             loan.outstanding_loan_balance * ead_percentage
             if loan.outstanding_loan_balance
-            else 0
+            else Decimal(0)
         )
 
         loan_eads.append(
@@ -731,43 +730,43 @@ def generate_exposure_default_report(
         max_ead = max(ead_values)
         median_ead = sorted(ead_values)[len(ead_values) // 2]
     else:
-        avg_ead = min_ead = max_ead = median_ead = 0
+        avg_ead = min_ead = max_ead = median_ead = Decimal(0)
 
     # Calculate total EAD
     total_outstanding_balance = sum(
-        loan.outstanding_loan_balance or 0 for loan in loans
+        loan.outstanding_loan_balance or Decimal(0) for loan in loans
     )
     total_ead = sum(
-        (loan.outstanding_loan_balance or 0)
+        (loan.outstanding_loan_balance or Decimal(0))
         * calculate_exposure_at_default_percentage(loan, report_date)
         for loan in loans
     )
 
     # Group loans by EAD percentage ranges
     ead_ranges = {
-        "0-80%": 0,
-        "81-90%": 0,
-        "91-95%": 0,
-        "96-99%": 0,
-        "100%": 0,
-        "100%+": 0,
+        "0-80%": Decimal(0),
+        "81-90%": Decimal(0),
+        "91-95%": Decimal(0),
+        "96-99%": Decimal(0),
+        "100%": Decimal(0),
+        "100%+": Decimal(0),
     }
 
     for loan_ead in loan_eads:
-        ead_percentage = loan_ead["ead_percentage"] * 100
+        ead_percentage = loan_ead["ead_percentage"] * Decimal(100)
 
-        if ead_percentage <= 80:
-            ead_ranges["0-80%"] += 1
-        elif ead_percentage <= 90:
-            ead_ranges["81-90%"] += 1
-        elif ead_percentage <= 95:
-            ead_ranges["91-95%"] += 1
-        elif ead_percentage <= 99:
-            ead_ranges["96-99%"] += 1
-        elif ead_percentage <= 100:
-            ead_ranges["100%"] += 1
+        if ead_percentage <= Decimal(80):
+            ead_ranges["0-80%"] += Decimal(1)
+        elif ead_percentage <= Decimal(90):
+            ead_ranges["81-90%"] += Decimal(1)
+        elif ead_percentage <= Decimal(95):
+            ead_ranges["91-95%"] += Decimal(1)
+        elif ead_percentage <= Decimal(99):
+            ead_ranges["96-99%"] += Decimal(1)
+        elif ead_percentage <= Decimal(100):
+            ead_ranges["100%"] += Decimal(1)
         else:
-            ead_ranges["100%+"] += 1
+            ead_ranges["100%+"] += Decimal(1)
 
     # Sort loans by EAD amount (descending)
     loan_eads = sorted(loan_eads, key=lambda x: x["ead_amount"], reverse=True)
@@ -782,8 +781,8 @@ def generate_exposure_default_report(
         "ead_to_outstanding_ratio": round(
             (
                 total_ead / total_outstanding_balance
-                if total_outstanding_balance > 0
-                else 0
+                if total_outstanding_balance > Decimal(0)
+                else Decimal(0)
             ),
             4,
         ),
@@ -840,11 +839,11 @@ def generate_loss_given_default_report(
         expected_loss = (
             Decimal(loan.outstanding_loan_balance) * Decimal(lgd)
             if loan.outstanding_loan_balance
-            else 0
+            else Decimal(0)
         )
 
         # Calculate security value
-        security_value = sum(security.security_value or 0 for security in securities)
+        security_value = sum(security.security_value or Decimal(0) for security in securities)
 
         loan_lgds.append(
             {
@@ -865,14 +864,14 @@ def generate_loss_given_default_report(
         max_lgd = max(lgd_values)
         median_lgd = sorted(lgd_values)[len(lgd_values) // 2]
     else:
-        avg_lgd = min_lgd = max_lgd = median_lgd = 0
+        avg_lgd = min_lgd = max_lgd = median_lgd = Decimal(0)
 
     # Calculate total expected loss
     total_outstanding_balance = sum(
-        loan.outstanding_loan_balance or 0 for loan in loans
+        loan.outstanding_loan_balance or Decimal(0) for loan in loans
     )
     total_expected_loss = sum(
-        Decimal(loan.outstanding_loan_balance or 0)
+        Decimal(loan.outstanding_loan_balance or Decimal(0))
         * Decimal(
             calculate_loss_given_default(
                 loan, client_securities.get(loan.employee_id, [])
@@ -882,21 +881,21 @@ def generate_loss_given_default_report(
     )
 
     # Group loans by LGD ranges
-    lgd_ranges = {"0-20%": 0, "21-40%": 0, "41-60%": 0, "61-80%": 0, "81-100%": 0}
+    lgd_ranges = {"0-20%": Decimal(0), "21-40%": Decimal(0), "41-60%": Decimal(0), "61-80%": Decimal(0), "81-100%": Decimal(0)}
 
     for loan_lgd in loan_lgds:
-        lgd_percentage = loan_lgd["lgd"] * 100
+        lgd_percentage = loan_lgd["lgd"] * Decimal(100)
 
-        if lgd_percentage <= 20:
-            lgd_ranges["0-20%"] += 1
-        elif lgd_percentage <= 40:
-            lgd_ranges["21-40%"] += 1
-        elif lgd_percentage <= 60:
-            lgd_ranges["41-60%"] += 1
-        elif lgd_percentage <= 80:
-            lgd_ranges["61-80%"] += 1
+        if lgd_percentage <= Decimal(20):
+            lgd_ranges["0-20%"] += Decimal(1)
+        elif lgd_percentage <= Decimal(40):
+            lgd_ranges["21-40%"] += Decimal(1)
+        elif lgd_percentage <= Decimal(60):
+            lgd_ranges["41-60%"] += Decimal(1)
+        elif lgd_percentage <= Decimal(80):
+            lgd_ranges["61-80%"] += Decimal(1)
         else:
-            lgd_ranges["81-100%"] += 1
+            lgd_ranges["81-100%"] += Decimal(1)
 
     # Sort loans by expected loss (descending)
     loan_lgds = sorted(loan_lgds, key=lambda x: x["expected_loss"], reverse=True)
@@ -911,8 +910,8 @@ def generate_loss_given_default_report(
         "loss_to_outstanding_ratio": round(
             (
                 total_expected_loss / total_outstanding_balance
-                if total_outstanding_balance > 0
-                else 0
+                if total_outstanding_balance > Decimal(0)
+                else Decimal(0)
             ),
             4,
         ),
@@ -920,6 +919,252 @@ def generate_loss_given_default_report(
         "highest_loss_loans": loan_lgds[:25],  # Top 25 highest loss loans
         "total_loans_analyzed": len(loans),
         "reporting_date": report_date.isoformat(),
+    }
+
+
+def generate_ecl_detailed_report(
+    db: Session, portfolio_id: int, report_date: date
+) -> Dict[str, Any]:
+    """
+    Generate a detailed ECL report for a portfolio.
+    
+    This populates the ECL detailed report template with:
+    - B3: Report date
+    - B4: Report run date (current date)
+    - B6: Report description
+    - B9: Total exposure at default
+    - B10: Total loss given default
+    - B12: Total ECL
+    - Rows 15+: Loan details with ECL calculations
+    """
+    # Get portfolio loans with their ECL calculations
+    loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
+    
+    # Get the latest ECL calculation result
+    ecl_calculation = db.query(CalculationResult).filter(
+        CalculationResult.portfolio_id == portfolio_id,
+        CalculationResult.calculation_type == "ecl"
+    ).order_by(CalculationResult.created_at.desc()).first()
+    
+    # If no calculation exists, return empty structure
+    if not ecl_calculation:
+        return {
+            "portfolio_id": portfolio_id,
+            "report_date": report_date.strftime("%Y-%m-%d"),
+            "report_type": "ecl_detailed_report",
+            "report_run_date": datetime.now().strftime("%Y-%m-%d"),
+            "description": "ECL Detailed Report - No calculations available",
+            "total_ead": Decimal(0),
+            "total_lgd": Decimal(0),
+            "total_ecl": Decimal(0),
+            "loans": []
+        }
+    
+    # Get clients for these loans
+    employee_ids = [loan.employee_id for loan in loans if loan.employee_id]
+    clients = db.query(Client).filter(
+        Client.portfolio_id == portfolio_id,
+        Client.employee_id.in_(employee_ids)
+    ).all()
+    
+    # Map employee IDs to client names
+    client_map = {client.employee_id: f"{client.last_name or ''} {client.other_names or ''}".strip() for client in clients}
+    
+    # Get calculation details if available
+    calculation_details = {}
+    stage_data = {}
+    if ecl_calculation and ecl_calculation.result_summary:
+        try:
+            calculation_details = ecl_calculation.result_summary
+            # Extract stage data
+            stage_data = {
+                "Stage 1": calculation_details.get("Stage 1", {}),
+                "Stage 2": calculation_details.get("Stage 2", {}),
+                "Stage 3": calculation_details.get("Stage 3", {})
+            }
+        except:
+            calculation_details = {}
+            stage_data = {}
+    
+    # Prepare loan data
+    loan_data = []
+    total_ead = 0.0  # Initialize as float
+    total_lgd = 0.0  # Initialize as float
+    total_ecl = 0.0  # Initialize as float
+    
+    # Get the latest staging result to determine loan stages
+    latest_staging = (
+        db.query(StagingResult)
+        .filter(
+            StagingResult.portfolio_id == portfolio_id,
+            StagingResult.staging_type == "ecl"
+        )
+        .order_by(StagingResult.created_at.desc())
+        .first()
+    )
+    
+    # Create a map of loan_id to stage
+    loan_stage_map = {}
+    if latest_staging and latest_staging.result_summary:
+        staging_data = latest_staging.result_summary.get("staging_data", [])
+        for stage_info in staging_data:
+            loan_id = stage_info.get("loan_id")
+            stage = stage_info.get("stage")
+            if loan_id and stage:
+                loan_stage_map[loan_id] = stage
+    
+    # Get securities for LGD calculation
+    client_securities = {}
+    employee_ids = [loan.employee_id for loan in loans if loan.employee_id]
+    if employee_ids:
+        securities = (
+            db.query(Security)
+            .join(Client, Security.client_id == Client.id)
+            .filter(Client.employee_id.in_(employee_ids))
+            .all()
+        )
+        
+        # Group securities by client employee_id
+        for security in securities:
+            client = db.query(Client).filter(Client.id == security.client_id).first()
+            if client and client.employee_id:
+                if client.employee_id not in client_securities:
+                    client_securities[client.employee_id] = []
+                client_securities[client.employee_id].append(security)
+    
+    for loan in loans:
+        # Determine stage for this loan
+        stage = loan_stage_map.get(loan.id, "Stage 1")  # Default to Stage 1 if not found
+        
+        # Calculate ECL components for the loan
+        client_securities_list = client_securities.get(loan.employee_id, [])
+        lgd = calculate_loss_given_default(loan, client_securities_list)
+        pd = calculate_probability_of_default(loan, db)
+        eir = calculate_effective_interest_rate(
+            loan_amount=float(loan.loan_amount) if loan.loan_amount else 0,
+            monthly_installment=float(loan.monthly_installment) if loan.monthly_installment else 0,
+            loan_term=int(loan.loan_term) if loan.loan_term else 0
+        )
+        ead_percentage = calculate_exposure_at_default_percentage(loan, report_date)
+        
+        # Convert to float to ensure consistent types
+        outstanding_balance = float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance else 0
+        ead = float(outstanding_balance) * float(ead_percentage)
+        ecl = float(ead) * float(pd) * float(lgd)
+        
+        # Add to totals
+        total_ead += ead
+        total_lgd += float(lgd) * outstanding_balance
+        total_ecl += ecl
+        
+        # Create loan entry
+        loan_entry = {
+            "loan_id": loan.id,
+            "employee_id": loan.employee_id,
+            "employee_name": client_map.get(loan.employee_id, "Unknown"),
+            "loan_value": loan.loan_amount,
+            "outstanding_loan_balance": loan.outstanding_loan_balance,
+            "accumulated_arrears": loan.accumulated_arrears or Decimal(0),
+            "ndia": loan.ndia or Decimal(0),
+            "stage": stage,
+            "ead": ead,
+            "lgd": lgd,
+            "eir": eir,
+            "pd": pd,
+            "ecl": ecl
+        }
+        
+        loan_data.append(loan_entry)
+    
+    # Create the report data structure
+    report_data = {
+        "portfolio_id": portfolio_id,
+        "report_date": report_date.strftime("%Y-%m-%d"),
+        "report_type": "ecl_detailed_report",
+        "report_run_date": datetime.now().strftime("%Y-%m-%d"),
+        "description": "ECL Detailed Report",
+        "total_ead": total_ead,
+        "total_lgd": total_lgd,
+        "total_ecl": total_ecl,
+        "loans": loan_data
+    }
+    
+    return report_data
+
+
+def generate_ecl_report_summarised(
+    db: Session, portfolio_id: int, report_date: date
+) -> Dict[str, Any]:
+    """
+    Generate a summarised ECL report for a portfolio.
+    """
+    # For now, return an empty report structure
+    return {
+        "portfolio_id": portfolio_id,
+        "report_date": report_date.strftime("%Y-%m-%d"),
+        "report_type": "ecl_report_summarised",
+        "data": {
+            "title": "ECL Summarised Report",
+            "date": report_date.strftime("%Y-%m-%d"),
+            "items": []
+        }
+    }
+
+
+def generate_local_impairment_details_report(
+    db: Session, portfolio_id: int, report_date: date
+) -> Dict[str, Any]:
+    """
+    Generate a detailed local impairment report for a portfolio.
+    """
+    # For now, return an empty report structure
+    return {
+        "portfolio_id": portfolio_id,
+        "report_date": report_date.strftime("%Y-%m-%d"),
+        "report_type": "local_impairment_details_report",
+        "data": {
+            "title": "Local Impairment Details Report",
+            "date": report_date.strftime("%Y-%m-%d"),
+            "items": []
+        }
+    }
+
+
+def generate_local_impairment_report_summarised(
+    db: Session, portfolio_id: int, report_date: date
+) -> Dict[str, Any]:
+    """
+    Generate a summarised local impairment report for a portfolio.
+    """
+    # For now, return an empty report structure
+    return {
+        "portfolio_id": portfolio_id,
+        "report_date": report_date.strftime("%Y-%m-%d"),
+        "report_type": "local_impairment_report_summarised",
+        "data": {
+            "title": "Local Impairment Summarised Report",
+            "date": report_date.strftime("%Y-%m-%d"),
+            "items": []
+        }
+    }
+
+
+def generate_journals_report(
+    db: Session, portfolio_id: int, report_date: date
+) -> Dict[str, Any]:
+    """
+    Generate a journals report for a portfolio.
+    """
+    # For now, return an empty report structure
+    return {
+        "portfolio_id": portfolio_id,
+        "report_date": report_date.strftime("%Y-%m-%d"),
+        "report_type": "journals_report",
+        "data": {
+            "title": "Journals Report",
+            "date": report_date.strftime("%Y-%m-%d"),
+            "items": []
+        }
     }
 
 
@@ -993,3 +1238,23 @@ def generate_report_excel(
     )
 
     return excel_buffer.getvalue()
+
+
+# Export all report generator functions
+__all__ = [
+    "generate_collateral_summary",
+    "generate_guarantee_summary",
+    "generate_interest_rate_summary",
+    "generate_repayment_summary",
+    "generate_assumptions_summary",
+    "generate_amortised_loan_balances",
+    "generate_probability_default_report",
+    "generate_exposure_default_report",
+    "generate_loss_given_default_report",
+    "generate_ecl_detailed_report",
+    "generate_ecl_report_summarised",
+    "generate_local_impairment_details_report",
+    "generate_local_impairment_report_summarised",
+    "generate_journals_report",
+    "generate_report_excel",
+]
