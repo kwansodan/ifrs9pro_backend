@@ -20,7 +20,7 @@ from app.utils.pdf_generator import create_report_pdf
 from app.utils.excel_generator import create_report_excel as create_excel_file
 
 from app.calculators.ecl import (
-    calculate_effective_interest_rate,
+    calculate_effective_interest_rate_lender,
     calculate_exposure_at_default_percentage,
     calculate_probability_of_default,
     calculate_loss_given_default,
@@ -182,10 +182,11 @@ def generate_interest_rate_summary(
     loan_eirs = []
     for loan in loans:
         if loan.loan_amount and loan.monthly_installment and loan.loan_term:
-            eir = calculate_effective_interest_rate(
+            eir = calculate_effective_interest_rate_lender(
                 loan_amount=Decimal(loan.loan_amount),
-                monthly_installment=Decimal(loan.monthly_installment),
+                administrative_fees=Decimal(loan.administrative_fees) if loan.administrative_fees else Decimal(0),
                 loan_term=loan.loan_term,
+                monthly_payment=Decimal(loan.monthly_installment),
             )
             loan_eirs.append((loan, eir))
 
@@ -1056,10 +1057,11 @@ def generate_ecl_detailed_report(
         client_securities_list = client_securities.get(loan.employee_id, [])
         lgd = calculate_loss_given_default(loan, client_securities_list)
         pd = calculate_probability_of_default(loan, db)
-        eir = calculate_effective_interest_rate(
+        eir = calculate_effective_interest_rate_lender(
             loan_amount=float(loan.loan_amount) if loan.loan_amount else 0,
-            monthly_installment=float(loan.monthly_installment) if loan.monthly_installment else 0,
-            loan_term=int(loan.loan_term) if loan.loan_term else 0
+            administrative_fees=float(loan.administrative_fees) if loan.administrative_fees else 0,
+            loan_term=int(loan.loan_term) if loan.loan_term else 0,
+            monthly_payment=float(loan.monthly_installment) if loan.monthly_installment else 0
         )
         ead_percentage = calculate_exposure_at_default_percentage(loan, report_date)
         

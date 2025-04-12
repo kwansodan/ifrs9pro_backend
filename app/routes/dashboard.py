@@ -8,7 +8,6 @@ from app.database import get_db
 from app.models import Portfolio, User, Loan, Client, Report, QualityIssue, CalculationResult
 from app.auth.utils import get_current_active_user
 from app.calculators.ecl import (
-    calculate_effective_interest_rate,
     calculate_exposure_at_default_percentage,
     calculate_probability_of_default,
     calculate_loss_given_default,

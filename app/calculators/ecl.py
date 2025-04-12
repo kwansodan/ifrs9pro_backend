@@ -4,24 +4,56 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional, Tuple, List, Union, Dict, Any
 from app.models import Client
+import numpy as np
+import math
 
 
-def calculate_effective_interest_rate(loan_amount, monthly_installment, loan_term):
-    """Calculate the effective interest rate using IRR (Internal Rate of Return)"""
-    if not loan_amount or not monthly_installment or not loan_term or loan_term <= 0:
-        return 0
+def calculate_effective_interest_rate_lender(loan_amount, administrative_fees, loan_term, monthly_payment):
+    """
+    Calculates the effective annual interest rate of a loan from the lender's perspective,
+    considering administrative fees as income.
 
+    Args:
+        loan_amount (float): The original loan amount.
+        administrative_fees (float): The one-time administrative fees (lender's income).
+        loan_term (int): The loan term in months.
+        monthly_payment (float): The monthly payment amount.
+
+    Returns:
+        float: The effective annual interest rate as a percentage, or None if calculation fails.
+    """
     try:
-        # Set up cash flows: initial loan amount (negative) followed by monthly payments
-        cash_flows = [-loan_amount] + [monthly_installment] * loan_term
-        # Calculate monthly EIR
-        monthly_eir = np.irr(cash_flows)
-        # Convert to annual rate
-        annual_eir = (1 + monthly_eir) ** 12 - 1
-        return annual_eir * 100  # Convert to percentage
-    except:
-        # Fallback calculation if IRR fails to converge
-        return 0
+        total_income = loan_amount + administrative_fees #From the lender's perspective the admin fees are income.
+
+        cash_flows = [-loan_amount] + [monthly_payment] * loan_term
+
+        def irr(values, guess=0.1):
+            """Internal rate of return calculation."""
+            rate = guess
+            for _ in range(100):  # Maximum iterations
+                npv = sum(v / (1 + rate)**i for i, v in enumerate(values))
+                derivative = sum(-i * v / (1 + rate)**(i + 1) for i, v in enumerate(values))
+                rate -= npv / derivative
+                if abs(npv) < 1e-6:
+                    return rate
+            return None #failed to converge
+
+        if not all(isinstance(val, (int, float)) for val in cash_flows):
+          return None
+
+        if any(math.isnan(val) or math.isinf(val) for val in cash_flows):
+            return None
+
+        monthly_rate = irr(cash_flows)
+
+        if monthly_rate is None:
+            return None
+
+        annual_rate = monthly_rate * 12
+        return annual_rate * 100  # Return as percentage
+
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None  # Handle potential errors
 
 
 def calculate_loss_given_default(
@@ -134,11 +166,17 @@ def calculate_exposure_at_default_percentage(loan, reporting_date):
     original_amount = loan.loan_amount
 
     # Get effective interest rate (annual) and convert to monthly
-    annual_rate = calculate_effective_interest_rate(
+    annual_rate = calculate_effective_interest_rate_lender(
         loan_amount=loan.loan_amount,
-        monthly_installment=loan.monthly_installment,
+        administrative_fees=loan.administrative_fees,
         loan_term=loan.loan_term,
+        monthly_payment=loan.monthly_installment,
     )
+    
+    # Handle case when annual_rate is None
+    if annual_rate is None:
+        annual_rate = 0  # Default to 0 if calculation fails
+    
     monthly_rate = annual_rate / 12
 
     # Get loan term in months
