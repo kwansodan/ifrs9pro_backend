@@ -1436,79 +1436,96 @@ def generate_journal_report(
     db: Session, portfolio_ids: List[int], report_date: date
 ) -> Dict[str, Any]:
     """
-    Generate a journal report for multiple portfolios.
+    Generate a journal report for all portfolios.
     
     This report provides journal entries for IFRS9 impairment and credit risk reserves.
+    
+    Args:
+        db: Database session
+        portfolio_ids: List of portfolio IDs (ignored, will get all portfolios)
+        report_date: Date of the report
+    
+    Returns:
+        Dict containing the report data
     """
     portfolios_data = []
     
-    for portfolio_id in portfolio_ids:
-        # Get the portfolio
-        portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
-        if not portfolio:
-            raise ValueError(f"Portfolio with ID {portfolio_id} not found")
+    # Get all portfolios
+    all_portfolios = db.query(Portfolio).all()
+    
+    for portfolio in all_portfolios:
+        portfolio_id = portfolio.id
         
-        # Get the latest ECL calculation
-        ecl_calculation = (
-            db.query(CalculationResult)
-            .filter(
-                CalculationResult.portfolio_id == portfolio_id,
-                CalculationResult.calculation_type == "ecl"
+        # Skip portfolios without required account information
+        if not portfolio.ecl_impairment_account or not portfolio.loan_assets or not portfolio.credit_risk_reserve:
+            continue
+        
+        try:
+            # Get the latest ECL calculation
+            ecl_calculation = (
+                db.query(CalculationResult)
+                .filter(
+                    CalculationResult.portfolio_id == portfolio_id,
+                    CalculationResult.calculation_type == "ecl"
+                )
+                .order_by(CalculationResult.created_at.desc())
+                .first()
             )
-            .order_by(CalculationResult.created_at.desc())
-            .first()
-        )
-        
-        if not ecl_calculation:
-            raise ValueError(f"No ECL calculation found for portfolio {portfolio_id}")
-        
-        # Get the latest local impairment calculation
-        local_calculation = (
-            db.query(CalculationResult)
-            .filter(
-                CalculationResult.portfolio_id == portfolio_id,
-                CalculationResult.calculation_type == "local_impairment"
+            
+            if not ecl_calculation:
+                continue  # Skip portfolios without ECL calculations
+            
+            # Get the latest local impairment calculation
+            local_calculation = (
+                db.query(CalculationResult)
+                .filter(
+                    CalculationResult.portfolio_id == portfolio_id,
+                    CalculationResult.calculation_type == "local_impairment"
+                )
+                .order_by(CalculationResult.created_at.desc())
+                .first()
             )
-            .order_by(CalculationResult.created_at.desc())
-            .first()
-        )
-        
-        if not local_calculation:
-            raise ValueError(f"No local impairment calculation found for portfolio {portfolio_id}")
-        
-        # Extract total ECL from ECL calculation
-        ecl_summary = ecl_calculation.result_summary
-        total_ecl = 0
-        for stage_key in ["Stage 1", "Stage 2", "Stage 3"]:
-            stage_data = ecl_summary.get(stage_key, {})
-            total_ecl += stage_data.get("provision_amount", 0)
-        
-        # Extract total local impairment from local impairment calculation
-        local_summary = local_calculation.result_summary
-        total_local_impairment = 0
-        for category in ["Current", "OLEM", "Substandard", "Doubtful", "Loss"]:
-            category_data = local_summary.get(category, {})
-            total_local_impairment += category_data.get("provision_amount", 0)
-        
-        # Calculate risk reserve (difference between local impairment and ECL)
-        # If local impairment is greater than ECL, we need a risk reserve
-        risk_reserve = max(0, total_local_impairment - total_ecl)
-        
-        # Add portfolio data to the list
-        portfolios_data.append({
-            "portfolio_id": portfolio_id,
-            "portfolio_name": portfolio.name,
-            "ecl_impairment_account": portfolio.ecl_impairment_account,
-            "loan_assets": portfolio.loan_assets,
-            "credit_risk_reserve": portfolio.credit_risk_reserve,
-            "total_ecl": total_ecl,
-            "total_local_impairment": total_local_impairment,
-            "risk_reserve": risk_reserve
-        })
+            
+            if not local_calculation:
+                continue  # Skip portfolios without local impairment calculations
+            
+            # Extract total ECL from ECL calculation
+            ecl_summary = ecl_calculation.result_summary
+            total_ecl = 0
+            for stage_key in ["Stage 1", "Stage 2", "Stage 3"]:
+                stage_data = ecl_summary.get(stage_key, {})
+                total_ecl += stage_data.get("provision_amount", 0)
+            
+            # Extract total local impairment from local impairment calculation
+            local_summary = local_calculation.result_summary
+            total_local_impairment = 0
+            for category in ["Current", "OLEM", "Substandard", "Doubtful", "Loss"]:
+                category_data = local_summary.get(category, {})
+                total_local_impairment += category_data.get("provision_amount", 0)
+            
+            # Calculate risk reserve (difference between local impairment and ECL)
+            # If local impairment is greater than ECL, we need a risk reserve
+            risk_reserve = max(0, total_local_impairment - total_ecl)
+            
+            # Add portfolio data to the list
+            portfolios_data.append({
+                "portfolio_id": portfolio_id,
+                "portfolio_name": portfolio.name,
+                "ecl_impairment_account": portfolio.ecl_impairment_account,
+                "loan_assets": portfolio.loan_assets,
+                "credit_risk_reserve": portfolio.credit_risk_reserve,
+                "total_ecl": total_ecl,
+                "total_local_impairment": total_local_impairment,
+                "risk_reserve": risk_reserve
+            })
+        except Exception as e:
+            # Skip portfolios with errors
+            print(f"Error processing portfolio {portfolio_id}: {str(e)}")
+            continue
     
     # Create the report data structure
     return {
-        "description": f"Journal Report for {len(portfolios_data)} portfolios",
+        "description": f"Journal Report for All Portfolios ({len(portfolios_data)} portfolios)",
         "report_date": report_date,
         "report_run_date": datetime.now().date(),
         "portfolios": portfolios_data
