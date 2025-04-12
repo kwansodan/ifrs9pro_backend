@@ -203,14 +203,17 @@ def find_missing_dob(db: Session, portfolio_id: int) -> List[Dict]:
 
 def create_quality_issues_if_needed(db: Session, portfolio_id: int) -> Dict[str, int]:
     """
-    Check for quality issues and create or update QualityIssue records as needed.
+    Retrieve existing quality issues from the database without creating new ones.
     Returns count of issues by type.
+    
+    Optimized for large portfolios to prevent database timeouts.
     """
     # Get the portfolio
     portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
     if not portfolio:
         raise ValueError(f"Portfolio with ID {portfolio_id} not found")
 
+    # Initialize issue counts dictionary with default values
     issue_counts = {
         "duplicate_customer_ids": 0,
         "duplicate_addresses": 0,
@@ -219,364 +222,56 @@ def create_quality_issues_if_needed(db: Session, portfolio_id: int) -> Dict[str,
         "unmatched_employee_ids": 0,
         "loan_customer_mismatches": 0,
         "missing_dob": 0,
-        "total_issues": 0,
-        "high_severity_issues": 0,
-        "open_issues": 0,
+        "missing_addresses": 0,
+        "missing_loan_numbers": 0,
+        "missing_loan_dates": 0,
+        "missing_loan_terms": 0,
+        "missing_interest_rates": 0,
+        "missing_loan_amounts": 0,
     }
 
-    # Track existing issues to avoid double counting
-    existing_open_issues = (
+    # Get existing quality issues for this portfolio
+    existing_issues = (
         db.query(QualityIssue)
-        .filter(QualityIssue.portfolio_id == portfolio_id, QualityIssue.status == "open")
+        .filter(QualityIssue.portfolio_id == portfolio_id)
         .all()
     )
     
-    for issue in existing_open_issues:
-        issue_counts["open_issues"] += 1
-        if issue.severity == "high":
-            issue_counts["high_severity_issues"] += 1
-
-    # 1. Find duplicate customer IDs
-    duplicate_customer_ids = find_duplicate_customer_ids(db, portfolio_id)
-    if duplicate_customer_ids:
-        for group in duplicate_customer_ids:
-            # Check if this issue already exists
-            existing_issue = (
-                db.query(QualityIssue)
-                .filter(
-                    QualityIssue.portfolio_id == portfolio_id,
-                    QualityIssue.issue_type == "duplicate_customer_id",
-                    QualityIssue.status != "resolved",
-                )
-                .first()
-            )
-
-            if existing_issue:
-                # Update existing issue
-                existing_issue.affected_records = group
-                existing_issue.description = (
-                    f"Found {len(group)} clients with duplicate employee IDs"
-                )
-                db.flush()
-            else:
-                # Create new issue
-                if len(group) < 5:
-                    severity = "low"
-                elif len(group) < 10:
-                    severity = "medium"
-                else:
-                    severity = "high"
-
-                new_issue = QualityIssue(
-                    portfolio_id=portfolio_id,
-                    issue_type="duplicate_customer_id",
-                    description=f"Found {len(group)} clients with duplicate employee IDs",
-                    affected_records=group,
-                    severity=severity,
-                    status="open",
-                )
-                db.add(new_issue)
-                db.flush()
-
-                if severity == "high":
-                    issue_counts["high_severity_issues"] += 1
-
-                issue_counts["open_issues"] += 1
-
-        issue_counts["duplicate_customer_ids"] = len(duplicate_customer_ids)
-        issue_counts["total_issues"] += len(duplicate_customer_ids)
-
-    # 2. Find duplicate addresses
-    duplicate_addresses = find_duplicate_addresses(db, portfolio_id)
-    if duplicate_addresses:
-        for group in duplicate_addresses:
-            # Check if this issue already exists
-            existing_issue = (
-                db.query(QualityIssue)
-                .filter(
-                    QualityIssue.portfolio_id == portfolio_id,
-                    QualityIssue.issue_type == "duplicate_address",
-                    QualityIssue.status != "resolved",
-                )
-                .first()
-            )
-
-            if existing_issue:
-                # Update existing issue
-                existing_issue.affected_records = group
-                existing_issue.description = (
-                    f"Found {len(group)} clients with identical addresses"
-                )
-                db.flush()
-            else:
-                # Create new issue
-                if len(group) < 5:
-                    severity = "low"
-                elif len(group) < 10:
-                    severity = "medium"
-                else:
-                    severity = "high"
-
-                new_issue = QualityIssue(
-                    portfolio_id=portfolio_id,
-                    issue_type="duplicate_address",
-                    description=f"Found {len(group)} clients with identical addresses",
-                    affected_records=group,
-                    severity=severity,
-                    status="open",
-                )
-                db.add(new_issue)
-                db.flush()
-
-                if severity == "high":
-                    issue_counts["high_severity_issues"] += 1
-
-                issue_counts["open_issues"] += 1
-
-        issue_counts["duplicate_addresses"] = len(duplicate_addresses)
-        issue_counts["total_issues"] += len(duplicate_addresses)
-
-    # 3. Find duplicate DOB
-    duplicate_dob = find_duplicate_dob(db, portfolio_id)
-    if duplicate_dob:
-        for group in duplicate_dob:
-            # Check if this issue already exists
-            existing_issue = (
-                db.query(QualityIssue)
-                .filter(
-                    QualityIssue.portfolio_id == portfolio_id,
-                    QualityIssue.issue_type == "duplicate_dob",
-                    QualityIssue.status != "resolved",
-                )
-                .first()
-            )
-
-            if existing_issue:
-                # Update existing issue
-                existing_issue.affected_records = group
-                existing_issue.description = (
-                    f"Found {len(group)} clients with identical date of birth"
-                )
-                db.flush()
-            else:
-                # Create new issue
-                if len(group) < 5:
-                    severity = "low"
-                elif len(group) < 15:  # Different threshold for DOB since more common
-                    severity = "medium"
-                else:
-                    severity = "high"
-
-                new_issue = QualityIssue(
-                    portfolio_id=portfolio_id,
-                    issue_type="duplicate_dob",
-                    description=f"Found {len(group)} clients with identical date of birth",
-                    affected_records=group,
-                    severity=severity,
-                    status="open",
-                )
-                db.add(new_issue)
-                db.flush()
-
-                if severity == "high":
-                    issue_counts["high_severity_issues"] += 1
-
-                issue_counts["open_issues"] += 1
-
-        issue_counts["duplicate_dob"] = len(duplicate_dob)
-        issue_counts["total_issues"] += len(duplicate_dob)
-
-    # 3. Find duplicate loan IDs
-    duplicate_loan_ids = find_duplicate_loan_ids(db, portfolio_id)
-    if duplicate_loan_ids:
-        for group in duplicate_loan_ids:
-            # Check if this issue already exists
-            existing_issue = (
-                db.query(QualityIssue)
-                .filter(
-                    QualityIssue.portfolio_id == portfolio_id,
-                    QualityIssue.issue_type == "duplicate_loan_id",
-                    QualityIssue.status != "resolved",
-                )
-                .first()
-            )
-
-            if existing_issue:
-                # Update existing issue
-                existing_issue.affected_records = group
-                existing_issue.description = (
-                    f"Found {len(group)} loans with duplicate loan numbers"
-                )
-                db.flush()
-            else:
-                # Always high severity for duplicate loan IDs
-                severity = "high"
-
-                new_issue = QualityIssue(
-                    portfolio_id=portfolio_id,
-                    issue_type="duplicate_loan_id",
-                    description=f"Found {len(group)} loans with duplicate loan numbers",
-                    affected_records=group,
-                    severity=severity,
-                    status="open",
-                )
-                db.add(new_issue)
-                db.flush()
-
-                issue_counts["high_severity_issues"] += 1
-                issue_counts["open_issues"] += 1
-
-        issue_counts["duplicate_loan_ids"] = len(duplicate_loan_ids)
-        issue_counts["total_issues"] += len(duplicate_loan_ids)
-
-    # 4. Find unmatched employee IDs
-    unmatched_employee_ids = find_unmatched_employee_ids(db, portfolio_id)
-    if unmatched_employee_ids:
-        # Group unmatched data by type to avoid creating too many issues
-        unmatched_issue = (
-            db.query(QualityIssue)
-            .filter(
-                QualityIssue.portfolio_id == portfolio_id,
-                QualityIssue.issue_type == "unmatched_employee_ids",
-                QualityIssue.status != "resolved",
-            )
-            .first()
-        )
-
-        if unmatched_issue:
-            # Update existing issue
-            unmatched_issue.affected_records = unmatched_employee_ids
-            unmatched_issue.description = (
-                f"Found {len(unmatched_employee_ids)} customers without matching loans"
-            )
-            db.flush()
-        else:
-            # Determine severity based on number of issues
-            if len(unmatched_employee_ids) < 10:
-                severity = "low"
-            elif len(unmatched_employee_ids) < 30:
-                severity = "medium"
-            else:
-                severity = "high"
-
-            new_issue = QualityIssue(
-                portfolio_id=portfolio_id,
-                issue_type="unmatched_employee_ids",
-                description=f"Found {len(unmatched_employee_ids)} customers without matching loans",
-                affected_records=unmatched_employee_ids,
-                severity=severity,
-                status="open",
-            )
-            db.add(new_issue)
-            db.flush()
-
-            if severity == "high":
-                issue_counts["high_severity_issues"] += 1
-
-            issue_counts["open_issues"] += 1
-
-        issue_counts["unmatched_employee_ids"] = len(unmatched_employee_ids)
-        issue_counts["total_issues"] += 1  # Count as one issue type
-
-    # 5. Find loan customer mismatches
-    loan_customer_mismatches = find_loan_customer_mismatches(db, portfolio_id)
-    if loan_customer_mismatches:
-        # Group mismatches by type to avoid creating too many issues
-        mismatch_issue = (
-            db.query(QualityIssue)
-            .filter(
-                QualityIssue.portfolio_id == portfolio_id,
-                QualityIssue.issue_type == "loan_customer_mismatches",
-                QualityIssue.status != "resolved",
-            )
-            .first()
-        )
-
-        if mismatch_issue:
-            # Update existing issue
-            mismatch_issue.affected_records = loan_customer_mismatches
-            mismatch_issue.description = (
-                f"Found {len(loan_customer_mismatches)} loans without matching customers"
-            )
-            db.flush()
-        else:
-            # Determine severity based on number of issues
-            if len(loan_customer_mismatches) < 10:
-                severity = "low"
-            elif len(loan_customer_mismatches) < 30:
-                severity = "medium"
-            else:
-                severity = "high"
-
-            new_issue = QualityIssue(
-                portfolio_id=portfolio_id,
-                issue_type="loan_customer_mismatches",
-                description=f"Found {len(loan_customer_mismatches)} loans without matching customers",
-                affected_records=loan_customer_mismatches,
-                severity=severity,
-                status="open",
-            )
-            db.add(new_issue)
-            db.flush()
-
-            if severity == "high":
-                issue_counts["high_severity_issues"] += 1
-
-            issue_counts["open_issues"] += 1
-
-        issue_counts["loan_customer_mismatches"] = len(loan_customer_mismatches)
-        issue_counts["total_issues"] += 1  # Count as one issue type
-
-    # 6. Find missing DOB
-    missing_dob = find_missing_dob(db, portfolio_id)
-    if missing_dob:
-        # Group missing DOB by type to avoid creating too many issues
-        missing_dob_issue = (
-            db.query(QualityIssue)
-            .filter(
-                QualityIssue.portfolio_id == portfolio_id,
-                QualityIssue.issue_type == "missing_dob",
-                QualityIssue.status != "resolved",
-            )
-            .first()
-        )
-
-        if missing_dob_issue:
-            # Update existing issue
-            missing_dob_issue.affected_records = missing_dob
-            missing_dob_issue.description = (
-                f"Found {len(missing_dob)} customers with missing date of birth"
-            )
-            db.flush()
-        else:
-            # Determine severity based on number of issues
-            if len(missing_dob) < 10:
-                severity = "low"
-            elif len(missing_dob) < 30:
-                severity = "medium"
-            else:
-                severity = "high"
-
-            new_issue = QualityIssue(
-                portfolio_id=portfolio_id,
-                issue_type="missing_dob",
-                description=f"Found {len(missing_dob)} customers with missing date of birth",
-                affected_records=missing_dob,
-                severity=severity,
-                status="open",
-            )
-            db.add(new_issue)
-            db.flush()
-
-            if severity == "high":
-                issue_counts["high_severity_issues"] += 1
-
-            issue_counts["open_issues"] += 1
-
-        issue_counts["missing_dob"] = len(missing_dob)
-        issue_counts["total_issues"] += 1  # Count as one issue type
-
-    # Commit changes to the database
-    db.commit()
-
+    # Count issues by type
+    for issue in existing_issues:
+        issue_type = issue.issue_type
+        
+        # Map issue types to our count dictionary
+        if issue_type == "duplicate_customer_id":
+            issue_counts["duplicate_customer_ids"] += 1
+        elif issue_type == "duplicate_address":
+            issue_counts["duplicate_addresses"] += 1
+        elif issue_type == "duplicate_dob":
+            issue_counts["duplicate_dob"] += 1
+        elif issue_type == "duplicate_loan_id":
+            issue_counts["duplicate_loan_ids"] += 1
+        elif issue_type == "unmatched_employee_ids":
+            issue_counts["unmatched_employee_ids"] += 1
+        elif issue_type == "loan_customer_mismatches":
+            issue_counts["loan_customer_mismatches"] += 1
+        elif issue_type == "missing_dob":
+            issue_counts["missing_dob"] += 1
+        elif issue_type == "missing_addresses":
+            issue_counts["missing_addresses"] += 1
+        elif issue_type == "missing_loan_numbers":
+            issue_counts["missing_loan_numbers"] += 1
+        elif issue_type == "missing_loan_dates":
+            issue_counts["missing_loan_dates"] += 1
+        elif issue_type == "missing_loan_terms":
+            issue_counts["missing_loan_terms"] += 1
+        elif issue_type == "missing_interest_rates":
+            issue_counts["missing_interest_rates"] += 1
+        elif issue_type == "missing_loan_amounts":
+            issue_counts["missing_loan_amounts"] += 1
+    
+    # Calculate summary counts
+    issue_counts["total_issues"] = len(existing_issues)
+    issue_counts["high_severity_issues"] = sum(1 for issue in existing_issues if issue.severity == "high")
+    issue_counts["open_issues"] = sum(1 for issue in existing_issues if issue.status == "open")
+    
     return issue_counts
