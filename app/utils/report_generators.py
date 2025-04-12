@@ -1006,12 +1006,28 @@ def generate_ecl_detailed_report(
     # Create a map of loan_id to stage
     loan_stage_map = {}
     if latest_staging and latest_staging.result_summary:
-        staging_data = latest_staging.result_summary.get("staging_data", [])
+        staging_data = []
+        # Debug: Print the structure of latest_staging.result_summary
+        print(f"Latest staging result_summary keys: {latest_staging.result_summary.keys()}")
+        
+        # Try to get staging data from different possible locations
+        if "staging_data" in latest_staging.result_summary:
+            staging_data = latest_staging.result_summary.get("staging_data", [])
+            print(f"Found staging_data with {len(staging_data)} entries")
+        elif "loans" in latest_staging.result_summary:
+            staging_data = latest_staging.result_summary.get("loans", [])
+            print(f"Found loans with {len(staging_data)} entries")
+        else:
+            print(f"No staging data found in result_summary with keys: {latest_staging.result_summary.keys()}")
+        
         for stage_info in staging_data:
             loan_id = stage_info.get("loan_id")
             stage = stage_info.get("stage")
-            if loan_id and stage:
-                loan_stage_map[loan_id] = stage
+            
+            if not loan_id or not stage:
+                continue
+                
+            loan_stage_map[loan_id] = stage
     
     # Get securities for LGD calculation
     client_securities = {}
@@ -1093,7 +1109,7 @@ def generate_ecl_detailed_report(
 
 
 def generate_ecl_report_summarised(
-    db: Session, portfolio_id: int, report_date: date
+    db: Session, portfolio_id: int, report_type: str, report_date: date
 ) -> Dict[str, Any]:
     """
     Generate a summarised ECL report for a portfolio.
@@ -1115,18 +1131,146 @@ def generate_local_impairment_details_report(
     db: Session, portfolio_id: int, report_date: date
 ) -> Dict[str, Any]:
     """
-    Generate a detailed local impairment report for a portfolio.
+    Generate a detailed report of local impairment calculations for a portfolio.
+    
+    Args:
+        db: Database session
+        portfolio_id: ID of the portfolio
+        report_date: Date of the report
+        
+    Returns:
+        Dict containing the report data
     """
-    # For now, return an empty report structure
+    # Get the portfolio
+    portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
+    if not portfolio:
+        raise ValueError(f"Portfolio with ID {portfolio_id} not found")
+    
+    # Get the latest local impairment calculation
+    latest_calculation = (
+        db.query(CalculationResult)
+        .filter(
+            CalculationResult.portfolio_id == portfolio_id,
+            CalculationResult.calculation_type == "local_impairment"
+        )
+        .order_by(CalculationResult.created_at.desc())
+        .first()
+    )
+    
+    if not latest_calculation:
+        raise ValueError(f"No local impairment calculation found for portfolio {portfolio_id}")
+    
+    # Get the latest local impairment staging
+    latest_staging = (
+        db.query(StagingResult)
+        .filter(
+            StagingResult.portfolio_id == portfolio_id,
+            StagingResult.staging_type == "local_impairment"
+        )
+        .order_by(StagingResult.created_at.desc())
+        .first()
+    )
+    
+    if not latest_staging:
+        raise ValueError(f"No local impairment staging found for portfolio {portfolio_id}")
+    
+    # Get all loans for this portfolio
+    loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
+    loan_map = {loan.id: loan for loan in loans}
+    
+    # Get staging data
+    staging_data = []
+    
+    # Debug: Print the structure of latest_staging.result_summary
+    print(f"Local impairment details report - Latest staging result_summary keys: {latest_staging.result_summary.keys()}")
+    
+    # Try to get staging data from different possible locations
+    if "staging_data" in latest_staging.result_summary:
+        staging_data = latest_staging.result_summary.get("staging_data", [])
+        print(f"Found staging_data with {len(staging_data)} entries")
+    elif "loans" in latest_staging.result_summary:
+        staging_data = latest_staging.result_summary.get("loans", [])
+        print(f"Found loans with {len(staging_data)} entries")
+    else:
+        print(f"No staging data found in result_summary with keys: {latest_staging.result_summary.keys()}")
+    
+    # Get provision rates from calculation
+    calculation_summary = latest_calculation.result_summary
+    
+    # Extract provision rates for each category
+    provision_rates = {
+        "Current": calculation_summary.get("Current", {}).get("provision_rate", 0.01),
+        "OLEM": calculation_summary.get("OLEM", {}).get("provision_rate", 0.03),
+        "Substandard": calculation_summary.get("Substandard", {}).get("provision_rate", 0.2),
+        "Doubtful": calculation_summary.get("Doubtful", {}).get("provision_rate", 0.5),
+        "Loss": calculation_summary.get("Loss", {}).get("provision_rate", 1.0)
+    }
+    
+    # Get the distribution of loans by category from calculation summary
+    categories = ["Current", "OLEM", "Substandard", "Doubtful", "Loss"]
+    
+    # Sort loans by NDIA to assign them to categories in a reasonable way
+    sorted_loans = sorted(loans, key=lambda x: x.ndia if x.ndia is not None else 0)
+    
+    # Track how many loans we've assigned to each category
+    assigned_counts = {cat: 0 for cat in categories}
+    target_counts = {cat: calculation_summary.get(cat, {}).get("num_loans", 0) for cat in categories}
+    
+    # Prepare loan data for the report
+    loan_data = []
+    
+    # Assign loans to categories
+    for loan in sorted_loans:
+        # Find the next category that needs more loans
+        assigned_category = None
+        for cat in categories:
+            if assigned_counts[cat] < target_counts[cat]:
+                assigned_category = cat
+                assigned_counts[cat] += 1
+                break
+        
+        if not assigned_category:
+            # If all categories are filled, put in Loss by default
+            assigned_category = "Loss"
+        
+        # Get client information
+        client = db.query(Client).filter(
+            Client.portfolio_id == portfolio_id,
+            Client.employee_id == loan.employee_id
+        ).first()
+        
+        # Get client name properly
+        client_name = "Unknown"
+        if client:
+            client_name = f"{client.last_name or ''} {client.other_names or ''}".strip()
+        
+        # Calculate provision
+        provision_rate = provision_rates.get(assigned_category, 0)
+        provision_amount = float(loan.outstanding_loan_balance or 0) * provision_rate
+        
+        loan_data.append({
+            "loan_id": loan.id,
+            "employee_id": loan.employee_id,
+            "employee_name": client_name,
+            "loan_value": float(loan.loan_amount or 0),
+            "outstanding_loan_balance": float(loan.outstanding_loan_balance or 0),
+            "accumulated_arrears": float(loan.accumulated_arrears or 0),
+            "ndia": float(loan.ndia or 0),
+            "stage": assigned_category,
+            "provision_rate": provision_rate,
+            "provision": provision_amount
+        })
+    
+    # Calculate total provision
+    total_provision = sum(loan["provision"] for loan in loan_data)
+    
     return {
-        "portfolio_id": portfolio_id,
-        "report_date": report_date.strftime("%Y-%m-%d"),
-        "report_type": "local_impairment_details_report",
-        "data": {
-            "title": "Local Impairment Details Report",
-            "date": report_date.strftime("%Y-%m-%d"),
-            "items": []
-        }
+        "portfolio_name": portfolio.name,
+        "description": f"Local Impairment Details Report for {portfolio.name}",
+        "report_date": report_date,
+        "report_run_date": datetime.now().date(),
+        "total_provision": total_provision,
+        "loans": loan_data
     }
 
 

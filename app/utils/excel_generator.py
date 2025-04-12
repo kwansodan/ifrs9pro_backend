@@ -33,6 +33,8 @@ def create_report_excel(
     # Handle specialized report types
     if report_type.lower() == "ecl_detailed_report":
         return populate_ecl_detailed_report(wb, portfolio_name, report_date, report_data)
+    elif report_type.lower() == "local_impairment_details_report":
+        return populate_local_impairment_details_report(wb, portfolio_name, report_date, report_data)
     
     # Default handling for other report types
     ws = wb.active
@@ -323,6 +325,86 @@ def populate_ecl_detailed_report(
         # ECL with currency format
         ws.cell(row=row, column=13, value=loan.get('ecl', 0))
         ws.cell(row=row, column=13).number_format = currency_format
+    
+    # Save to BytesIO
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+def populate_local_impairment_details_report(
+    wb: Workbook, 
+    portfolio_name: str, 
+    report_date: date, 
+    report_data: Dict[str, Any]
+) -> BytesIO:
+    """
+    Populate the local impairment detailed report template with data.
+    
+    Args:
+        wb: Excel workbook (template)
+        portfolio_name: Name of the portfolio
+        report_date: Date of the report
+        report_data: Data for the report
+        
+    Returns:
+        BytesIO: Excel file as bytes buffer
+    """
+    # Get the main worksheet (should be the first one)
+    ws = wb.active
+    
+    # Define number formats
+    currency_format = '#,##0.00'
+    percentage_format = '0.00%'
+    
+    # Populate header information
+    ws['B3'] = report_date
+    ws['B4'] = report_data.get('report_run_date', datetime.now().strftime("%Y-%m-%d"))
+    ws['B6'] = report_data.get('description', f"Local Impairment Details Report for {portfolio_name}")
+    
+    # Populate total provision
+    ws['B12'] = report_data.get('total_provision', 0)
+    ws['B12'].number_format = currency_format
+    
+    # Populate loan details starting from row 15
+    loans = report_data.get('loans', [])
+    start_row = 15
+    
+    for i, loan in enumerate(loans, start=0):
+        row = start_row + i
+        
+        # Map loan data to columns
+        ws.cell(row=row, column=1, value=loan.get('loan_id', ''))
+        ws.cell(row=row, column=2, value=loan.get('employee_id', ''))
+        ws.cell(row=row, column=3, value=loan.get('employee_name', ''))
+        
+        # Loan value with currency format
+        ws.cell(row=row, column=4, value=loan.get('loan_value', 0))
+        ws.cell(row=row, column=4).number_format = currency_format
+        
+        # Outstanding loan balance with currency format
+        ws.cell(row=row, column=5, value=loan.get('outstanding_loan_balance', 0))
+        ws.cell(row=row, column=5).number_format = currency_format
+        
+        # Accumulated arrears with currency format
+        ws.cell(row=row, column=6, value=loan.get('accumulated_arrears', 0))
+        ws.cell(row=row, column=6).number_format = currency_format
+        
+        # NDIA with currency format
+        ws.cell(row=row, column=7, value=loan.get('ndia', 0))
+        ws.cell(row=row, column=7).number_format = currency_format
+        
+        # Stage (local impairment category)
+        ws.cell(row=row, column=8, value=loan.get('stage', ''))
+        
+        # Provision rate as percentage
+        ws.cell(row=row, column=9, value=loan.get('provision_rate', 0))
+        ws.cell(row=row, column=9).number_format = percentage_format
+        
+        # Provision amount with currency format
+        ws.cell(row=row, column=10, value=loan.get('provision', 0))
+        ws.cell(row=row, column=10).number_format = currency_format
     
     # Save to BytesIO
     buffer = BytesIO()
