@@ -214,729 +214,416 @@ def get_portfolios(
     return {"items": response_items, "total": total}
 
 @router.get("/{portfolio_id}", response_model=PortfolioWithSummaryResponse)
-def get_portfolio(
+def fast_get_portfolio(
     portfolio_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
-    Retrieve a specific portfolio by ID including overview, customer summary, quality checks,
-    latest staging and calculation results, and report history.
+    optimized endpoint for retrieving portfolio details with 70K+ loans/clients.
+    Uses direct SQL queries and minimal processing to ensure fast response times.
     """
-    # First, fetch just the portfolio metadata (without joins)
-    portfolio = (
-        db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
-        .first()
-    )
-
-    if not portfolio:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
-        )
-
-    # OPTIMIZATION: Fetch loan and client counts with optimized queries
-    # Use count queries for faster performance
-    total_loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).count()
-    has_ingested_data = total_loans > 0
-
-     # Check if ECL calculation exists
-    has_calculated_ecl = db.query(CalculationResult).filter(
-        CalculationResult.portfolio_id == portfolio_id,
-        CalculationResult.calculation_type == "ecl"
-    ).limit(1).count() > 0
-    
-    # Check if local impairment calculation exists
-    has_calculated_local_impairment = db.query(CalculationResult).filter(
-        CalculationResult.portfolio_id == portfolio_id,
-        CalculationResult.calculation_type == "local_impairment"
-    ).limit(1).count() > 0
-
-    
-    # Check if portfolio has quality issues at all
-    has_issues = db.query(QualityIssue).filter(
-        QualityIssue.portfolio_id == portfolio.id
-    ).first() is not None
-
-    # Only check approval status if there are issues
-    has_all_issues_approved = None
-    if has_issues:
-        has_open_issues = db.query(QualityIssue).filter(
-            QualityIssue.portfolio_id == portfolio.id,
-            QualityIssue.status != "approved"
-        ).first() is not None
-        has_all_issues_approved = not has_open_issues
-    
-
-    
-    # Get clients count
-    total_customers = db.query(Client).filter(Client.portfolio_id == portfolio_id).count()
-    
-    # OPTIMIZATION: Use SQL aggregation for loan value statistics
-    loan_stats = db.query(
-        func.sum(Loan.loan_amount).label("total_loan_value"),
-        func.avg(Loan.loan_amount).label("average_loan_amount")
-    ).filter(Loan.portfolio_id == portfolio_id).first()
-    
-    total_loan_value = loan_stats.total_loan_value or 0
-    average_loan_amount = loan_stats.average_loan_amount or 0
-
-    # OPTIMIZATION: Use SQL for customer type aggregation
-    customer_stats = db.query(
-        func.sum(case((Client.client_type == "consumer", 1), else_=0)).label("individual_customers"),
-        func.sum(case((Client.client_type == "institution", 1), else_=0)).label("institutions"),
-        func.sum(case((Client.client_type.notin_(["consumer", "institution"]), 1), else_=0)).label("mixed")
-    ).filter(Client.portfolio_id == portfolio_id).first()
-    
-    individual_customers = customer_stats.individual_customers or 0
-    institutions = customer_stats.institutions or 0
-    mixed = customer_stats.mixed or 0
-    
-    # OPTIMIZATION: Calculate active customers with a subquery
-    active_loans = db.query(Loan.employee_id).filter(
-        Loan.portfolio_id == portfolio_id,
-        Loan.paid == False
-    ).distinct().subquery()
-    
-    active_customers = db.query(Client).filter(
-        Client.portfolio_id == portfolio_id,
-        Client.employee_id.in_(active_loans)
-    ).count()
-
-    # Run quality checks and create issues if necessary
-    quality_counts = create_quality_issues_if_needed(db, portfolio_id)
-
-    quality_check_summary = QualityCheckSummary(
-        duplicate_customer_ids=quality_counts["duplicate_customer_ids"],
-        duplicate_addresses=quality_counts["duplicate_addresses"],
-        duplicate_dob=quality_counts["duplicate_dob"],
-        duplicate_loan_ids=quality_counts["duplicate_loan_ids"],
-        unmatched_employee_ids=quality_counts["unmatched_employee_ids"],
-        loan_customer_mismatches=quality_counts["loan_customer_mismatches"],
-        missing_dob=quality_counts["missing_dob"],
-        total_issues=quality_counts["total_issues"],
-        high_severity_issues=quality_counts["high_severity_issues"],
-        open_issues=quality_counts["open_issues"],
-    )
-    
-    # Fetch report history
-    report_history = (
-        db.query(Report)
-        .filter(Report.portfolio_id == portfolio_id)
-        .order_by(Report.created_at.desc())
-        .all()
-    )
-
-    # OPTIMIZATION: Use separate queries for staging and calculation results
-    # Get latest staging results
-    latest_local_impairment_staging = (
-        db.query(StagingResult)
-        .filter(
-            StagingResult.portfolio_id == portfolio_id,
-            StagingResult.staging_type == "local_impairment"
-        )
-        .order_by(StagingResult.created_at.desc())
-        .first()
-    )
-    
-    latest_ecl_staging = (
-        db.query(StagingResult)
-        .filter(
-            StagingResult.portfolio_id == portfolio_id,
-            StagingResult.staging_type == "ecl"
-        )
-        .order_by(StagingResult.created_at.desc())
-        .first()
-    )
-    
-    # Get latest calculation results
-    latest_local_impairment_calculation = (
-        db.query(CalculationResult)
-        .filter(
-            CalculationResult.portfolio_id == portfolio_id,
-            CalculationResult.calculation_type == "local_impairment"
-        )
-        .order_by(CalculationResult.created_at.desc())
-        .first()
-    )
-    
-    latest_ecl_calculation = (
-        db.query(CalculationResult)
-        .filter(
+    try:
+        # Verify portfolio exists and user has access
+        portfolio = db.query(Portfolio).filter(
+            Portfolio.id == portfolio_id, 
+            Portfolio.user_id == current_user.id
+        ).first()
+        
+        if not portfolio:
+            raise HTTPException(status_code=404, detail="Portfolio not found")
+        
+        # Basic loan statistics
+        loan_count = db.query(func.count(Loan.id)).filter(Loan.portfolio_id == portfolio_id).scalar() or 0
+        has_ingested_data = loan_count > 0
+        
+        # Check flags
+        has_calculated_ecl = db.query(CalculationResult).filter(
             CalculationResult.portfolio_id == portfolio_id,
             CalculationResult.calculation_type == "ecl"
+        ).limit(1).count() > 0
+        
+        has_calculated_local_impairment = db.query(CalculationResult).filter(
+            CalculationResult.portfolio_id == portfolio_id,
+            CalculationResult.calculation_type == "local_impairment"
+        ).limit(1).count() > 0
+        
+        # Check quality issues
+        has_issues = db.query(QualityIssue).filter(
+            QualityIssue.portfolio_id == portfolio_id
+        ).first() is not None
+
+        # Only check approval status if there are issues
+        has_all_issues_approved = None
+        if has_issues:
+            has_open_issues = db.query(QualityIssue).filter(
+                QualityIssue.portfolio_id == portfolio_id,
+                QualityIssue.status != "approved"
+            ).first() is not None
+            has_all_issues_approved = not has_open_issues
+        
+        # Get aggregate statistics in one query
+        loan_stats = db.query(
+            func.count(Loan.id).label("total_loans"),
+            func.sum(Loan.outstanding_loan_balance).label("total_loan_value"),
+            func.avg(Loan.loan_amount).label("average_loan_amount")
+        ).filter(Loan.portfolio_id == portfolio_id).first()
+        
+        total_loans = loan_stats.total_loans or 0
+        total_loan_value = float(loan_stats.total_loan_value or 0)
+        average_loan_amount = float(loan_stats.average_loan_amount or 0)
+
+        # Customer statistics
+        customer_stats = db.query(
+            func.count(Client.id).label("total_customers"),
+            func.sum(case((Client.client_type == "consumer", 1), else_=0)).label("individual_customers"),
+            func.sum(case((Client.client_type == "institution", 1), else_=0)).label("institutions"),
+            func.sum(case((Client.client_type.notin_(["consumer", "institution"]), 1), else_=0)).label("mixed")
+        ).filter(Client.portfolio_id == portfolio_id).first()
+        
+        total_customers = customer_stats.total_customers or 0
+        individual_customers = customer_stats.individual_customers or 0
+        institutions = customer_stats.institutions or 0
+        mixed = customer_stats.mixed or 0
+        
+        # Active customers
+        active_loans = db.query(Loan.employee_id).filter(
+            Loan.portfolio_id == portfolio_id,
+            Loan.paid == False
+        ).distinct().subquery()
+        
+        active_customers = db.query(Client).filter(
+            Client.portfolio_id == portfolio_id,
+            Client.employee_id.in_(active_loans)
+        ).count()
+        
+        # Get quality checks
+        quality_counts = create_quality_issues_if_needed(db, portfolio_id)
+        
+        quality_check_summary = QualityCheckSummary(
+            duplicate_customer_ids=quality_counts["duplicate_customer_ids"],
+            duplicate_addresses=quality_counts["duplicate_addresses"],
+            duplicate_dob=quality_counts["duplicate_dob"],
+            duplicate_loan_ids=quality_counts["duplicate_loan_ids"],
+            unmatched_employee_ids=quality_counts["unmatched_employee_ids"],
+            loan_customer_mismatches=quality_counts["loan_customer_mismatches"],
+            missing_dob=quality_counts["missing_dob"],
+            total_issues=quality_counts["total_issues"],
+            high_severity_issues=quality_counts["high_severity_issues"],
+            open_issues=quality_counts["open_issues"],
         )
-        .order_by(CalculationResult.created_at.desc())
-        .first()
-    )
-    
-    # Log calculation results for debugging
-    logger.info(f"Portfolio {portfolio_id} - ECL Calculation: {latest_ecl_calculation}")
-    if latest_ecl_calculation:
-        logger.info(f"ECL Calculation ID: {latest_ecl_calculation.id}")
-        logger.info(f"ECL Calculation Date: {latest_ecl_calculation.created_at}")
-        logger.info(f"ECL Total Provision: {latest_ecl_calculation.total_provision}")
-        logger.info(f"ECL Result Summary Keys: {latest_ecl_calculation.result_summary.keys() if latest_ecl_calculation.result_summary else 'None'}")
-    
-    logger.info(f"Portfolio {portfolio_id} - Local Impairment Calculation: {latest_local_impairment_calculation}")
-    if latest_local_impairment_calculation:
-        logger.info(f"Local Impairment Calculation ID: {latest_local_impairment_calculation.id}")
-        logger.info(f"Local Impairment Calculation Date: {latest_local_impairment_calculation.created_at}")
-        logger.info(f"Local Impairment Total Provision: {latest_local_impairment_calculation.total_provision}")
-        logger.info(f"Local Impairment Result Summary Keys: {latest_local_impairment_calculation.result_summary.keys() if latest_local_impairment_calculation.result_summary else 'None'}")
-    
-    # Process staging results
-    staging_summary = None
-    if latest_ecl_staging or latest_local_impairment_staging:
-        staging_summary = {}
         
-        # Process ECL staging if available
-        if latest_ecl_staging:
-            ecl_result = latest_ecl_staging.result_summary
-            ecl_config = latest_ecl_staging.config
+        # Fetch report history (most recent 10)
+        report_history = (
+            db.query(Report)
+            .filter(Report.portfolio_id == portfolio_id)
+            .order_by(Report.created_at.desc())
+            .limit(10)
+            .all()
+        )
+        
+        # Get latest staging and calculation results
+        latest_ecl_staging = (
+            db.query(StagingResult)
+            .filter(
+                StagingResult.portfolio_id == portfolio_id,
+                StagingResult.staging_type == "ecl"
+            )
+            .order_by(StagingResult.created_at.desc())
+            .first()
+        )
+        
+        latest_local_impairment_staging = (
+            db.query(StagingResult)
+            .filter(
+                StagingResult.portfolio_id == portfolio_id,
+                StagingResult.staging_type == "local_impairment"
+            )
+            .order_by(StagingResult.created_at.desc())
+            .first()
+        )
+        
+        latest_ecl_calculation = (
+            db.query(CalculationResult)
+            .filter(
+                CalculationResult.portfolio_id == portfolio_id,
+                CalculationResult.calculation_type == "ecl"
+            )
+            .order_by(CalculationResult.created_at.desc())
+            .first()
+        )
+        
+        latest_local_impairment_calculation = (
+            db.query(CalculationResult)
+            .filter(
+                CalculationResult.portfolio_id == portfolio_id,
+                CalculationResult.calculation_type == "local_impairment"
+            )
+            .order_by(CalculationResult.created_at.desc())
+            .first()
+        )
+        
+        # Process staging results
+        staging_summary = None
+        if latest_ecl_staging or latest_local_impairment_staging:
+            staging_summary = {}
             
-            # Debug: Print the structure of the staging result
-            print(f"ECL Staging Result Structure: {ecl_result.keys()}")
-            
-            # Get all loans for this portfolio to ensure we have data
-            all_loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
-            
-            # Calculate loan counts and balances directly from the database
-            stage_1_loans = []
-            stage_2_loans = []
-            stage_3_loans = []
-            
-            # Use the staging data to determine which loans are in which stage
-            if "staging_data" in ecl_result and isinstance(ecl_result["staging_data"], list):
-                loan_stage_map = {}
-                for loan_data in ecl_result["staging_data"]:
-                    loan_id = loan_data.get("loan_id")
-                    stage = loan_data.get("stage")
-                    if loan_id and stage:
-                        loan_stage_map[loan_id] = stage
+            # Process ECL staging
+            if latest_ecl_staging and latest_ecl_staging.result_summary:
+                ecl_result = latest_ecl_staging.result_summary
+                ecl_config = latest_ecl_staging.config
                 
-                # Assign loans to stages based on the staging data
-                for loan in all_loans:
-                    stage = loan_stage_map.get(loan.id)
-                    if stage == "Stage 1":
-                        stage_1_loans.append(loan)
-                    elif stage == "Stage 2":
-                        stage_2_loans.append(loan)
-                    elif stage == "Stage 3":
-                        stage_3_loans.append(loan)
-            else:
-                # If no staging data, use days past due to determine stage
-                for loan in all_loans:
-                    days_past_due = (datetime.now().date() - loan.maturity_period).days if loan.maturity_period else 0
+                # We'll use the result summary directly if it has the right structure
+                if "Stage 1" in ecl_result and isinstance(ecl_result["Stage 1"], dict):
+                    stage_1_data = {
+                        "num_loans": int(ecl_result["Stage 1"].get("num_loans", 0)),
+                        "outstanding_loan_balance": float(ecl_result["Stage 1"].get("outstanding_loan_balance", 0))
+                    }
                     
-                    # Use the config to determine stage
-                    stage_1_range = ecl_config.get("stage_1", {}).get("days_range", "0-30")
-                    stage_2_range = ecl_config.get("stage_2", {}).get("days_range", "31-90")
+                    stage_2_data = {
+                        "num_loans": int(ecl_result["Stage 2"].get("num_loans", 0)),
+                        "outstanding_loan_balance": float(ecl_result["Stage 2"].get("outstanding_loan_balance", 0))
+                    }
                     
-                    stage_1_max = int(stage_1_range.split("-")[1]) if "-" in stage_1_range else 30
-                    stage_2_max = int(stage_2_range.split("-")[1]) if "-" in stage_2_range else 90
+                    stage_3_data = {
+                        "num_loans": int(ecl_result["Stage 3"].get("num_loans", 0)),
+                        "outstanding_loan_balance": float(ecl_result["Stage 3"].get("outstanding_loan_balance", 0))
+                    }
+                else:
+                    # Extract aggregated data from the summary
+                    stage_1_data = {
+                        "num_loans": int(ecl_result.get("stage1_count", 0)),
+                        "outstanding_loan_balance": float(ecl_result.get("stage1_total", 0))
+                    }
                     
-                    if days_past_due <= stage_1_max:
-                        stage_1_loans.append(loan)
-                    elif days_past_due <= stage_2_max:
-                        stage_2_loans.append(loan)
-                    else:
-                        stage_3_loans.append(loan)
-            
-            # Calculate balances
-            stage_1_balance = sum(float(loan.outstanding_loan_balance) for loan in stage_1_loans if loan.outstanding_loan_balance)
-            stage_2_balance = sum(float(loan.outstanding_loan_balance) for loan in stage_2_loans if loan.outstanding_loan_balance)
-            stage_3_balance = sum(float(loan.outstanding_loan_balance) for loan in stage_3_loans if loan.outstanding_loan_balance)
-            
-            # Set the stage data
-            stage_1_data = {
-                "num_loans": len(stage_1_loans),
-                "outstanding_loan_balance": stage_1_balance
-            }
-            
-            stage_2_data = {
-                "num_loans": len(stage_2_loans),
-                "outstanding_loan_balance": stage_2_balance
-            }
-            
-            stage_3_data = {
-                "num_loans": len(stage_3_loans),
-                "outstanding_loan_balance": stage_3_balance
-            }
-            
-            # Create ECL staging summary with config
-            staging_summary["ecl"] = {
-                "Stage 1": stage_1_data,
-                "Stage 2": stage_2_data,
-                "Stage 3": stage_3_data,
-                "staging_date": latest_ecl_staging.created_at,
-                "config": ecl_config
-            }
-        
-        # Process local impairment staging if available
-        if latest_local_impairment_staging:
-            local_result = latest_local_impairment_staging.result_summary
-            local_config = latest_local_impairment_staging.config
-            
-            # Debug: Print the structure of the staging result
-            print(f"Local Impairment Staging Result Structure: {local_result.keys()}")
-            
-            # Get all loans for this portfolio to ensure we have data
-            all_loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
-            
-            # Calculate loan counts and balances directly from the database
-            current_loans = []
-            olem_loans = []
-            substandard_loans = []
-            doubtful_loans = []
-            loss_loans = []
-            
-            # Use the staging data to determine which loans are in which category
-            if "staging_data" in local_result and isinstance(local_result["staging_data"], list):
-                loan_stage_map = {}
-                for loan_data in local_result["staging_data"]:
-                    loan_id = loan_data.get("loan_id")
-                    stage = loan_data.get("stage")
-                    if loan_id and stage:
-                        loan_stage_map[loan_id] = stage
+                    stage_2_data = {
+                        "num_loans": int(ecl_result.get("stage2_count", 0)),
+                        "outstanding_loan_balance": float(ecl_result.get("stage2_total", 0))
+                    }
+                    
+                    stage_3_data = {
+                        "num_loans": int(ecl_result.get("stage3_count", 0)),
+                        "outstanding_loan_balance": float(ecl_result.get("stage3_total", 0))
+                    }
                 
-                # Assign loans to categories based on the staging data
-                for loan in all_loans:
-                    stage = loan_stage_map.get(loan.id)
-                    if stage == "Current":
-                        current_loans.append(loan)
-                    elif stage == "OLEM":
-                        olem_loans.append(loan)
-                    elif stage == "Substandard":
-                        substandard_loans.append(loan)
-                    elif stage == "Doubtful":
-                        doubtful_loans.append(loan)
-                    elif stage == "Loss":
-                        loss_loans.append(loan)
-            else:
-                # If no staging data, use days past due to determine category
-                for loan in all_loans:
-                    days_past_due = (datetime.now().date() - loan.maturity_period).days if loan.maturity_period else 0
-                    
-                    # Use the config to determine category
-                    current_range = local_config.get("current", {}).get("days_range", "0-30")
-                    olem_range = local_config.get("olem", {}).get("days_range", "31-90")
-                    substandard_range = local_config.get("substandard", {}).get("days_range", "91-180")
-                    doubtful_range = local_config.get("doubtful", {}).get("days_range", "181-365")
-                    
-                    current_max = int(current_range.split("-")[1]) if "-" in current_range else 30
-                    olem_max = int(olem_range.split("-")[1]) if "-" in olem_range else 90
-                    substandard_max = int(substandard_range.split("-")[1]) if "-" in substandard_range else 180
-                    doubtful_max = int(doubtful_range.split("-")[1]) if "-" in doubtful_range else 365
-                    
-                    if days_past_due <= current_max:
-                        current_loans.append(loan)
-                    elif days_past_due <= olem_max:
-                        olem_loans.append(loan)
-                    elif days_past_due <= substandard_max:
-                        substandard_loans.append(loan)
-                    elif days_past_due <= doubtful_max:
-                        doubtful_loans.append(loan)
-                    else:
-                        loss_loans.append(loan)
+                staging_summary["ecl"] = {
+                    "Stage 1": stage_1_data,
+                    "Stage 2": stage_2_data,
+                    "Stage 3": stage_3_data,
+                    "staging_date": latest_ecl_staging.created_at,
+                    "config": ecl_config
+                }
             
-            # Calculate balances
-            current_balance = sum(float(loan.outstanding_loan_balance) for loan in current_loans if loan.outstanding_loan_balance)
-            olem_balance = sum(float(loan.outstanding_loan_balance) for loan in olem_loans if loan.outstanding_loan_balance)
-            substandard_balance = sum(float(loan.outstanding_loan_balance) for loan in substandard_loans if loan.outstanding_loan_balance)
-            doubtful_balance = sum(float(loan.outstanding_loan_balance) for loan in doubtful_loans if loan.outstanding_loan_balance)
-            loss_balance = sum(float(loan.outstanding_loan_balance) for loan in loss_loans if loan.outstanding_loan_balance)
-            
-            # Set the category data
-            current_data = {
-                "num_loans": len(current_loans),
-                "outstanding_loan_balance": current_balance
-            }
-            
-            olem_data = {
-                "num_loans": len(olem_loans),
-                "outstanding_loan_balance": olem_balance
-            }
-            
-            substandard_data = {
-                "num_loans": len(substandard_loans),
-                "outstanding_loan_balance": substandard_balance
-            }
-            
-            doubtful_data = {
-                "num_loans": len(doubtful_loans),
-                "outstanding_loan_balance": doubtful_balance
-            }
-            
-            loss_data = {
-                "num_loans": len(loss_loans),
-                "outstanding_loan_balance": loss_balance
-            }
-            
-            # Create local impairment staging summary with config
-            staging_summary["local_impairment"] = {
-                "Current": current_data,
-                "OLEM": olem_data,
-                "Substandard": substandard_data,
-                "Doubtful": doubtful_data,
-                "Loss": loss_data,
-                "staging_date": latest_local_impairment_staging.created_at,
-                "config": local_config
-            }
-
-    # Process calculation results
-    calculation_summary = None
-    if latest_ecl_calculation or latest_local_impairment_calculation:
-        # Get the total loan value from earlier calculation
-        total_value = round(float(total_loan_value), 2)
-        
-        # Initialize calculation summary
-        calculation_summary = {
-            "total_loan_value": total_value,
-        }
-        
-        # Add ECL detailed summary if available
-        if latest_ecl_calculation:
-            # Get the detailed result summary
-            ecl_summary = latest_ecl_calculation.result_summary
-            ecl_config = latest_ecl_calculation.config
-            
-            # Debug: Print the structure of the calculation result
-            print(f"ECL Calculation Result Structure: {ecl_summary.keys()}")
-            
-            # Extract stage-specific data from the result_summary
-            stage_1_data = {
-                "num_loans": ecl_summary.get("Stage 1", {}).get("num_loans", 0),
-                "total_loan_value": ecl_summary.get("Stage 1", {}).get("total_loan_value", 0),
-                "provision_amount": ecl_summary.get("Stage 1", {}).get("provision_amount", 0),
-                "provision_rate": ecl_summary.get("Stage 1", {}).get("provision_rate", 0.01)
-            }
-            
-            stage_2_data = {
-                "num_loans": ecl_summary.get("Stage 2", {}).get("num_loans", 0),
-                "total_loan_value": ecl_summary.get("Stage 2", {}).get("total_loan_value", 0),
-                "provision_amount": ecl_summary.get("Stage 2", {}).get("provision_amount", 0),
-                "provision_rate": ecl_summary.get("Stage 2", {}).get("provision_rate", 0.05)
-            }
-            
-            stage_3_data = {
-                "num_loans": ecl_summary.get("Stage 3", {}).get("num_loans", 0),
-                "total_loan_value": ecl_summary.get("Stage 3", {}).get("total_loan_value", 0),
-                "provision_amount": ecl_summary.get("Stage 3", {}).get("provision_amount", 0),
-                "provision_rate": ecl_summary.get("Stage 3", {}).get("provision_rate", 0.1)
-            }
-            
-            calculation_summary["ecl"] = {
-                "Stage 1": stage_1_data,
-                "Stage 2": stage_2_data,
-                "Stage 3": stage_3_data,
-                "total_provision": float(latest_ecl_calculation.total_provision),
-                "provision_percentage": float(latest_ecl_calculation.provision_percentage),
-                "calculation_date": latest_ecl_calculation.created_at,
-                "config": ecl_config
-            }
-            
-        # Add local impairment detailed summary if available
-        if latest_local_impairment_calculation:
-            # Get the detailed result summary
-            local_summary = latest_local_impairment_calculation.result_summary
-            local_config = latest_local_impairment_calculation.config
-            
-            # Extract category-specific data from the result_summary
-            current_data = {
-                "num_loans": local_summary.get("Current", {}).get("num_loans", local_summary.get("current_count", 0)),
-                "total_loan_value": local_summary.get("Current", {}).get("total_loan_value", local_summary.get("current_total", 0)),
-                "provision_amount": local_summary.get("Current", {}).get("provision_amount", local_summary.get("current_provision", 0)),
-                "provision_rate": local_summary.get("Current", {}).get("provision_rate", local_summary.get("current_provision_rate", 0))
-            }
-            
-            olem_data = {
-                "num_loans": local_summary.get("OLEM", {}).get("num_loans", local_summary.get("olem_count", 0)),
-                "total_loan_value": local_summary.get("OLEM", {}).get("total_loan_value", local_summary.get("olem_total", 0)),
-                "provision_amount": local_summary.get("OLEM", {}).get("provision_amount", local_summary.get("olem_provision", 0)),
-                "provision_rate": local_summary.get("OLEM", {}).get("provision_rate", local_summary.get("olem_provision_rate", 0))
-            }
-            
-            substandard_data = {
-                "num_loans": local_summary.get("Substandard", {}).get("num_loans", local_summary.get("substandard_count", 0)),
-                "total_loan_value": local_summary.get("Substandard", {}).get("total_loan_value", local_summary.get("substandard_total", 0)),
-                "provision_amount": local_summary.get("Substandard", {}).get("provision_amount", local_summary.get("substandard_provision", 0)),
-                "provision_rate": local_summary.get("Substandard", {}).get("provision_rate", local_summary.get("substandard_provision_rate", 0))
-            }
-            
-            doubtful_data = {
-                "num_loans": local_summary.get("Doubtful", {}).get("num_loans", local_summary.get("doubtful_count", 0)),
-                "total_loan_value": local_summary.get("Doubtful", {}).get("total_loan_value", local_summary.get("doubtful_total", 0)),
-                "provision_amount": local_summary.get("Doubtful", {}).get("provision_amount", local_summary.get("doubtful_provision", 0)),
-                "provision_rate": local_summary.get("Doubtful", {}).get("provision_rate", local_summary.get("doubtful_provision_rate", 0))
-            }
-            
-            loss_data = {
-                "num_loans": local_summary.get("Loss", {}).get("num_loans", local_summary.get("loss_count", 0)),
-                "total_loan_value": local_summary.get("Loss", {}).get("total_loan_value", local_summary.get("loss_total", 0)),
-                "provision_amount": local_summary.get("Loss", {}).get("provision_amount", local_summary.get("loss_provision", 0)),
-                "provision_rate": local_summary.get("Loss", {}).get("provision_rate", local_summary.get("loss_provision_rate", 0))
-            }
-            
-            calculation_summary["local_impairment"] = {
-                "Current": current_data,
-                "OLEM": olem_data,
-                "Substandard": substandard_data,
-                "Doubtful": doubtful_data,
-                "Loss": loss_data,
-                "total_provision": float(latest_local_impairment_calculation.total_provision),
-                "provision_percentage": float(latest_local_impairment_calculation.provision_percentage),
-                "calculation_date": latest_local_impairment_calculation.created_at,
-                "config": local_config
-            }
-
-    # Process staging results
-    staging_summary = None
-    if latest_ecl_staging or latest_local_impairment_staging:
-        staging_summary = {}
-        
-        # Process ECL staging if available
-        if latest_ecl_staging:
-            ecl_result = latest_ecl_staging.result_summary
-            ecl_config = latest_ecl_staging.config
-            
-            # Extract data for each stage
-            stage_1_data = None
-            stage_2_data = None
-            stage_3_data = None
-            
-            # Check if we have the newer format with detailed loan data
-            if "loans" in ecl_result:
-                # Use a more efficient method to calculate totals
-                stage_1_loans = [loan for loan in ecl_result["loans"] if loan.get("stage") == "Stage 1"]
-                stage_2_loans = [loan for loan in ecl_result["loans"] if loan.get("stage") == "Stage 2"]
-                stage_3_loans = [loan for loan in ecl_result["loans"] if loan.get("stage") == "Stage 3"]
+            # Process local impairment staging
+            if latest_local_impairment_staging and latest_local_impairment_staging.result_summary:
+                local_result = latest_local_impairment_staging.result_summary
+                local_config = latest_local_impairment_staging.config
                 
-                stage_1_balance = sum(float(loan.get("outstanding_loan_balance", 0)) for loan in stage_1_loans)
-                stage_2_balance = sum(float(loan.get("outstanding_loan_balance", 0)) for loan in stage_2_loans)
-                stage_3_balance = sum(float(loan.get("outstanding_loan_balance", 0)) for loan in stage_3_loans)
+                # Extract from result summary if it has the right structure
+                if "Current" in local_result and isinstance(local_result["Current"], dict):
+                    current_data = {
+                        "num_loans": int(local_result["Current"].get("num_loans", 0)),
+                        "outstanding_loan_balance": float(local_result["Current"].get("outstanding_loan_balance", 0))
+                    }
+                    
+                    olem_data = {
+                        "num_loans": int(local_result["OLEM"].get("num_loans", 0)),
+                        "outstanding_loan_balance": float(local_result["OLEM"].get("outstanding_loan_balance", 0))
+                    }
+                    
+                    substandard_data = {
+                        "num_loans": int(local_result["Substandard"].get("num_loans", 0)),
+                        "outstanding_loan_balance": float(local_result["Substandard"].get("outstanding_loan_balance", 0))
+                    }
+                    
+                    doubtful_data = {
+                        "num_loans": int(local_result["Doubtful"].get("num_loans", 0)),
+                        "outstanding_loan_balance": float(local_result["Doubtful"].get("outstanding_loan_balance", 0))
+                    }
+                    
+                    loss_data = {
+                        "num_loans": int(local_result["Loss"].get("num_loans", 0)),
+                        "outstanding_loan_balance": float(local_result["Loss"].get("outstanding_loan_balance", 0))
+                    }
+                else:
+                    # Extract aggregated data from the summary
+                    current_data = {
+                        "num_loans": int(local_result.get("current_count", 0)),
+                        "outstanding_loan_balance": float(local_result.get("current_total", 0))
+                    }
+                    
+                    olem_data = {
+                        "num_loans": int(local_result.get("olem_count", 0)),
+                        "outstanding_loan_balance": float(local_result.get("olem_total", 0))
+                    }
+                    
+                    substandard_data = {
+                        "num_loans": int(local_result.get("substandard_count", 0)),
+                        "outstanding_loan_balance": float(local_result.get("substandard_total", 0))
+                    }
+                    
+                    doubtful_data = {
+                        "num_loans": int(local_result.get("doubtful_count", 0)),
+                        "outstanding_loan_balance": float(local_result.get("doubtful_total", 0))
+                    }
+                    
+                    loss_data = {
+                        "num_loans": int(local_result.get("loss_count", 0)),
+                        "outstanding_loan_balance": float(local_result.get("loss_total", 0))
+                    }
                 
+                staging_summary["local_impairment"] = {
+                    "Current": current_data,
+                    "OLEM": olem_data,
+                    "Substandard": substandard_data,
+                    "Doubtful": doubtful_data,
+                    "Loss": loss_data,
+                    "staging_date": latest_local_impairment_staging.created_at,
+                    "config": local_config
+                }
+        
+        # Process calculation results
+        calculation_summary = None
+        if latest_ecl_calculation or latest_local_impairment_calculation:
+            calculation_summary = {
+                "total_loan_value": round(float(total_loan_value), 2),
+            }
+            
+            # Add ECL data if available
+            if latest_ecl_calculation and latest_ecl_calculation.result_summary:
+                ecl_summary = latest_ecl_calculation.result_summary
+                ecl_config = latest_ecl_calculation.config
+                
+                # First try to get values from the nested format, then fall back to flattened format
                 stage_1_data = {
-                    "num_loans": len(stage_1_loans),
-                    "outstanding_loan_balance": stage_1_balance
+                    "num_loans": int(ecl_summary.get("Stage 1", {}).get("num_loans", 0)),
+                    "total_loan_value": float(ecl_summary.get("Stage 1", {}).get("total_loan_value", 0)),
+                    "provision_amount": float(ecl_summary.get("Stage 1", {}).get("provision_amount", 0)),
+                    "provision_rate": float(ecl_summary.get("Stage 1", {}).get("provision_rate", 0.01))
                 }
                 
                 stage_2_data = {
-                    "num_loans": len(stage_2_loans),
-                    "outstanding_loan_balance": stage_2_balance
+                    "num_loans": int(ecl_summary.get("Stage 2", {}).get("num_loans", 0)),
+                    "total_loan_value": float(ecl_summary.get("Stage 2", {}).get("total_loan_value", 0)),
+                    "provision_amount": float(ecl_summary.get("Stage 2", {}).get("provision_amount", 0)),
+                    "provision_rate": float(ecl_summary.get("Stage 2", {}).get("provision_rate", 0.05))
                 }
                 
                 stage_3_data = {
-                    "num_loans": len(stage_3_loans),
-                    "outstanding_loan_balance": stage_3_balance
-                }
-            # Check if we have the new nested format
-            elif "Stage 1" in ecl_result and isinstance(ecl_result["Stage 1"], dict):
-                stage_1_data = ecl_result["Stage 1"]
-                stage_2_data = ecl_result["Stage 2"]
-                stage_3_data = ecl_result["Stage 3"]
-            # Check if we have the old nested format with lowercase keys
-            elif "stage_1" in ecl_result and isinstance(ecl_result["stage_1"], dict):
-                stage_1_data = ecl_result["stage_1"]
-                stage_2_data = ecl_result["stage_2"]
-                stage_3_data = ecl_result["stage_3"]
-            # Check if we have staging_data format (used in newer versions)
-            elif "staging_data" in ecl_result and isinstance(ecl_result["staging_data"], list):
-                # Group loans by stage
-                stage_counts = {"Stage 1": 0, "Stage 2": 0, "Stage 3": 0}
-                stage_balances = {"Stage 1": 0, "Stage 2": 0, "Stage 3": 0}
-                
-                for loan_data in ecl_result["staging_data"]:
-                    stage = loan_data.get("stage", "Stage 3")
-                    if stage in stage_counts:
-                        stage_counts[stage] += 1
-                        # Get the loan to find its balance
-                        loan_id = loan_data.get("loan_id")
-                        if loan_id:
-                            loan = db.query(Loan).filter(Loan.id == loan_id).first()
-                            if loan and loan.outstanding_loan_balance:
-                                stage_balances[stage] += float(loan.outstanding_loan_balance)
-                
-                stage_1_data = {
-                    "num_loans": stage_counts["Stage 1"],
-                    "outstanding_loan_balance": stage_balances["Stage 1"]
+                    "num_loans": int(ecl_summary.get("Stage 3", {}).get("num_loans", 0)),
+                    "total_loan_value": float(ecl_summary.get("Stage 3", {}).get("total_loan_value", 0)),
+                    "provision_amount": float(ecl_summary.get("Stage 3", {}).get("provision_amount", 0)),
+                    "provision_rate": float(ecl_summary.get("Stage 3", {}).get("provision_rate", 0.1))
                 }
                 
-                stage_2_data = {
-                    "num_loans": stage_counts["Stage 2"],
-                    "outstanding_loan_balance": stage_balances["Stage 2"]
-                }
-                
-                stage_3_data = {
-                    "num_loans": stage_counts["Stage 3"],
-                    "outstanding_loan_balance": stage_balances["Stage 3"]
-                }
-            else:
-                # Use summary statistics if available
-                stage_1_data = {
-                    "num_loans": ecl_result.get("stage1_count", 0),
-                    "outstanding_loan_balance": ecl_result.get("stage1_total", 0)
-                }
-                
-                stage_2_data = {
-                    "num_loans": ecl_result.get("stage2_count", 0),
-                    "outstanding_loan_balance": ecl_result.get("stage2_total", 0)
-                }
-                
-                stage_3_data = {
-                    "num_loans": ecl_result.get("stage3_count", 0),
-                    "outstanding_loan_balance": ecl_result.get("stage3_total", 0)
+                calculation_summary["ecl"] = {
+                    "Stage 1": stage_1_data,
+                    "Stage 2": stage_2_data,
+                    "Stage 3": stage_3_data,
+                    "total_provision": float(latest_ecl_calculation.total_provision or 0),
+                    "provision_percentage": float(latest_ecl_calculation.provision_percentage or 0),
+                    "calculation_date": latest_ecl_calculation.created_at,
+                    "config": ecl_config
                 }
             
-            # Create ECL staging summary with config
-            staging_summary["ecl"] = {
-                "Stage 1": stage_1_data,
-                "Stage 2": stage_2_data,
-                "Stage 3": stage_3_data,
-                "staging_date": latest_ecl_staging.created_at,
-                "config": ecl_config
-            }
-        
-        # Process local impairment staging if available
-        if latest_local_impairment_staging:
-            local_result = latest_local_impairment_staging.result_summary
-            local_config = latest_local_impairment_staging.config
-            
-            # Extract data for each category
-            current_data = None
-            olem_data = None
-            substandard_data = None
-            doubtful_data = None
-            loss_data = None
-            
-            # Check if we have the newer format with detailed loan data
-            if "loans" in local_result:
-                # Use a more memory-efficient approach
-                stage_counts = {"Current": 0, "OLEM": 0, "Substandard": 0, "Doubtful": 0, "Loss": 0}
-                stage_totals = {"Current": 0, "OLEM": 0, "Substandard": 0, "Doubtful": 0, "Loss": 0}
+            # Add local impairment data if available
+            if latest_local_impairment_calculation and latest_local_impairment_calculation.result_summary:
+                local_summary = latest_local_impairment_calculation.result_summary
+                local_config = latest_local_impairment_calculation.config
                 
-                # Process in chunks to reduce memory usage
-                for loan in local_result["loans"]:
-                    stage = loan.get("stage", "Loss")  
-                    balance = float(loan.get("outstanding_loan_balance", 0))
-                    
-                    if stage in stage_counts:
-                        stage_counts[stage] += 1
-                        stage_totals[stage] += balance
-                
+                # First try to get values from the nested format, then fall back to flattened format
                 current_data = {
-                    "num_loans": stage_counts["Current"],
-                    "outstanding_loan_balance": stage_totals["Current"]
+                    "num_loans": int(local_summary.get("Current", {}).get("num_loans", local_summary.get("current_count", 0))),
+                    "total_loan_value": float(local_summary.get("Current", {}).get("total_loan_value", local_summary.get("current_total", 0))),
+                    "provision_amount": float(local_summary.get("Current", {}).get("provision_amount", local_summary.get("current_provision", 0))),
+                    "provision_rate": float(local_summary.get("Current", {}).get("provision_rate", local_summary.get("current_provision_rate", 0)))
                 }
                 
                 olem_data = {
-                    "num_loans": stage_counts["OLEM"],
-                    "outstanding_loan_balance": stage_totals["OLEM"]
+                    "num_loans": int(local_summary.get("OLEM", {}).get("num_loans", local_summary.get("olem_count", 0))),
+                    "total_loan_value": float(local_summary.get("OLEM", {}).get("total_loan_value", local_summary.get("olem_total", 0))),
+                    "provision_amount": float(local_summary.get("OLEM", {}).get("provision_amount", local_summary.get("olem_provision", 0))),
+                    "provision_rate": float(local_summary.get("OLEM", {}).get("provision_rate", local_summary.get("olem_provision_rate", 0)))
                 }
                 
                 substandard_data = {
-                    "num_loans": stage_counts["Substandard"],
-                    "outstanding_loan_balance": stage_totals["Substandard"]
+                    "num_loans": int(local_summary.get("Substandard", {}).get("num_loans", local_summary.get("substandard_count", 0))),
+                    "total_loan_value": float(local_summary.get("Substandard", {}).get("total_loan_value", local_summary.get("substandard_total", 0))),
+                    "provision_amount": float(local_summary.get("Substandard", {}).get("provision_amount", local_summary.get("substandard_provision", 0))),
+                    "provision_rate": float(local_summary.get("Substandard", {}).get("provision_rate", local_summary.get("substandard_provision_rate", 0)))
                 }
                 
                 doubtful_data = {
-                    "num_loans": stage_counts["Doubtful"],
-                    "outstanding_loan_balance": stage_totals["Doubtful"]
+                    "num_loans": int(local_summary.get("Doubtful", {}).get("num_loans", local_summary.get("doubtful_count", 0))),
+                    "total_loan_value": float(local_summary.get("Doubtful", {}).get("total_loan_value", local_summary.get("doubtful_total", 0))),
+                    "provision_amount": float(local_summary.get("Doubtful", {}).get("provision_amount", local_summary.get("doubtful_provision", 0))),
+                    "provision_rate": float(local_summary.get("Doubtful", {}).get("provision_rate", local_summary.get("doubtful_provision_rate", 0)))
                 }
                 
                 loss_data = {
-                    "num_loans": stage_counts["Loss"],
-                    "outstanding_loan_balance": stage_totals["Loss"]
-                }
-            # Check if we have the new nested format
-            elif "Current" in local_result and isinstance(local_result["Current"], dict):
-                current_data = local_result["Current"]
-                olem_data = local_result["OLEM"]
-                substandard_data = local_result["Substandard"]
-                doubtful_data = local_result["Doubtful"]
-                loss_data = local_result["Loss"]
-            # Check if we have the old nested format with lowercase keys
-            elif "current" in local_result and isinstance(local_result["current"], dict):
-                current_data = local_result["current"]
-                olem_data = local_result["olem"]
-                substandard_data = local_result["substandard"]
-                doubtful_data = local_result["doubtful"]
-                loss_data = local_result["loss"]
-            else:
-                # Use summary statistics if available
-                current_data = {
-                    "num_loans": local_result.get("current_count", 0),
-                    "outstanding_loan_balance": local_result.get("current_total", 0)
+                    "num_loans": int(local_summary.get("Loss", {}).get("num_loans", local_summary.get("loss_count", 0))),
+                    "total_loan_value": float(local_summary.get("Loss", {}).get("total_loan_value", local_summary.get("loss_total", 0))),
+                    "provision_amount": float(local_summary.get("Loss", {}).get("provision_amount", local_summary.get("loss_provision", 0))),
+                    "provision_rate": float(local_summary.get("Loss", {}).get("provision_rate", local_summary.get("loss_provision_rate", 0)))
                 }
                 
-                olem_data = {
-                    "num_loans": local_result.get("olem_count", 0),
-                    "outstanding_loan_balance": local_result.get("olem_total", 0)
+                calculation_summary["local_impairment"] = {
+                    "Current": current_data,
+                    "OLEM": olem_data,
+                    "Substandard": substandard_data,
+                    "Doubtful": doubtful_data,
+                    "Loss": loss_data,
+                    "total_provision": float(latest_local_impairment_calculation.total_provision or 0),
+                    "provision_percentage": float(latest_local_impairment_calculation.provision_percentage or 0),
+                    "calculation_date": latest_local_impairment_calculation.created_at,
+                    "config": local_config
                 }
-                
-                substandard_data = {
-                    "num_loans": local_result.get("substandard_count", 0),
-                    "outstanding_loan_balance": local_result.get("substandard_total", 0)
-                }
-                
-                doubtful_data = {
-                    "num_loans": local_result.get("doubtful_count", 0),
-                    "outstanding_loan_balance": local_result.get("doubtful_total", 0)
-                }
-                
-                loss_data = {
-                    "num_loans": local_result.get("loss_count", 0),
-                    "outstanding_loan_balance": local_result.get("loss_total", 0)
-                }
-            
-            # Create local impairment staging summary with config
-            staging_summary["local_impairment"] = {
-                "Current": current_data,
-                "OLEM": olem_data,
-                "Substandard": substandard_data,
-                "Doubtful": doubtful_data,
-                "Loss": loss_data,
-                "staging_date": latest_local_impairment_staging.created_at,
-                "config": local_config
-            }
-
-    response = PortfolioWithSummaryResponse(
-        id=portfolio.id,
-        name=portfolio.name,
-        description=portfolio.description,
-        asset_type=portfolio.asset_type,
-        customer_type=portfolio.customer_type,
-        funding_source=portfolio.funding_source,
-        data_source=portfolio.data_source,
-        repayment_source=portfolio.repayment_source,
-        credit_risk_reserve=portfolio.credit_risk_reserve,
-        loan_assets=portfolio.loan_assets,
-        ecl_impairment_account=portfolio.ecl_impairment_account,
-        has_ingested_data=has_ingested_data, 
-        has_calculated_ecl=has_calculated_ecl,
-        has_calculated_local_impairment=has_calculated_local_impairment,
-        has_all_issues_approved=has_all_issues_approved,
-        created_at=portfolio.created_at,
-        updated_at=portfolio.updated_at,
-        overview=OverviewModel(
-            total_loans=total_loans,
-            total_loan_value=round(float(total_loan_value), 2),
-            average_loan_amount=round(float(average_loan_amount), 2),
-            total_customers=total_customers,
-        ),
-        customer_summary=CustomerSummaryModel(
-            individual_customers=individual_customers,
-            institutions=institutions,
-            mixed=mixed,
-            active_customers=active_customers,
-        ),
-        quality_check=quality_check_summary,
-        report_history=report_history,
-        calculation_summary=calculation_summary,
-        staging_summary=staging_summary,
-    )
-
-    return response
+        
+        # Create and return the response
+        return PortfolioWithSummaryResponse(
+            id=portfolio.id,
+            name=portfolio.name,
+            description=portfolio.description,
+            asset_type=portfolio.asset_type,
+            customer_type=portfolio.customer_type,
+            funding_source=portfolio.funding_source,
+            data_source=portfolio.data_source,
+            repayment_source=portfolio.repayment_source,
+            credit_risk_reserve=portfolio.credit_risk_reserve,
+            loan_assets=portfolio.loan_assets,
+            ecl_impairment_account=portfolio.ecl_impairment_account,
+            has_ingested_data=has_ingested_data,
+            has_calculated_ecl=has_calculated_ecl,
+            has_calculated_local_impairment=has_calculated_local_impairment,
+            has_all_issues_approved=has_all_issues_approved,
+            created_at=portfolio.created_at,
+            updated_at=portfolio.updated_at,
+            overview=OverviewModel(
+                total_loans=total_loans,
+                total_loan_value=round(float(total_loan_value), 2),
+                average_loan_amount=round(float(average_loan_amount), 2),
+                total_customers=total_customers,
+            ),
+            customer_summary=CustomerSummaryModel(
+                individual_customers=individual_customers,
+                institutions=institutions,
+                mixed=mixed,
+                active_customers=active_customers,
+            ),
+            quality_check=quality_check_summary,
+            report_history=report_history,
+            calculation_summary=calculation_summary,
+            staging_summary=staging_summary,
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in fast_get_portfolio: {str(e)}")
+        import traceback
+        error_details = traceback.format_exc()
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error retrieving portfolio: {str(e)}\n{error_details}"
+        )
 
 @router.put("/{portfolio_id}", response_model=PortfolioWithSummaryResponse)
 def update_portfolio(
@@ -1950,3 +1637,4 @@ async def stage_loans_local_impairment_optimized(portfolio_id: int, config: Loca
         logger.error(f"Error in optimized local impairment staging: {str(e)}")
         db.rollback()
         return {"status": "error", "error": str(e)}
+
