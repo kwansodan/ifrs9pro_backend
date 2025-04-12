@@ -39,6 +39,8 @@ def create_report_excel(
         return populate_ecl_report_summarised(wb, portfolio_name, report_date, report_data)
     elif report_type.lower() == "local_impairment_report_summarised":
         return populate_local_impairment_report_summarised(wb, portfolio_name, report_date, report_data)
+    elif report_type.lower() == "journals_report":
+        return populate_journal_report(wb, portfolio_name, report_date, report_data)
     
     # Default handling for other report types
     ws = wb.active
@@ -545,6 +547,107 @@ def populate_local_impairment_report_summarised(
     # Apply currency format to provision amounts
     for col in ['C', 'D', 'E', 'F', 'G']:
         ws[f'{col}20'].number_format = currency_format
+    
+    # Save to BytesIO
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+def populate_journal_report(
+    wb: Workbook, 
+    portfolio_name: str, 
+    report_date: date, 
+    report_data: Dict[str, Any]
+) -> BytesIO:
+    """
+    Populate the journal report template with data.
+    
+    Args:
+        wb: Excel workbook (template)
+        portfolio_name: Name of the portfolio (not used in this report as it handles multiple portfolios)
+        report_date: Date of the report
+        report_data: Data for the report
+        
+    Returns:
+        BytesIO: Excel file as bytes buffer
+    """
+    # Get the main worksheet (should be the first one)
+    ws = wb.active
+    
+    # Define styles
+    bold_font = Font(name='Calibri', size=10, bold=True)
+    
+    # Define border for header cells
+    thin_border = Border(
+        bottom=Side(style='thin')
+    )
+    
+    # Define number formats
+    currency_format = '#,##0.00_);(#,##0.00)'
+    
+    # Populate header information
+    ws['B3'] = report_date
+    ws['B4'] = report_data.get('report_run_date', datetime.now().date())
+    ws['B6'] = report_data.get('description', "Journal Report")
+    
+    # Get portfolios data
+    portfolios = report_data.get('portfolios', [])
+    
+    # Start row for the first portfolio
+    current_row = 8
+    
+    # Process each portfolio
+    for index, portfolio in enumerate(portfolios, 1):
+        # Portfolio header
+        ws[f'A{current_row}'] = f"Portfolio {index}"
+        # ws[f'A{current_row}'].font = bold_font
+        current_row += 1
+        
+        # Column headers
+        ws[f'A{current_row}'] = "Account code"
+        ws[f'B{current_row}'] = "Journal description"
+        ws[f'C{current_row}'] = "Amount (GHS)"
+        
+        # Apply bold and underline to headers
+        for col in ['A', 'B', 'C']:
+            ws[f'{col}{current_row}'].font = bold_font
+            ws[f'{col}{current_row}'].border = thin_border
+        
+        current_row += 1
+        
+        # Journal entries
+        # IFRS9 Impairment - P&L charge
+        ws[f'A{current_row}'] = portfolio.get('ecl_impairment_account', '')
+        ws[f'B{current_row}'] = "IFRS9 Impairment - P&l charge"
+        ws[f'C{current_row}'] = portfolio.get('total_ecl', 0)
+        ws[f'C{current_row}'].number_format = currency_format
+        current_row += 1
+        
+        # IFRS9 Impairment - impact on loans
+        ws[f'A{current_row}'] = portfolio.get('loan_assets', '')
+        ws[f'B{current_row}'] = "IFRS9 Impairment - impact on loans"
+        ws[f'C{current_row}'] = -portfolio.get('total_ecl', 0)  # Negative value
+        ws[f'C{current_row}'].number_format = currency_format
+        current_row += 1
+        
+        # Top up for BOG Impairment - P&L charge
+        ws[f'A{current_row}'] = portfolio.get('ecl_impairment_account', '')
+        ws[f'B{current_row}'] = "Top up for BOG Impairment - P&l charge"
+        ws[f'C{current_row}'] = portfolio.get('risk_reserve', 0)
+        ws[f'C{current_row}'].number_format = currency_format
+        current_row += 1
+        
+        # Credit risk reserve
+        ws[f'A{current_row}'] = portfolio.get('credit_risk_reserve', '')
+        ws[f'B{current_row}'] = "Credit risk reserve"
+        ws[f'C{current_row}'] = -portfolio.get('risk_reserve', 0)  # Negative value
+        ws[f'C{current_row}'].number_format = currency_format
+        current_row += 1
+        
+        # Skip a row before the next portfolio
+        current_row += 1
     
     # Save to BytesIO
     buffer = BytesIO()

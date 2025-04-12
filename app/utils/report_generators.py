@@ -1432,22 +1432,86 @@ def generate_local_impairment_report_summarised(
     }
 
 
-def generate_journals_report(
-    db: Session, portfolio_id: int, report_date: date
+def generate_journal_report(
+    db: Session, portfolio_ids: List[int], report_date: date
 ) -> Dict[str, Any]:
     """
-    Generate a journals report for a portfolio.
+    Generate a journal report for multiple portfolios.
+    
+    This report provides journal entries for IFRS9 impairment and credit risk reserves.
     """
-    # For now, return an empty report structure
+    portfolios_data = []
+    
+    for portfolio_id in portfolio_ids:
+        # Get the portfolio
+        portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
+        if not portfolio:
+            raise ValueError(f"Portfolio with ID {portfolio_id} not found")
+        
+        # Get the latest ECL calculation
+        ecl_calculation = (
+            db.query(CalculationResult)
+            .filter(
+                CalculationResult.portfolio_id == portfolio_id,
+                CalculationResult.calculation_type == "ecl"
+            )
+            .order_by(CalculationResult.created_at.desc())
+            .first()
+        )
+        
+        if not ecl_calculation:
+            raise ValueError(f"No ECL calculation found for portfolio {portfolio_id}")
+        
+        # Get the latest local impairment calculation
+        local_calculation = (
+            db.query(CalculationResult)
+            .filter(
+                CalculationResult.portfolio_id == portfolio_id,
+                CalculationResult.calculation_type == "local_impairment"
+            )
+            .order_by(CalculationResult.created_at.desc())
+            .first()
+        )
+        
+        if not local_calculation:
+            raise ValueError(f"No local impairment calculation found for portfolio {portfolio_id}")
+        
+        # Extract total ECL from ECL calculation
+        ecl_summary = ecl_calculation.result_summary
+        total_ecl = 0
+        for stage_key in ["Stage 1", "Stage 2", "Stage 3"]:
+            stage_data = ecl_summary.get(stage_key, {})
+            total_ecl += stage_data.get("provision_amount", 0)
+        
+        # Extract total local impairment from local impairment calculation
+        local_summary = local_calculation.result_summary
+        total_local_impairment = 0
+        for category in ["Current", "OLEM", "Substandard", "Doubtful", "Loss"]:
+            category_data = local_summary.get(category, {})
+            total_local_impairment += category_data.get("provision_amount", 0)
+        
+        # Calculate risk reserve (difference between local impairment and ECL)
+        # If local impairment is greater than ECL, we need a risk reserve
+        risk_reserve = max(0, total_local_impairment - total_ecl)
+        
+        # Add portfolio data to the list
+        portfolios_data.append({
+            "portfolio_id": portfolio_id,
+            "portfolio_name": portfolio.name,
+            "ecl_impairment_account": portfolio.ecl_impairment_account,
+            "loan_assets": portfolio.loan_assets,
+            "credit_risk_reserve": portfolio.credit_risk_reserve,
+            "total_ecl": total_ecl,
+            "total_local_impairment": total_local_impairment,
+            "risk_reserve": risk_reserve
+        })
+    
+    # Create the report data structure
     return {
-        "portfolio_id": portfolio_id,
-        "report_date": report_date.strftime("%Y-%m-%d"),
-        "report_type": "journals_report",
-        "data": {
-            "title": "Journals Report",
-            "date": report_date.strftime("%Y-%m-%d"),
-            "items": []
-        }
+        "description": f"Journal Report for {len(portfolios_data)} portfolios",
+        "report_date": report_date,
+        "report_run_date": datetime.now().date(),
+        "portfolios": portfolios_data
     }
 
 
@@ -1538,6 +1602,6 @@ __all__ = [
     "generate_ecl_report_summarised",
     "generate_local_impairment_details_report",
     "generate_local_impairment_report_summarised",
-    "generate_journals_report",
+    "generate_journal_report",
     "generate_report_excel",
 ]

@@ -28,7 +28,7 @@ from app.utils.report_generators import (
     generate_ecl_report_summarised,
     generate_local_impairment_details_report,
     generate_local_impairment_report_summarised,
-    generate_journals_report,
+    generate_journal_report,
     generate_report_excel,  # Changed from generate_report_pdf
 )
 from app.schemas import (
@@ -141,8 +141,8 @@ async def generate_report(
             )
 
         elif report_request.report_type == ReportTypeEnum.JOURNALS_REPORT:
-            report_data = generate_journals_report(
-                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
+            report_data = generate_journal_report(
+                db=db, portfolio_ids=[portfolio_id], report_date=report_request.report_date
             )
 
         else:
