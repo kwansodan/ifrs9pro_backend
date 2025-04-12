@@ -1352,16 +1352,82 @@ def generate_local_impairment_report_summarised(
 ) -> Dict[str, Any]:
     """
     Generate a summarised local impairment report for a portfolio.
+    
+    This report provides a summary of local impairment calculations across all categories.
     """
-    # For now, return an empty report structure
+    # Get the portfolio
+    portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
+    if not portfolio:
+        raise ValueError(f"Portfolio with ID {portfolio_id} not found")
+    
+    # Get the latest local impairment calculation
+    latest_calculation = (
+        db.query(CalculationResult)
+        .filter(
+            CalculationResult.portfolio_id == portfolio_id,
+            CalculationResult.calculation_type == "local_impairment"
+        )
+        .order_by(CalculationResult.created_at.desc())
+        .first()
+    )
+    
+    if not latest_calculation:
+        raise ValueError(f"No local impairment calculation found for portfolio {portfolio_id}")
+    
+    # Get calculation summary data
+    calculation_summary = latest_calculation.result_summary
+    
+    # Extract data for each category
+    current_data = calculation_summary.get("Current", {})
+    olem_data = calculation_summary.get("OLEM", {})
+    substandard_data = calculation_summary.get("Substandard", {})
+    doubtful_data = calculation_summary.get("Doubtful", {})
+    loss_data = calculation_summary.get("Loss", {})
+    
+    # Extract loan values
+    current_loan_value = current_data.get("total_loan_value", 0)
+    olem_loan_value = olem_data.get("total_loan_value", 0)
+    substandard_loan_value = substandard_data.get("total_loan_value", 0)
+    doubtful_loan_value = doubtful_data.get("total_loan_value", 0)
+    loss_loan_value = loss_data.get("total_loan_value", 0)
+    
+    # Extract provision amounts (equivalent to ECL in the local impairment context)
+    current_provision = current_data.get("provision_amount", 0)
+    olem_provision = olem_data.get("provision_amount", 0)
+    substandard_provision = substandard_data.get("provision_amount", 0)
+    doubtful_provision = doubtful_data.get("provision_amount", 0)
+    loss_provision = loss_data.get("provision_amount", 0)
+    
+    # Create the report data structure
     return {
-        "portfolio_id": portfolio_id,
-        "report_date": report_date.strftime("%Y-%m-%d"),
-        "report_type": "local_impairment_report_summarised",
-        "data": {
-            "title": "Local Impairment Summarised Report",
-            "date": report_date.strftime("%Y-%m-%d"),
-            "items": []
+        "portfolio_name": portfolio.name,
+        "description": f"Local Impairment Summarised Report for {portfolio.name}",
+        "report_date": report_date,
+        "report_run_date": datetime.now().date(),
+        "current": {
+            "loan_value": current_loan_value,
+            "outstanding_balance": current_loan_value,  # Same as loan value in this context
+            "provision": current_provision
+        },
+        "olem": {
+            "loan_value": olem_loan_value,
+            "outstanding_balance": olem_loan_value,
+            "provision": olem_provision
+        },
+        "substandard": {
+            "loan_value": substandard_loan_value,
+            "outstanding_balance": substandard_loan_value,
+            "provision": substandard_provision
+        },
+        "doubtful": {
+            "loan_value": doubtful_loan_value,
+            "outstanding_balance": doubtful_loan_value,
+            "provision": doubtful_provision
+        },
+        "loss": {
+            "loan_value": loss_loan_value,
+            "outstanding_balance": loss_loan_value,
+            "provision": loss_provision
         }
     }
 

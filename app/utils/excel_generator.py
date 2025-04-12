@@ -37,6 +37,8 @@ def create_report_excel(
         return populate_local_impairment_details_report(wb, portfolio_name, report_date, report_data)
     elif report_type.lower() == "ecl_report_summarised":
         return populate_ecl_report_summarised(wb, portfolio_name, report_date, report_data)
+    elif report_type.lower() == "local_impairment_report_summarised":
+        return populate_local_impairment_report_summarised(wb, portfolio_name, report_date, report_data)
     
     # Default handling for other report types
     ws = wb.active
@@ -472,6 +474,77 @@ def populate_local_impairment_details_report(
         # Provision amount with currency format
         ws.cell(row=row, column=10, value=loan.get('provision', 0))
         ws.cell(row=row, column=10).number_format = currency_format
+    
+    # Save to BytesIO
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+def populate_local_impairment_report_summarised(
+    wb: Workbook, 
+    portfolio_name: str, 
+    report_date: date, 
+    report_data: Dict[str, Any]
+) -> BytesIO:
+    """
+    Populate the local impairment summarised report template with data.
+    
+    Args:
+        wb: Excel workbook (template)
+        portfolio_name: Name of the portfolio
+        report_date: Date of the report
+        report_data: Data for the report
+        
+    Returns:
+        BytesIO: Excel file as bytes buffer
+    """
+    # Get the main worksheet (should be the first one)
+    ws = wb.active
+    
+    # Define number formats
+    currency_format = '#,##0.00'
+    percentage_format = '0.00%'
+    
+    # Populate header information
+    ws['B3'] = report_date
+    ws['B4'] = report_data.get('report_run_date', datetime.now().date())
+    ws['B6'] = report_data.get('description', f"Local Impairment Summarised Report for {portfolio_name}")
+    
+    # Populate category data
+    # Loan values
+    ws['C18'] = report_data.get('current', {}).get('loan_value', 0)
+    ws['D18'] = report_data.get('olem', {}).get('loan_value', 0)
+    ws['E18'] = report_data.get('substandard', {}).get('loan_value', 0)
+    ws['F18'] = report_data.get('doubtful', {}).get('loan_value', 0)
+    ws['G18'] = report_data.get('loss', {}).get('loan_value', 0)
+    
+    # Apply currency format to loan values
+    for col in ['C', 'D', 'E', 'F', 'G']:
+        ws[f'{col}18'].number_format = currency_format
+    
+    # Outstanding loan balances
+    ws['C19'] = report_data.get('current', {}).get('outstanding_balance', 0)
+    ws['D19'] = report_data.get('olem', {}).get('outstanding_balance', 0)
+    ws['E19'] = report_data.get('substandard', {}).get('outstanding_balance', 0)
+    ws['F19'] = report_data.get('doubtful', {}).get('outstanding_balance', 0)
+    ws['G19'] = report_data.get('loss', {}).get('outstanding_balance', 0)
+    
+    # Apply currency format to outstanding balances
+    for col in ['C', 'D', 'E', 'F', 'G']:
+        ws[f'{col}19'].number_format = currency_format
+    
+    # Provision amounts
+    ws['C20'] = report_data.get('current', {}).get('provision', 0)
+    ws['D20'] = report_data.get('olem', {}).get('provision', 0)
+    ws['E20'] = report_data.get('substandard', {}).get('provision', 0)
+    ws['F20'] = report_data.get('doubtful', {}).get('provision', 0)
+    ws['G20'] = report_data.get('loss', {}).get('provision', 0)
+    
+    # Apply currency format to provision amounts
+    for col in ['C', 'D', 'E', 'F', 'G']:
+        ws[f'{col}20'].number_format = currency_format
     
     # Save to BytesIO
     buffer = BytesIO()
