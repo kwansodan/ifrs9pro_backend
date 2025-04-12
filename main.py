@@ -3,6 +3,7 @@ import logging
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from sqlalchemy.orm import Session
 from app.database import get_db, init_db
 # Import all routers including websocket
@@ -34,6 +35,9 @@ app = FastAPI()
 async def health_check():
     """Simple health check endpoint for Azure health probes"""
     return {"status": "healthy"}
+
+# Add GZip compression middleware
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Configure CORS
 app.add_middleware(
