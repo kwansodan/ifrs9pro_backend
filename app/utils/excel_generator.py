@@ -35,6 +35,8 @@ def create_report_excel(
         return populate_ecl_detailed_report(wb, portfolio_name, report_date, report_data)
     elif report_type.lower() == "local_impairment_details_report":
         return populate_local_impairment_details_report(wb, portfolio_name, report_date, report_data)
+    elif report_type.lower() == "ecl_report_summarised":
+        return populate_ecl_report_summarised(wb, portfolio_name, report_date, report_data)
     
     # Default handling for other report types
     ws = wb.active
@@ -325,6 +327,71 @@ def populate_ecl_detailed_report(
         # ECL with currency format
         ws.cell(row=row, column=13, value=loan.get('ecl', 0))
         ws.cell(row=row, column=13).number_format = currency_format
+    
+    # Save to BytesIO
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+def populate_ecl_report_summarised(
+    wb: Workbook, 
+    portfolio_name: str, 
+    report_date: date, 
+    report_data: Dict[str, Any]
+) -> BytesIO:
+    """
+    Populate the ECL summarised report template with data.
+    
+    Args:
+        wb: Excel workbook (template)
+        portfolio_name: Name of the portfolio
+        report_date: Date of the report
+        report_data: Data for the report
+        
+    Returns:
+        BytesIO: Excel file as bytes buffer
+    """
+    # Get the main worksheet (should be the first one)
+    ws = wb.active
+    
+    # Define number formats
+    currency_format = '#,##0.00'
+    percentage_format = '0.00%'
+    
+    # Populate header information
+    ws['B3'] = report_date
+    ws['B4'] = report_data.get('report_run_date', datetime.now().date())
+    ws['B6'] = report_data.get('description', f"ECL Summarised Report for {portfolio_name}")
+    
+    # Populate stage data
+    # Loan values
+    ws['C18'] = report_data.get('stage_1', {}).get('loan_value', 0)
+    ws['D18'] = report_data.get('stage_2', {}).get('loan_value', 0)
+    ws['E18'] = report_data.get('stage_3', {}).get('loan_value', 0)
+    
+    # Apply currency format to loan values
+    for col in ['C', 'D', 'E']:
+        ws[f'{col}18'].number_format = currency_format
+    
+    # Outstanding loan balances
+    ws['C19'] = report_data.get('stage_1', {}).get('outstanding_balance', 0)
+    ws['D19'] = report_data.get('stage_2', {}).get('outstanding_balance', 0)
+    ws['E19'] = report_data.get('stage_3', {}).get('outstanding_balance', 0)
+    
+    # Apply currency format to outstanding balances
+    for col in ['C', 'D', 'E']:
+        ws[f'{col}19'].number_format = currency_format
+    
+    # ECL amounts
+    ws['C20'] = report_data.get('stage_1', {}).get('ecl', 0)
+    ws['D20'] = report_data.get('stage_2', {}).get('ecl', 0)
+    ws['E20'] = report_data.get('stage_3', {}).get('ecl', 0)
+    
+    # Apply currency format to ECL amounts
+    for col in ['C', 'D', 'E']:
+        ws[f'{col}20'].number_format = currency_format
     
     # Save to BytesIO
     buffer = BytesIO()

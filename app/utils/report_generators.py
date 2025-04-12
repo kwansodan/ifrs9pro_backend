@@ -1109,20 +1109,93 @@ def generate_ecl_detailed_report(
 
 
 def generate_ecl_report_summarised(
-    db: Session, portfolio_id: int, report_type: str, report_date: date
+    db: Session, portfolio_id: int, report_date: date
 ) -> Dict[str, Any]:
     """
     Generate a summarised ECL report for a portfolio.
+    
+    This report provides a summary of ECL calculations across all stages.
     """
-    # For now, return an empty report structure
+    # Get the portfolio
+    portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
+    if not portfolio:
+        raise ValueError(f"Portfolio with ID {portfolio_id} not found")
+    
+    # Get the latest ECL calculation
+    latest_calculation = (
+        db.query(CalculationResult)
+        .filter(
+            CalculationResult.portfolio_id == portfolio_id,
+            CalculationResult.calculation_type == "ecl"
+        )
+        .order_by(CalculationResult.created_at.desc())
+        .first()
+    )
+    
+    if not latest_calculation:
+        raise ValueError(f"No ECL calculation found for portfolio {portfolio_id}")
+    
+    # Get calculation summary data
+    calculation_summary = latest_calculation.result_summary
+    
+    # Extract data for each stage
+    stage_1_data = calculation_summary.get("Stage 1", {})
+    stage_2_data = calculation_summary.get("Stage 2", {})
+    stage_3_data = calculation_summary.get("Stage 3", {})
+    
+    # Extract loan values
+    stage_1_loan_value = stage_1_data.get("total_loan_value", 0)
+    stage_2_loan_value = stage_2_data.get("total_loan_value", 0)
+    stage_3_loan_value = stage_3_data.get("total_loan_value", 0)
+    total_loan_value = stage_1_loan_value + stage_2_loan_value + stage_3_loan_value
+    
+    # Extract outstanding loan balances (same as loan value in this context)
+    stage_1_outstanding = stage_1_loan_value
+    stage_2_outstanding = stage_2_loan_value
+    stage_3_outstanding = stage_3_loan_value
+    total_outstanding = stage_1_outstanding + stage_2_outstanding + stage_3_outstanding
+    
+    # Extract ECL amounts
+    stage_1_ecl = stage_1_data.get("provision_amount", 0)
+    stage_2_ecl = stage_2_data.get("provision_amount", 0)
+    stage_3_ecl = stage_3_data.get("provision_amount", 0)
+    total_ecl = stage_1_ecl + stage_2_ecl + stage_3_ecl
+    
+    # Extract loan counts
+    stage_1_count = stage_1_data.get("num_loans", 0)
+    stage_2_count = stage_2_data.get("num_loans", 0)
+    stage_3_count = stage_3_data.get("num_loans", 0)
+    total_loans = stage_1_count + stage_2_count + stage_3_count
+    
+    # Create the report data structure
     return {
-        "portfolio_id": portfolio_id,
-        "report_date": report_date.strftime("%Y-%m-%d"),
-        "report_type": "ecl_report_summarised",
-        "data": {
-            "title": "ECL Summarised Report",
-            "date": report_date.strftime("%Y-%m-%d"),
-            "items": []
+        "portfolio_name": portfolio.name,
+        "description": f"ECL Summarised Report for {portfolio.name}",
+        "report_date": report_date,
+        "report_run_date": datetime.now().date(),
+        "stage_1": {
+            "loan_value": stage_1_loan_value,
+            "outstanding_balance": stage_1_outstanding,
+            "ecl": stage_1_ecl,
+            "num_loans": stage_1_count
+        },
+        "stage_2": {
+            "loan_value": stage_2_loan_value,
+            "outstanding_balance": stage_2_outstanding,
+            "ecl": stage_2_ecl,
+            "num_loans": stage_2_count
+        },
+        "stage_3": {
+            "loan_value": stage_3_loan_value,
+            "outstanding_balance": stage_3_outstanding,
+            "ecl": stage_3_ecl,
+            "num_loans": stage_3_count
+        },
+        "total": {
+            "loan_value": total_loan_value,
+            "outstanding_balance": total_outstanding,
+            "ecl": total_ecl,
+            "num_loans": total_loans
         }
     }
 
