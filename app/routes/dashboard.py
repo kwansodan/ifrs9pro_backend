@@ -59,51 +59,144 @@ def get_dashboard(
     # Get portfolio IDs
     portfolio_ids = [p.id for p in portfolios]
 
-    # --- Portfolio Overview ---
-
-    # Count total loans
-    total_loans = (
-        db.query(func.count(Loan.id))
+    # --- OPTIMIZATION: Use a single query to get loan counts and values by portfolio ---
+    loan_stats_by_portfolio = {}
+    loan_stats = (
+        db.query(
+            Loan.portfolio_id,
+            func.count(Loan.id).label("loan_count"),
+            func.sum(Loan.outstanding_loan_balance).label("loan_value")
+        )
         .filter(Loan.portfolio_id.in_(portfolio_ids))
-        .scalar()
-        or 0
+        .group_by(Loan.portfolio_id)
+        .all()
     )
+    
+    for stats in loan_stats:
+        loan_stats_by_portfolio[stats.portfolio_id] = {
+            "loan_count": stats.loan_count,
+            "loan_value": float(stats.loan_value) if stats.loan_value else 0
+        }
+    
+    # --- OPTIMIZATION: Use a single query to get customer counts by portfolio ---
+    customer_stats_by_portfolio = {}
+    customer_stats = (
+        db.query(
+            Client.portfolio_id,
+            func.count(Client.id).label("customer_count")
+        )
+        .filter(Client.portfolio_id.in_(portfolio_ids))
+        .group_by(Client.portfolio_id)
+        .all()
+    )
+    
+    for stats in customer_stats:
+        customer_stats_by_portfolio[stats.portfolio_id] = {
+            "customer_count": stats.customer_count
+        }
+    
+    # --- OPTIMIZATION: Get all latest ECL calculations in a single query ---
+    latest_ecl_calculations = {}
+    ecl_subquery = (
+        db.query(
+            CalculationResult.portfolio_id,
+            func.max(CalculationResult.created_at).label("max_date")
+        )
+        .filter(
+            CalculationResult.portfolio_id.in_(portfolio_ids),
+            CalculationResult.calculation_type == "ecl"
+        )
+        .group_by(CalculationResult.portfolio_id)
+        .subquery()
+    )
+    
+    ecl_results = (
+        db.query(CalculationResult)
+        .join(
+            ecl_subquery,
+            (CalculationResult.portfolio_id == ecl_subquery.c.portfolio_id) &
+            (CalculationResult.created_at == ecl_subquery.c.max_date) &
+            (CalculationResult.calculation_type == "ecl")
+        )
+        .all()
+    )
+    
+    for result in ecl_results:
+        latest_ecl_calculations[result.portfolio_id] = result
+    
+    # --- OPTIMIZATION: Get all latest local impairment calculations in a single query ---
+    latest_local_impairments = {}
+    local_subquery = (
+        db.query(
+            CalculationResult.portfolio_id,
+            func.max(CalculationResult.created_at).label("max_date")
+        )
+        .filter(
+            CalculationResult.portfolio_id.in_(portfolio_ids),
+            CalculationResult.calculation_type == "local_impairment"
+        )
+        .group_by(CalculationResult.portfolio_id)
+        .subquery()
+    )
+    
+    local_results = (
+        db.query(CalculationResult)
+        .join(
+            local_subquery,
+            (CalculationResult.portfolio_id == local_subquery.c.portfolio_id) &
+            (CalculationResult.created_at == local_subquery.c.max_date) &
+            (CalculationResult.calculation_type == "local_impairment")
+        )
+        .all()
+    )
+    
+    for result in local_results:
+        latest_local_impairments[result.portfolio_id] = result
 
-    # Initialize counters for total ECL and local impairment
+    # --- OPTIMIZATION: Get customer type counts in a single query ---
+    customer_type_counts = {
+        "total": 0,
+        "institutional": 0,
+        "individual": 0
+    }
+    
+    customer_type_stats = (
+        db.query(
+            Client.client_type,
+            func.count(Client.id).label("count")
+        )
+        .filter(Client.portfolio_id.in_(portfolio_ids))
+        .group_by(Client.client_type)
+        .all()
+    )
+    
+    for stats in customer_type_stats:
+        if stats.client_type == "institution":
+            customer_type_counts["institutional"] = stats.count
+        elif stats.client_type == "consumer":
+            customer_type_counts["individual"] = stats.count
+        
+        customer_type_counts["total"] += stats.count
+    
+    # --- Process portfolio data ---
     total_ecl_amount = 0
     total_local_impairment = 0
     total_risk_reserve = 0
-
-    # Get the latest calculation results for each portfolio
+    total_loans = 0
     portfolio_summaries = []
-    current_date = datetime.now().date()
-
+    
     for portfolio in portfolios:
-        # Get latest ECL calculation for this portfolio
-        latest_ecl_calculation = (
-            db.query(CalculationResult)
-            .filter(
-                CalculationResult.portfolio_id == portfolio.id,
-                CalculationResult.calculation_type == "ecl"
-            )
-            .order_by(CalculationResult.created_at.desc())
-            .first()
-        )
+        # Get loan and customer stats for this portfolio
+        loan_stats = loan_stats_by_portfolio.get(portfolio.id, {"loan_count": 0, "loan_value": 0})
+        customer_stats = customer_stats_by_portfolio.get(portfolio.id, {"customer_count": 0})
         
-        # Get latest local impairment calculation for this portfolio
-        latest_local_impairment = (
-            db.query(CalculationResult)
-            .filter(
-                CalculationResult.portfolio_id == portfolio.id,
-                CalculationResult.calculation_type == "local_impairment"
-            )
-            .order_by(CalculationResult.created_at.desc())
-            .first()
-        )
+        # Get latest calculation results
+        latest_ecl = latest_ecl_calculations.get(portfolio.id)
+        latest_local = latest_local_impairments.get(portfolio.id)
         
         # Set portfolio ECL and local impairment values
-        portfolio_ecl = float(latest_ecl_calculation.total_provision) if latest_ecl_calculation else 0
-        portfolio_local_impairment = float(latest_local_impairment.total_provision) if latest_local_impairment else 0
+        portfolio_ecl = float(latest_ecl.total_provision) if latest_ecl else 0
+        portfolio_local_impairment = float(latest_local.total_provision) if latest_local else 0
         
         # Calculate risk reserve (local impairment - ECL)
         portfolio_risk_reserve = portfolio_local_impairment - portfolio_ecl
@@ -112,122 +205,30 @@ def get_dashboard(
         total_ecl_amount += portfolio_ecl
         total_local_impairment += portfolio_local_impairment
         total_risk_reserve += portfolio_risk_reserve
-
-        # Count loans in this portfolio
-        portfolio_loans_count = (
-            db.query(func.count(Loan.id))
-            .filter(Loan.portfolio_id == portfolio.id)
-            .scalar()
-            or 0
-        )
-
-        # Calculate total loan value in this portfolio
-        portfolio_loan_value = (
-            db.query(func.sum(Loan.outstanding_loan_balance))
-            .filter(Loan.portfolio_id == portfolio.id)
-            .scalar()
-            or 0
-        )
-
-        # Count customers in this portfolio
-        portfolio_customers_count = (
-            db.query(func.count(Client.id))
-            .filter(Client.portfolio_id == portfolio.id)
-            .scalar()
-            or 0
-        )
-
-        # If we don't have saved calculations, calculate on-the-fly
-        if portfolio_ecl == 0 and portfolio_loans_count > 0:
-            portfolio_loans = db.query(Loan).filter(Loan.portfolio_id == portfolio.id).all()
-            
-            # Calculate ECL for this portfolio
-            portfolio_ecl = 0
-            for loan in portfolio_loans:
-                # Skip loans that are fully paid or have no outstanding balance
-                if (
-                    loan.paid
-                    or not loan.outstanding_loan_balance
-                    or loan.outstanding_loan_balance <= 0
-                ):
-                    continue
-
-                # Get securities for this loan if applicable
-                securities = []
-
-                # Calculate ECL components
-                try:
-                    ead_percentage = calculate_exposure_at_default_percentage(
-                        loan, current_date
-                    )
-                    pd = calculate_probability_of_default(
-                        loan, db)
-                    lgd = calculate_loss_given_default(loan, securities)
-
-                    # Calculate ECL for this loan
-                    loan_ecl = calculate_marginal_ecl(loan, ead_percentage, pd, lgd)
-                    portfolio_ecl += loan_ecl
-                except Exception as e:
-                    # Skip loans that cause errors in ECL calculation
-                    continue
+        total_loans += loan_stats["loan_count"]
         
-        portfolio_summaries.append(
-            {
-                "id": portfolio.id,
-                "name": portfolio.name,
-                "description": portfolio.description,
-                "asset_type": portfolio.asset_type,
-                "customer_type": portfolio.customer_type,
-                "total_loans": portfolio_loans_count,
-                "total_loan_value": (
-                    float(portfolio_loan_value) if portfolio_loan_value else 0
-                ),
-                "total_customers": portfolio_customers_count,
-                "ecl_amount": round(portfolio_ecl, 2),
-                "local_impairment_amount": round(portfolio_local_impairment, 2),
-                "risk_reserve": round(portfolio_risk_reserve, 2),
-                "created_at": (
-                    portfolio.created_at.isoformat() if portfolio.created_at else None
-                ),
-                "updated_at": (
-                    portfolio.updated_at.isoformat() if portfolio.updated_at else None
-                ),
-            }
-        )
-
+        portfolio_summaries.append({
+            "id": portfolio.id,
+            "name": portfolio.name,
+            "description": portfolio.description,
+            "asset_type": portfolio.asset_type,
+            "customer_type": portfolio.customer_type,
+            "total_loans": loan_stats["loan_count"],
+            "total_loan_value": loan_stats["loan_value"],
+            "total_customers": customer_stats["customer_count"],
+            "ecl_amount": round(portfolio_ecl, 2),
+            "local_impairment_amount": round(portfolio_local_impairment, 2),
+            "risk_reserve": round(portfolio_risk_reserve, 2),
+            "created_at": portfolio.created_at.isoformat() if portfolio.created_at else None,
+            "updated_at": portfolio.updated_at.isoformat() if portfolio.updated_at else None,
+        })
+    
     # Sort portfolios by total loan value (descending)
     portfolio_summaries.sort(key=lambda x: x["total_loan_value"], reverse=True)
-
-    # --- Customer Overview ---
-    # Count total customers
-    total_customers = (
-        db.query(func.count(Client.id))
-        .filter(Client.portfolio_id.in_(portfolio_ids))
-        .scalar()
-        or 0
-    )
-
-    # Count customers by type
-    institutional_customers = (
-        db.query(func.count(Client.id))
-        .filter(
-            Client.portfolio_id.in_(portfolio_ids), Client.client_type == "institution"
-        )
-        .scalar()
-        or 0
-    )
-
-    individual_customers = (
-        db.query(func.count(Client.id))
-        .filter(
-            Client.portfolio_id.in_(portfolio_ids), Client.client_type == "consumer"
-        )
-        .scalar()
-        or 0
-    )
-
-    mixed_customers = total_customers - institutional_customers - individual_customers
-
+    
+    # Calculate mixed customers
+    mixed_customers = customer_type_counts["total"] - customer_type_counts["institutional"] - customer_type_counts["individual"]
+    
     return {
         "name": current_user.first_name,
         "portfolio_overview": {
@@ -238,9 +239,9 @@ def get_dashboard(
             "total_risk_reserve": round(total_risk_reserve, 2),
         },
         "customer_overview": {
-            "total_customers": total_customers,
-            "institutional": institutional_customers,
-            "individual": individual_customers,
+            "total_customers": customer_type_counts["total"],
+            "institutional": customer_type_counts["institutional"],
+            "individual": customer_type_counts["individual"],
             "mixed": mixed_customers,
         },
         "portfolios": portfolio_summaries,
