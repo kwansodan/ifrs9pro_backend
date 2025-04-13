@@ -213,7 +213,7 @@ def get_portfolios(
     return {"items": response_items, "total": total}
 
 @router.get("/{portfolio_id}", response_model=PortfolioWithSummaryResponse)
-def fast_get_portfolio(
+def get_portfolio(
     portfolio_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
