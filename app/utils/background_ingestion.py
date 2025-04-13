@@ -132,42 +132,87 @@ async def process_portfolio_ingestion(
             )
             return results
         
-        # Process each file in sequence - this takes 70% of the progress
+        # Calculate progress allocation per file
+        # Data ingestion takes 80% of the total progress (10-90%)
+        # Each file gets an equal portion of that 80%
+        progress_per_file = 80.0 / len(files_to_process)
+        
+        # Process each file in sequence
         for i, (file_type, file_content, filename) in enumerate(files_to_process):
+            # Calculate progress range for this file
+            file_start_progress = 10 + (i * progress_per_file)
+            file_end_progress = 10 + ((i + 1) * progress_per_file)
+            
             # Update overall task progress
-            overall_progress = (i / len(files_to_process)) * 70 + 10
             get_task_manager().update_progress(
                 task_id,
-                progress=overall_progress,
+                progress=file_start_progress,
                 status_message=f"Processing {file_type} ({i+1}/{len(files_to_process)})"
             )
             
             # Process based on file type
             if file_type == "loan_details":
                 get_task_manager().update_task(task_id, status_message=f"Processing loan details from {filename}")
-                file_result = await process_loan_details_with_progress(task_id, file_content, portfolio_id, db)
+                
+                # Create a progress wrapper function
+                async def progress_wrapper(progress, processed_items=None, status_message=None):
+                    # Map the file's internal progress (0-100%) to its allocated range
+                    overall_progress = file_start_progress + (progress / 100.0) * (file_end_progress - file_start_progress)
+                    get_task_manager().update_progress(
+                        task_id,
+                        progress=round(overall_progress, 2),
+                        processed_items=processed_items,
+                        status_message=status_message
+                    )
+                
+                # Pass the wrapper to the processor
+                file_result = await process_loan_details_with_progress(
+                    task_id, 
+                    file_content, 
+                    portfolio_id, 
+                    db,
+                    progress_callback=progress_wrapper
+                )
                 results["details"]["loan_details"] = file_result
                 
             elif file_type == "client_data":
                 get_task_manager().update_task(task_id, status_message=f"Processing client data from {filename}")
-                file_result = await process_client_data_with_progress(task_id, file_content, portfolio_id, db)
+                
+                # Create a progress wrapper function
+                async def progress_wrapper(progress, processed_items=None, status_message=None):
+                    # Map the file's internal progress (0-100%) to its allocated range
+                    overall_progress = file_start_progress + (progress / 100.0) * (file_end_progress - file_start_progress)
+                    get_task_manager().update_progress(
+                        task_id,
+                        progress=round(overall_progress, 2),
+                        processed_items=processed_items,
+                        status_message=status_message
+                    )
+                
+                # Pass the wrapper to the processor
+                file_result = await process_client_data_with_progress(
+                    task_id, 
+                    file_content, 
+                    portfolio_id, 
+                    db,
+                    progress_callback=progress_wrapper
+                )
                 results["details"]["client_data"] = file_result
                 
             # Increment processed files count
             results["files_processed"] += 1
             
             # Update overall progress
-            overall_progress = ((i + 1) / len(files_to_process)) * 70 + 10
             get_task_manager().update_progress(
                 task_id,
-                progress=overall_progress,
+                progress=file_end_progress,
                 status_message=f"Completed processing {file_type}"
             )
         
-        # Now perform staging operations - 20% of progress
+        # Now perform staging operations - 10% of progress
         get_task_manager().update_progress(
             task_id,
-            progress=80,
+            progress=90,
             status_message="Starting loan staging operations"
         )
         
@@ -177,7 +222,7 @@ async def process_portfolio_ingestion(
         try:
             get_task_manager().update_progress(
                 task_id,
-                progress=85,
+                progress=92,
                 status_message="Performing ECL staging"
             )
             
@@ -221,7 +266,7 @@ async def process_portfolio_ingestion(
         try:
             get_task_manager().update_progress(
                 task_id,
-                progress=90,
+                progress=94,
                 status_message="Performing local impairment staging"
             )
             
@@ -276,7 +321,7 @@ async def process_portfolio_ingestion(
         try:
             get_task_manager().update_progress(
                 task_id,
-                progress=92,
+                progress=96,
                 status_message="Calculating ECL provisions"
             )
             
@@ -390,7 +435,7 @@ async def process_portfolio_ingestion(
         try:
             get_task_manager().update_progress(
                 task_id,
-                progress=94,
+                progress=98,
                 status_message="Calculating local impairment provisions"
             )
             
@@ -533,11 +578,11 @@ async def process_portfolio_ingestion(
         # Commit after all calculation operations
         db.commit()
         
-        # Finally, create quality issues - 5% of progress
+        # Finally, create quality issues - 2% of progress
         try:
             get_task_manager().update_progress(
                 task_id,
-                progress=95,
+                progress=99,
                 status_message="Checking data quality"
             )
             

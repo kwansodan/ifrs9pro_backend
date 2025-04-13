@@ -8,7 +8,7 @@ import concurrent.futures
 from sqlalchemy import text
 import logging
 import asyncio
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable
 
 from app.models import (
     Loan,
@@ -20,7 +20,13 @@ from app.utils.background_tasks import get_task_manager
 
 logger = logging.getLogger(__name__)
 
-async def process_loan_details_with_progress(task_id: str, file_content: bytes, portfolio_id: int, db):
+async def process_loan_details_with_progress(
+    task_id: str, 
+    file_content: bytes, 
+    portfolio_id: int, 
+    db,
+    progress_callback: Optional[Callable] = None
+):
     """Function to process loan details with progress reporting."""
     try:
         # Get task manager
@@ -483,24 +489,43 @@ async def process_loan_details_with_progress(task_id: str, file_content: bytes, 
             del df_insert
             
             # Update progress for this chunk
-            chunk_progress = min(95, (chunk_idx + 1) / num_chunks * 95)
-            task_manager.update_progress(
-                task_id, 
-                progress=chunk_progress,
-                processed_items=(chunk_idx + 1) * chunk_size,
-                status_message=f"Processed chunk {chunk_idx + 1}/{num_chunks}: {chunk_inserted} inserted, {chunk_updated} updated"
-            )
+            chunk_progress = round(min(95, (chunk_idx + 1) / num_chunks * 95), 2)
+            
+            # Use the progress callback if provided, otherwise use the task manager directly
+            if progress_callback is not None:
+                await progress_callback(
+                    progress=chunk_progress,
+                    processed_items=(chunk_idx + 1) * chunk_size,
+                    status_message=f"Processed chunk {chunk_idx + 1}/{num_chunks}: {chunk_inserted} inserted, {chunk_updated} updated"
+                )
+            else:
+                task_manager.update_progress(
+                    task_id, 
+                    progress=chunk_progress,
+                    processed_items=(chunk_idx + 1) * chunk_size,
+                    status_message=f"Processed chunk {chunk_idx + 1}/{num_chunks}: {chunk_inserted} inserted, {chunk_updated} updated"
+                )
+            
+            # Add a small delay to ensure WebSocket message is sent before continuing
+            await asyncio.sleep(0.1)
         
         # Final commit and progress update
         db.commit()
         
         # Set final progress
-        task_manager.update_progress(
-            task_id, 
-            progress=100,
-            processed_items=total_rows,
-            status_message=f"Completed: {inserted_count} loans inserted, {rows_updated} updated"
-        )
+        if progress_callback is not None:
+            await progress_callback(
+                progress=100,
+                processed_items=total_rows,
+                status_message=f"Completed: {inserted_count} loans inserted, {rows_updated} updated"
+            )
+        else:
+            task_manager.update_progress(
+                task_id, 
+                progress=100,
+                processed_items=total_rows,
+                status_message=f"Completed: {inserted_count} loans inserted, {rows_updated} updated"
+            )
         
         return {
             "inserted": inserted_count,
@@ -513,7 +538,13 @@ async def process_loan_details_with_progress(task_id: str, file_content: bytes, 
         task_manager.update_task(task_id, status_message=f"Error: {str(e)}")
         raise
 
-async def process_client_data_with_progress(task_id: str, file_content: bytes, portfolio_id: int, db):
+async def process_client_data_with_progress(
+    task_id: str, 
+    file_content: bytes, 
+    portfolio_id: int, 
+    db,
+    progress_callback: Optional[Callable] = None
+):
     """Process client data file with progress reporting."""
     try:
         # Get task manager
@@ -903,24 +934,43 @@ async def process_client_data_with_progress(task_id: str, file_content: bytes, p
             del df_insert
             
             # Update progress for this chunk
-            chunk_progress = min(95, (chunk_idx + 1) / num_chunks * 95)
-            task_manager.update_progress(
-                task_id, 
-                progress=chunk_progress,
-                processed_items=(chunk_idx + 1) * chunk_size,
-                status_message=f"Processed chunk {chunk_idx + 1}/{num_chunks}: {chunk_inserted} inserted, {chunk_updated} updated"
-            )
+            chunk_progress = round(min(95, (chunk_idx + 1) / num_chunks * 95), 2)
+            
+            # Use the progress callback if provided, otherwise use the task manager directly
+            if progress_callback is not None:
+                await progress_callback(
+                    progress=chunk_progress,
+                    processed_items=(chunk_idx + 1) * chunk_size,
+                    status_message=f"Processed chunk {chunk_idx + 1}/{num_chunks}: {chunk_inserted} inserted, {chunk_updated} updated"
+                )
+            else:
+                task_manager.update_progress(
+                    task_id, 
+                    progress=chunk_progress,
+                    processed_items=(chunk_idx + 1) * chunk_size,
+                    status_message=f"Processed chunk {chunk_idx + 1}/{num_chunks}: {chunk_inserted} inserted, {chunk_updated} updated"
+                )
+            
+            # Add a small delay to ensure WebSocket message is sent before continuing
+            await asyncio.sleep(0.1)
         
         # Final commit and progress update
         db.commit()
         
         # Set final progress
-        task_manager.update_progress(
-            task_id, 
-            progress=100,
-            processed_items=total_rows,
-            status_message=f"Completed: {inserted_count} clients inserted, {rows_updated} updated"
-        )
+        if progress_callback is not None:
+            await progress_callback(
+                progress=100,
+                processed_items=total_rows,
+                status_message=f"Completed: {inserted_count} clients inserted, {rows_updated} updated"
+            )
+        else:
+            task_manager.update_progress(
+                task_id, 
+                progress=100,
+                processed_items=total_rows,
+                status_message=f"Completed: {inserted_count} clients inserted, {rows_updated} updated"
+            )
         
         return {
             "inserted": inserted_count,
