@@ -6,6 +6,7 @@ import logging
 from datetime import datetime
 from sqlalchemy.orm import Session
 from typing import Dict, Any, List, Tuple
+from sqlalchemy import func
 
 from app.models import StagingResult, Loan
 from app.schemas import ECLStagingConfig, LocalImpairmentConfig
@@ -29,44 +30,64 @@ async def stage_loans_ecl_orm(portfolio_id: int, config: ECLStagingConfig, db: S
         stage_2_min, stage_2_max = parse_days_range(stage_2_range)
         stage_3_min, stage_3_max = parse_days_range(stage_3_range)
         
-        # Get all loans for the portfolio
-        loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
+        # Get total loan count for the portfolio
+        total_loans = db.query(func.count(Loan.id)).filter(Loan.portfolio_id == portfolio_id).scalar() or 0
         
         # Initialize counters
         stage_counts = {1: 0, 2: 0, 3: 0}
         stage_balances = {1: 0.0, 2: 0.0, 3: 0.0}
         timestamp = datetime.now()
         
-        # Process each loan
-        for loan in loans:
-            # Get the ndia value (days past due)
-            ndia = loan.ndia if loan.ndia is not None else 0
+        # Use batch processing to reduce memory usage
+        batch_size = 5000
+        offset = 0
+        
+        while True:
+            # Get a batch of loans
+            loan_batch = db.query(Loan).filter(
+                Loan.portfolio_id == portfolio_id
+            ).order_by(Loan.id).offset(offset).limit(batch_size).all()
             
-            # Get outstanding loan balance
-            balance = float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance is not None else 0.0
+            # If no more loans, break the loop
+            if not loan_batch:
+                break
+                
+            # Process each loan in the batch
+            for loan in loan_batch:
+                # Get the ndia value (days past due)
+                ndia = loan.ndia if loan.ndia is not None else 0
+                
+                # Get outstanding loan balance
+                balance = float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance is not None else 0.0
+                
+                # Determine the stage based on ndia
+                if ndia >= stage_3_min:
+                    loan.ecl_stage = 3
+                    stage_counts[3] += 1
+                    stage_balances[3] += balance
+                elif ndia >= stage_2_min and (stage_2_max is None or ndia < stage_2_max):
+                    loan.ecl_stage = 2
+                    stage_counts[2] += 1
+                    stage_balances[2] += balance
+                else:
+                    loan.ecl_stage = 1
+                    stage_counts[1] += 1
+                    stage_balances[1] += balance
+                
+                # Update the last staged timestamp
+                loan.last_staged_at = timestamp
             
-            # Determine the stage based on ndia
-            if ndia >= stage_3_min:
-                loan.ecl_stage = 3
-                stage_counts[3] += 1
-                stage_balances[3] += balance
-            elif ndia >= stage_2_min and (stage_2_max is None or ndia < stage_2_max):
-                loan.ecl_stage = 2
-                stage_counts[2] += 1
-                stage_balances[2] += balance
-            else:
-                loan.ecl_stage = 1
-                stage_counts[1] += 1
-                stage_balances[1] += balance
+            # Commit changes for this batch
+            db.commit()
             
-            # Update the last staged timestamp
-            loan.last_staged_at = timestamp
+            # Update offset for next batch
+            offset += batch_size
+            
+            # Log progress
+            logger.info(f"Processed {offset} loans out of {total_loans} for ECL staging")
         
         # Round balances to 2 decimal places
         stage_balances = {k: round(v, 2) for k, v in stage_balances.items()}
-        
-        # Commit all changes
-        db.commit()
         
         # Update the staging result
         staging_result = db.query(StagingResult).filter(
@@ -78,7 +99,7 @@ async def stage_loans_ecl_orm(portfolio_id: int, config: ECLStagingConfig, db: S
             staging_result.result_summary = {
                 "status": "completed",
                 "timestamp": timestamp.isoformat(),
-                "total_loans": len(loans),
+                "total_loans": total_loans,
                 "Stage 1": {
                     "num_loans": stage_counts.get(1, 0),
                     "outstanding_loan_balance": stage_balances.get(1, 0)
@@ -105,7 +126,7 @@ async def stage_loans_ecl_orm(portfolio_id: int, config: ECLStagingConfig, db: S
         # Return summary
         return {
             "status": "success",
-            "total_loans": len(loans),
+            "total_loans": total_loans,
             "Stage 1": {
                 "num_loans": stage_counts.get(1, 0),
                 "outstanding_loan_balance": stage_balances.get(1, 0)
@@ -149,8 +170,8 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, config: LocalImpai
         doubtful_min, doubtful_max = parse_days_range(doubtful_range)
         loss_min, loss_max = parse_days_range(loss_range)
         
-        # Get all loans for the portfolio
-        loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
+        # Get total loan count for the portfolio
+        total_loans = db.query(func.count(Loan.id)).filter(Loan.portfolio_id == portfolio_id).scalar() or 0
         
         # Initialize counters
         category_counts = {
@@ -169,44 +190,64 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, config: LocalImpai
         }
         timestamp = datetime.now()
         
-        # Process each loan
-        for loan in loans:
-            # Get the ndia value (days past due)
-            ndia = loan.ndia if loan.ndia is not None else 0
+        # Use batch processing to reduce memory usage
+        batch_size = 5000
+        offset = 0
+        
+        while True:
+            # Get a batch of loans
+            loan_batch = db.query(Loan).filter(
+                Loan.portfolio_id == portfolio_id
+            ).order_by(Loan.id).offset(offset).limit(batch_size).all()
             
-            # Get outstanding loan balance
-            balance = float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance is not None else 0.0
+            # If no more loans, break the loop
+            if not loan_batch:
+                break
+                
+            # Process each loan in the batch
+            for loan in loan_batch:
+                # Get the ndia value (days past due)
+                ndia = loan.ndia if loan.ndia is not None else 0
+                
+                # Get outstanding loan balance
+                balance = float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance is not None else 0.0
+                
+                # Determine the impairment category based on ndia
+                if ndia >= loss_min:
+                    loan.impairment_category = "Loss"
+                    category_counts["Loss"] += 1
+                    category_balances["Loss"] += balance
+                elif ndia >= doubtful_min and (doubtful_max is None or ndia < doubtful_max):
+                    loan.impairment_category = "Doubtful"
+                    category_counts["Doubtful"] += 1
+                    category_balances["Doubtful"] += balance
+                elif ndia >= substandard_min and (substandard_max is None or ndia < substandard_max):
+                    loan.impairment_category = "Substandard"
+                    category_counts["Substandard"] += 1
+                    category_balances["Substandard"] += balance
+                elif ndia >= olem_min and (olem_max is None or ndia < olem_max):
+                    loan.impairment_category = "OLEM"
+                    category_counts["OLEM"] += 1
+                    category_balances["OLEM"] += balance
+                else:
+                    loan.impairment_category = "Current"
+                    category_counts["Current"] += 1
+                    category_balances["Current"] += balance
+                
+                # Update the last staged timestamp
+                loan.last_staged_at = timestamp
             
-            # Determine the impairment category based on ndia
-            if ndia >= loss_min:
-                loan.impairment_category = "Loss"
-                category_counts["Loss"] += 1
-                category_balances["Loss"] += balance
-            elif ndia >= doubtful_min and (doubtful_max is None or ndia < doubtful_max):
-                loan.impairment_category = "Doubtful"
-                category_counts["Doubtful"] += 1
-                category_balances["Doubtful"] += balance
-            elif ndia >= substandard_min and (substandard_max is None or ndia < substandard_max):
-                loan.impairment_category = "Substandard"
-                category_counts["Substandard"] += 1
-                category_balances["Substandard"] += balance
-            elif ndia >= olem_min and (olem_max is None or ndia < olem_max):
-                loan.impairment_category = "OLEM"
-                category_counts["OLEM"] += 1
-                category_balances["OLEM"] += balance
-            else:
-                loan.impairment_category = "Current"
-                category_counts["Current"] += 1
-                category_balances["Current"] += balance
+            # Commit changes for this batch
+            db.commit()
             
-            # Update the last staged timestamp
-            loan.last_staged_at = timestamp
+            # Update offset for next batch
+            offset += batch_size
+            
+            # Log progress
+            logger.info(f"Processed {offset} loans out of {total_loans} for local impairment staging")
         
         # Round balances to 2 decimal places
         category_balances = {k: round(v, 2) for k, v in category_balances.items()}
-        
-        # Commit all changes
-        db.commit()
         
         # Update the staging result
         staging_result = db.query(StagingResult).filter(
@@ -218,7 +259,7 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, config: LocalImpai
             staging_result.result_summary = {
                 "status": "completed",
                 "timestamp": timestamp.isoformat(),
-                "total_loans": len(loans),
+                "total_loans": total_loans,
                 "Current": {
                     "num_loans": category_counts["Current"],
                     "outstanding_loan_balance": category_balances["Current"]
@@ -255,7 +296,7 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, config: LocalImpai
         # Return summary
         return {
             "status": "success",
-            "total_loans": len(loans),
+            "total_loans": total_loans,
             "Current": {
                 "num_loans": category_counts["Current"],
                 "outstanding_loan_balance": category_balances["Current"]
