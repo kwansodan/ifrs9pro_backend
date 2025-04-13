@@ -367,13 +367,6 @@ async def process_portfolio_ingestion(
                 total_balance = stage_1_balance + stage_2_balance + stage_3_balance
                 provision_percentage = (total_provision / total_balance) * 100 if total_balance > 0 else 0
                 
-                # Round all values to 2 decimal places
-                stage_1_provision = round(stage_1_provision, 2)
-                stage_2_provision = round(stage_2_provision, 2)
-                stage_3_provision = round(stage_3_provision, 2)
-                total_provision = round(total_provision, 2)
-                provision_percentage = round(provision_percentage, 2)
-                
                 # Create calculation result
                 ecl_calculation_result = CalculationResult(
                     portfolio_id=portfolio_id,
@@ -387,28 +380,25 @@ async def process_portfolio_ingestion(
                         "Stage 3": {"provision_rate": stage_3_provision_rate}
                     },
                     result_summary={
-                        "status": "completed",
-                        "timestamp": datetime.now().isoformat(),
                         "Stage 1": {
-                            "count": stage_1_count,
-                            "total": round(stage_1_balance, 2),
-                            "provision": stage_1_provision,
-                            "provision_rate": round(stage_1_provision_rate * 100, 2)
+                            "num_loans": stage_1_count,
+                            "total_loan_value": float(round(stage_1_balance, 2)),
+                            "provision_amount": float(stage_1_provision),
+                            "provision_rate": float(stage_1_provision_rate * 100),
                         },
                         "Stage 2": {
-                            "count": stage_2_count,
-                            "total": round(stage_2_balance, 2),
-                            "provision": stage_2_provision,
-                            "provision_rate": round(stage_2_provision_rate * 100, 2)
+                            "num_loans": stage_2_count,
+                            "total_loan_value": float(round(stage_2_balance, 2)),
+                            "provision_amount": float(stage_2_provision),
+                            "provision_rate": float(stage_2_provision_rate * 100),
                         },
                         "Stage 3": {
-                            "count": stage_3_count,
-                            "total": round(stage_3_balance, 2),
-                            "provision": stage_3_provision,
-                            "provision_rate": round(stage_3_provision_rate * 100, 2)
+                            "num_loans": stage_3_count,
+                            "total_loan_value": float(round(stage_3_balance, 2)),
+                            "provision_amount": float(stage_3_provision),
+                            "provision_rate": float(stage_3_provision_rate * 100),
                         },
-                        "total_provision": total_provision,
-                        "provision_percentage": provision_percentage
+                        "total_loans": stage_1_count + stage_2_count + stage_3_count
                     }
                 )
                 db.add(ecl_calculation_result)
@@ -516,40 +506,37 @@ async def process_portfolio_ingestion(
                         "Loss": {"provision_rate": loss_provision_rate}
                     },
                     result_summary={
-                        "status": "completed",
-                        "timestamp": datetime.now().isoformat(),
                         "Current": {
-                            "count": current_count,
-                            "total": round(current_balance, 2),
-                            "provision": current_provision,
-                            "provision_rate": round(current_provision_rate * 100, 2)
+                            "num_loans": current_count,
+                            "total_loan_value": round(current_balance, 2),
+                            "provision_amount": current_provision,
+                            "provision_rate": int(current_provision_rate * 100)
                         },
                         "OLEM": {
-                            "count": olem_count,
-                            "total": round(olem_balance, 2),
-                            "provision": olem_provision,
-                            "provision_rate": round(olem_provision_rate * 100, 2)
+                            "num_loans": olem_count,
+                            "total_loan_value": round(olem_balance, 2),
+                            "provision_amount": olem_provision,
+                            "provision_rate": int(olem_provision_rate * 100)
                         },
                         "Substandard": {
-                            "count": substandard_count,
-                            "total": round(substandard_balance, 2),
-                            "provision": substandard_provision,
-                            "provision_rate": round(substandard_provision_rate * 100, 2)
+                            "num_loans": substandard_count,
+                            "total_loan_value": round(substandard_balance, 2),
+                            "provision_amount": substandard_provision,
+                            "provision_rate": int(substandard_provision_rate * 100)
                         },
                         "Doubtful": {
-                            "count": doubtful_count,
-                            "total": round(doubtful_balance, 2),
-                            "provision": doubtful_provision,
-                            "provision_rate": round(doubtful_provision_rate * 100, 2)
+                            "num_loans": doubtful_count,
+                            "total_loan_value": round(doubtful_balance, 2),
+                            "provision_amount": doubtful_provision,
+                            "provision_rate": int(doubtful_provision_rate * 100)
                         },
                         "Loss": {
-                            "count": loss_count,
-                            "total": round(loss_balance, 2),
-                            "provision": loss_provision,
-                            "provision_rate": round(loss_provision_rate * 100, 2)
+                            "num_loans": loss_count,
+                            "total_loan_value": round(loss_balance, 2),
+                            "provision_amount": loss_provision,
+                            "provision_rate": int(loss_provision_rate * 100)
                         },
-                        "total_provision": total_provision,
-                        "provision_percentage": provision_percentage
+                        "total_loans": current_count + olem_count + substandard_count + doubtful_count + loss_count
                     }
                 )
                 db.add(local_calculation_result)
