@@ -2,6 +2,7 @@ from collections import defaultdict
 from typing import List, Dict, Any
 from sqlalchemy.orm import Session
 from app.models import Client, Loan, QualityIssue, Portfolio
+import time
 
 
 def find_duplicate_customer_ids(db: Session, portfolio_id: int) -> List[Dict]:
@@ -59,34 +60,44 @@ def find_duplicate_addresses(db: Session, portfolio_id: int) -> List[Dict]:
     return duplicates
 
 
-def find_duplicate_dob(db: Session, portfolio_id: int) -> List[Dict]:
+def find_duplicate_dobs(db: Session, portfolio_id: int) -> List[Dict]:
     """
-    Find clients with duplicate dates of birth in the portfolio.
-    Returns a list of groups of clients with the same date of birth.
+    Find clients with duplicate dates of birth in a portfolio.
+    
+    Args:
+        db: Database session
+        portfolio_id: Portfolio ID to check
+        
+    Returns:
+        List of groups of clients with the same date of birth
     """
     # Get all clients in the portfolio
-    clients = db.query(Client).filter(Client.portfolio_id == portfolio_id).all()
-
-    # Group clients by date of birth
-    dob_groups = defaultdict(list)
+    clients = (
+        db.query(Client)
+        .filter(Client.portfolio_id == portfolio_id)
+        .filter(Client.date_of_birth.isnot(None))  # Only check clients with DOB
+        .all()
+    )
+    
+    # Group clients by DOB
+    dob_groups = {}
     for client in clients:
-        dob = client.date_of_birth
-        
-        if dob:  # Skip clients with no DOB
-            dob_key = dob.isoformat()
-            dob_groups[dob_key].append(
-                {
-                    "id": client.id,
-                    "employee_id": client.employee_id,
-                    "name": f"{client.last_name} {client.other_names}",
-                    "date_of_birth": dob.isoformat(),
-                }
-            )
-
-    # Filter only groups with more than one client
-    duplicates = [group for dob, group in dob_groups.items() if len(group) > 1]
-
-    return duplicates
+        if client.date_of_birth:
+            dob_str = client.date_of_birth.isoformat() if hasattr(client.date_of_birth, 'isoformat') else str(client.date_of_birth)
+            if dob_str not in dob_groups:
+                dob_groups[dob_str] = []
+            
+            dob_groups[dob_str].append({
+                "id": client.id,
+                "employee_id": client.employee_id,
+                "date_of_birth": dob_str,
+                "name": f"{client.last_name} {client.other_names}" if client.last_name and client.other_names else "Unknown"
+            })
+    
+    # Filter groups with more than one client
+    duplicate_groups = [group for dob, group in dob_groups.items() if len(group) > 1]
+    
+    return duplicate_groups
 
 
 def find_duplicate_loan_ids(db: Session, portfolio_id: int) -> List[Dict]:
@@ -116,9 +127,9 @@ def find_duplicate_loan_ids(db: Session, portfolio_id: int) -> List[Dict]:
     return duplicates
 
 
-def find_unmatched_employee_ids(db: Session, portfolio_id: int) -> List[Dict]:
+def find_clients_without_matching_loans(db: Session, portfolio_id: int) -> List[Dict]:
     """
-    Find customers who cannot be matched to employee IDs in the loan details.
+    Find clients who cannot be matched to loans in the portfolio.
     """
     # Get all clients in the portfolio
     clients = db.query(Client).filter(Client.portfolio_id == portfolio_id).all()
@@ -147,9 +158,9 @@ def find_unmatched_employee_ids(db: Session, portfolio_id: int) -> List[Dict]:
     return unmatched_clients
 
 
-def find_loan_customer_mismatches(db: Session, portfolio_id: int) -> List[Dict]:
+def find_loans_without_matching_clients(db: Session, portfolio_id: int) -> List[Dict]:
     """
-    Find loan details that don't match customer data.
+    Find loan details that don't match customer data (loans without matching clients).
     """
     # Get all loans in the portfolio
     loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
@@ -219,8 +230,8 @@ def create_quality_issues_if_needed(db: Session, portfolio_id: int) -> Dict[str,
         "duplicate_addresses": 0,
         "duplicate_dob": 0,
         "duplicate_loan_ids": 0,
-        "unmatched_employee_ids": 0,
-        "loan_customer_mismatches": 0,
+        "clients_without_matching_loans": 0,
+        "loans_without_matching_clients": 0,
         "missing_dob": 0,
         "missing_addresses": 0,
         "missing_loan_numbers": 0,
@@ -250,10 +261,10 @@ def create_quality_issues_if_needed(db: Session, portfolio_id: int) -> Dict[str,
             issue_counts["duplicate_dob"] += 1
         elif issue_type == "duplicate_loan_id":
             issue_counts["duplicate_loan_ids"] += 1
-        elif issue_type == "unmatched_employee_id":
-            issue_counts["unmatched_employee_ids"] += 1
-        elif issue_type == "loan_customer_mismatch":
-            issue_counts["loan_customer_mismatches"] += 1
+        elif issue_type == "client_without_matching_loan":
+            issue_counts["clients_without_matching_loans"] += 1
+        elif issue_type == "loan_without_matching_client":
+            issue_counts["loans_without_matching_clients"] += 1
         elif issue_type == "missing_dob":
             issue_counts["missing_dob"] += 1
         elif issue_type == "missing_address":
@@ -268,14 +279,19 @@ def create_quality_issues_if_needed(db: Session, portfolio_id: int) -> Dict[str,
             issue_counts["missing_interest_rates"] += 1
         elif issue_type == "missing_loan_amount":
             issue_counts["missing_loan_amounts"] += 1
+        # Handle legacy issue types for backward compatibility
+        elif issue_type == "unmatched_employee_id":
+            issue_counts["clients_without_matching_loans"] += 1
+        elif issue_type == "loan_customer_mismatch":
+            issue_counts["loans_without_matching_clients"] += 1
 
     # Calculate totals
     total_issues = sum(issue_counts.values())
     high_severity_issues = (
         issue_counts["duplicate_customer_ids"]
         + issue_counts["duplicate_loan_ids"]
-        + issue_counts["unmatched_employee_ids"]
-        + issue_counts["loan_customer_mismatches"]
+        + issue_counts["clients_without_matching_loans"]
+        + issue_counts["loans_without_matching_clients"]
         + issue_counts["missing_loan_amounts"]
     )
 
@@ -305,7 +321,6 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
     """
     from app.utils.background_tasks import get_task_manager
     import logging
-    import asyncio
     
     logger = logging.getLogger(__name__)
     logger.info(f"Starting quality issue creation for portfolio {portfolio_id}")
@@ -321,8 +336,8 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
         "duplicate_addresses": 0,
         "duplicate_dob": 0,
         "duplicate_loan_ids": 0,
-        "unmatched_employee_ids": 0,
-        "loan_customer_mismatches": 0,
+        "clients_without_matching_loans": 0,
+        "loans_without_matching_clients": 0,
         "missing_dob": 0,
         "missing_addresses": 0,
         "missing_loan_numbers": 0,
@@ -338,7 +353,7 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
             task_id,
             status_message="Clearing existing quality issues"
         )
-        asyncio.sleep(0.1)
+        time.sleep(0.1)
     
     try:
         deleted_count = db.query(QualityIssue).filter(
@@ -356,7 +371,7 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
             task_id,
             status_message="Checking for duplicate customer IDs"
         )
-        asyncio.sleep(0.1)
+        time.sleep(0.1)
     
     # 1. Check for duplicate customer IDs
     try:
@@ -368,10 +383,10 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
                     issue_type="duplicate_customer_id",
                     severity="high",
                     status="open",
-                    entity_type="client",
-                    entity_id=client_info["id"],
                     description=f"Duplicate employee ID: {client_info['employee_id']}",
-                    metadata={
+                    affected_records={
+                        "entity_type": "client",
+                        "entity_id": client_info["id"],
                         "employee_id": client_info["employee_id"],
                         "duplicate_count": len(group)
                     }
@@ -392,7 +407,7 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
             task_id,
             status_message="Checking for duplicate addresses"
         )
-        asyncio.sleep(0.1)
+        time.sleep(0.1)
     
     # 2. Check for duplicate addresses
     try:
@@ -404,10 +419,10 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
                     issue_type="duplicate_address",
                     severity="medium",
                     status="open",
-                    entity_type="client",
-                    entity_id=client_info["id"],
                     description=f"Duplicate address: {client_info.get('address', 'Unknown')}",
-                    metadata={
+                    affected_records={
+                        "entity_type": "client",
+                        "entity_id": client_info["id"],
                         "address": client_info.get("address", "Unknown"),
                         "duplicate_count": len(group)
                     }
@@ -428,7 +443,7 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
             task_id,
             status_message="Checking for duplicate DOBs"
         )
-        asyncio.sleep(0.1)
+        time.sleep(0.1)
     
     # 3. Check for duplicate DOBs
     try:
@@ -440,11 +455,11 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
                     issue_type="duplicate_dob",
                     severity="medium",
                     status="open",
-                    entity_type="client",
-                    entity_id=client_info["id"],
-                    description=f"Duplicate date of birth: {client_info.get('dob', 'Unknown')}",
-                    metadata={
-                        "dob": client_info.get("dob", "Unknown"),
+                    description=f"Duplicate date of birth: {client_info.get('date_of_birth', 'Unknown')}",
+                    affected_records={
+                        "entity_type": "client",
+                        "entity_id": client_info["id"],
+                        "date_of_birth": client_info.get("date_of_birth", "Unknown"),
                         "duplicate_count": len(group)
                     }
                 )
@@ -464,7 +479,7 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
             task_id,
             status_message="Checking for duplicate loan IDs"
         )
-        asyncio.sleep(0.1)
+        time.sleep(0.1)
     
     # 4. Check for duplicate loan IDs
     try:
@@ -476,10 +491,10 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
                     issue_type="duplicate_loan_id",
                     severity="high",
                     status="open",
-                    entity_type="loan",
-                    entity_id=loan_info["id"],
                     description=f"Duplicate loan ID: {loan_info['loan_no']}",
-                    metadata={
+                    affected_records={
+                        "entity_type": "loan",
+                        "entity_id": loan_info["id"],
                         "loan_no": loan_info["loan_no"],
                         "duplicate_count": len(group)
                     }
@@ -498,37 +513,73 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
     if task_id:
         get_task_manager().update_task(
             task_id,
-            status_message="Checking for unmatched employee IDs"
+            status_message="Checking for clients without matching loans"
         )
-        asyncio.sleep(0.1)
+        time.sleep(0.1)
     
-    # 5. Check for unmatched employee IDs (loans without matching clients)
+    # 5. Check for clients without matching loans
     try:
-        unmatched_ids = find_unmatched_employee_ids(db, portfolio_id)
-        for loan_info in unmatched_ids:
+        unmatched_clients = find_clients_without_matching_loans(db, portfolio_id)
+        for client_info in unmatched_clients:
             issue = QualityIssue(
                 portfolio_id=portfolio_id,
-                issue_type="unmatched_employee_id",
+                issue_type="client_without_matching_loan",
                 severity="high",
                 status="open",
-                entity_type="loan",
-                entity_id=loan_info["id"],
-                description=f"Loan has no matching client with employee ID: {loan_info['employee_id']}",
-                metadata={
-                    "employee_id": loan_info["employee_id"],
-                    "loan_no": loan_info["loan_no"]
+                description=f"Client has no matching loan with employee ID: {client_info['employee_id']}",
+                affected_records={
+                    "entity_type": "client",
+                    "entity_id": client_info["id"],
+                    "employee_id": client_info["employee_id"],
+                    "name": client_info.get("name", "Unknown")
                 }
             )
             db.add(issue)
         
-        issue_counts["unmatched_employee_ids"] = len(unmatched_ids)
+        issue_counts["clients_without_matching_loans"] = len(unmatched_clients)
         
         # Commit in batches
         db.commit()
-        logger.info(f"Created {issue_counts['unmatched_employee_ids']} unmatched employee ID issues")
+        logger.info(f"Created {issue_counts['clients_without_matching_loans']} client without matching loan issues")
     except Exception as e:
         db.rollback()
-        logger.error(f"Error checking unmatched employee IDs: {str(e)}")
+        logger.error(f"Error checking clients without matching loans: {str(e)}")
+    
+    # Update progress if task_id provided
+    if task_id:
+        get_task_manager().update_task(
+            task_id,
+            status_message="Checking for loans without matching clients"
+        )
+        time.sleep(0.1)
+    
+    # 5b. Check for loans without matching clients
+    try:
+        unmatched_loans = find_loans_without_matching_clients(db, portfolio_id)
+        for loan_info in unmatched_loans:
+            issue = QualityIssue(
+                portfolio_id=portfolio_id,
+                issue_type="loan_without_matching_client",
+                severity="high",
+                status="open",
+                description=f"Loan has no matching client with employee ID: {loan_info['employee_id']}",
+                affected_records={
+                    "entity_type": "loan",
+                    "entity_id": loan_info["id"],
+                    "employee_id": loan_info["employee_id"],
+                    "loan_amount": loan_info.get("loan_amount", 0)
+                }
+            )
+            db.add(issue)
+        
+        issue_counts["loans_without_matching_clients"] = len(unmatched_loans)
+        
+        # Commit in batches
+        db.commit()
+        logger.info(f"Created {issue_counts['loans_without_matching_clients']} loan without matching client issues")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error checking loans without matching clients: {str(e)}")
     
     # Update progress if task_id provided
     if task_id:
@@ -536,7 +587,7 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
             task_id,
             status_message="Checking for missing data"
         )
-        asyncio.sleep(0.1)
+        time.sleep(0.1)
     
     # 6. Check for missing DOB
     try:
@@ -547,10 +598,10 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
                 issue_type="missing_dob",
                 severity="medium",
                 status="open",
-                entity_type="client",
-                entity_id=client_info["id"],
                 description=f"Client has no date of birth",
-                metadata={
+                affected_records={
+                    "entity_type": "client",
+                    "entity_id": client_info["id"],
                     "employee_id": client_info["employee_id"],
                     "name": client_info["name"]
                 }
@@ -571,8 +622,8 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
     high_severity_issues = (
         issue_counts["duplicate_customer_ids"]
         + issue_counts["duplicate_loan_ids"]
-        + issue_counts["unmatched_employee_ids"]
-        + issue_counts["loan_customer_mismatches"]
+        + issue_counts["clients_without_matching_loans"]
+        + issue_counts["loans_without_matching_clients"]
         + issue_counts["missing_loan_amounts"]
     )
     

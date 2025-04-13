@@ -583,8 +583,8 @@ def recheck_quality_issues(
         duplicate_addresses=quality_counts["duplicate_addresses"],
         duplicate_dob=quality_counts["duplicate_dob"],
         duplicate_loan_ids=quality_counts["duplicate_loan_ids"],
-        unmatched_employee_ids=quality_counts["unmatched_employee_ids"],
-        loan_customer_mismatches=quality_counts["loan_customer_mismatches"],
+        unmatched_employee_ids=quality_counts["clients_without_matching_loans"],
+        loan_customer_mismatches=quality_counts["loans_without_matching_clients"],
         missing_dob=quality_counts["missing_dob"],
         total_issues=quality_counts["total_issues"],
         high_severity_issues=quality_counts["high_severity_issues"],
@@ -685,5 +685,3 @@ async def download_quality_issue_excel(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
-
-
