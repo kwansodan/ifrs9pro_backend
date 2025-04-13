@@ -29,22 +29,28 @@ async def process_ecl_calculation(
     Process ECL calculation in the background with progress reporting.
     """
     try:
+        logger.info(f"Starting ECL calculation for portfolio {portfolio_id} with reporting date {reporting_date}")
         get_task_manager().update_progress(
             task_id,
             progress=5,
             status_message=f"Starting ECL calculation for portfolio {portfolio_id}"
         )
+        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
         
         # Verify portfolio exists
         portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
         if not portfolio:
+            logger.error(f"Portfolio with ID {portfolio_id} not found")
             raise ValueError(f"Portfolio with ID {portfolio_id} not found")
+        
+        logger.info(f"Portfolio {portfolio_id} found: {portfolio.name}")
         
         get_task_manager().update_progress(
             task_id,
             progress=10,
             status_message="Retrieving latest ECL staging data"
         )
+        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
         
         # Get the latest ECL staging result
         latest_staging = (
@@ -58,18 +64,28 @@ async def process_ecl_calculation(
         )
         
         if not latest_staging:
+            logger.error(f"No ECL staging found for portfolio {portfolio_id}")
             raise ValueError("No ECL staging found. Please stage loans first.")
+        
+        logger.info(f"Found ECL staging result ID {latest_staging.id} from {latest_staging.created_at}")
         
         # Extract config from the staging result
         config = latest_staging.config
         if not config:
+            logger.error(f"Invalid staging configuration for portfolio {portfolio_id}")
             raise ValueError("Invalid staging configuration")
+        
+        logger.info(f"ECL staging config: {config}")
+        
+        # Log the staging result summary
+        logger.info(f"ECL staging result summary: {latest_staging.result_summary}")
         
         get_task_manager().update_progress(
             task_id,
             progress=20,
             status_message="Processing loan staging data"
         )
+        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
         
         # Get the loan staging data from the result_summary
         staging_data = []
@@ -92,11 +108,14 @@ async def process_ecl_calculation(
             # Get the loans
             loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
             
+            logger.info(f"Found {len(loans)} loans for portfolio {portfolio_id}")
+            
             get_task_manager().update_progress(
                 task_id,
                 progress=30,
                 status_message=f"Re-staging {len(loans)} loans based on configuration"
             )
+            await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
             
             # Re-stage them
             for loan in loans:
@@ -127,11 +146,27 @@ async def process_ecl_calculation(
             # If we still don't have staging data, return an error
             raise ValueError("No loan staging data found. Please re-run the staging process.")
             
+        # Calculate stage statistics
+        stage_stats = {}
+        for stage in ["Stage 1", "Stage 2", "Stage 3"]:
+            stage_loans = [loan for loan in staging_data if loan["stage"] == stage]
+            total_balance = sum(loan["outstanding_loan_balance"] for loan in stage_loans)
+            stage_stats[stage] = {
+                "num_loans": len(stage_loans),
+                "total_loan_value": round(total_balance, 2),
+            }
+            
+        logger.info(f"ECL stage statistics for portfolio {portfolio_id}:")
+        logger.info(f"Stage 1: {stage_stats['Stage 1']['num_loans']} loans, balance: {stage_stats['Stage 1']['total_loan_value']}")
+        logger.info(f"Stage 2: {stage_stats['Stage 2']['num_loans']} loans, balance: {stage_stats['Stage 2']['total_loan_value']}")
+        logger.info(f"Stage 3: {stage_stats['Stage 3']['num_loans']} loans, balance: {stage_stats['Stage 3']['total_loan_value']}")
+        
         get_task_manager().update_progress(
             task_id,
             progress=40,
             status_message="Retrieving loan and client data"
         )
+        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
         
         # Get all loans in the portfolio
         loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
@@ -163,8 +198,9 @@ async def process_ecl_calculation(
         get_task_manager().update_progress(
             task_id,
             progress=50,
-            status_message="Retrieving client securities data"
+            status_message=f"Retrieving client securities data for {len(staging_data)} loans"
         )
+        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
         
         # Get all client IDs to fetch securities
         client_ids = {loan.employee_id for loan in loans if loan.employee_id}
@@ -192,19 +228,21 @@ async def process_ecl_calculation(
             progress=60,
             status_message=f"Calculating ECL for {len(staging_data)} loans"
         )
+        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
         
         # Process loans using staging data
         total_items = len(staging_data)
         for i, stage_info in enumerate(staging_data):
-            if i % 100 == 0:  # Update progress every 100 loans
+            if i % 50 == 0:  # Update progress every 50 loans (more frequent updates)
                 progress = 60 + (i / total_items) * 30  # Progress from 60% to 90%
                 get_task_manager().update_progress(
                     task_id,
-                    progress=progress,
+                    progress=round(progress, 2),  # Round to 2 decimal places
                     processed_items=i,
                     total_items=total_items,
-                    status_message=f"Processed {i}/{total_items} loans"
+                    status_message=f"Calculating ECL: Processed {i}/{total_items} loans ({round(i/total_items*100, 1)}%)"
                 )
+                await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
                 
             loan_id = stage_info.get("loan_id")
             stage = stage_info.get("stage")
@@ -229,6 +267,8 @@ async def process_ecl_calculation(
             ead_percentage = calculate_exposure_at_default_percentage(loan, reporting_date)
             ecl = calculate_marginal_ecl(loan, ead_percentage, pd, lgd)
 
+            logger.info(f"ECL calculation for loan {loan_id}: LGD={lgd}, PD={pd}, EAD={ead_percentage}, ECL={ecl}")
+            
             # Update stage totals based on the assigned stage
             if stage == "Stage 1":
                 stage_1_loans.append(loan)
@@ -260,6 +300,7 @@ async def process_ecl_calculation(
             progress=90,
             status_message="Finalizing ECL calculation results"
         )
+        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
         
         # Calculate averages for summary metrics
         avg_lgd = total_lgd / total_loans if total_loans > 0 else 0
@@ -288,6 +329,13 @@ async def process_ecl_calculation(
             Decimal(stage_3_provision) / Decimal(stage_3_total) if stage_3_total > 0 else 0
         )
 
+        get_task_manager().update_progress(
+            task_id,
+            progress=95,
+            status_message="Saving calculation results to database"
+        )
+        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
+        
         # Create a new CalculationResult record
         calculation_result = CalculationResult(
             portfolio_id=portfolio_id,
@@ -324,10 +372,9 @@ async def process_ecl_calculation(
         get_task_manager().update_progress(
             task_id,
             progress=100,
-            processed_items=total_loans,
-            total_items=total_loans,
             status_message="ECL calculation completed successfully"
         )
+        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
         
         # Return the calculation result ID
         return {
@@ -362,6 +409,7 @@ async def process_local_impairment_calculation(
             progress=5,
             status_message=f"Starting local impairment calculation for portfolio {portfolio_id}"
         )
+        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
         
         # Verify portfolio exists
         portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
@@ -373,6 +421,7 @@ async def process_local_impairment_calculation(
             progress=10,
             status_message="Retrieving latest local impairment staging data"
         )
+        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
         
         # Get the latest local impairment staging result
         latest_staging = (
@@ -398,6 +447,7 @@ async def process_local_impairment_calculation(
             progress=20,
             status_message="Processing loan staging data"
         )
+        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
         
         # Get the loan staging data from the result_summary
         staging_data = []
@@ -422,11 +472,14 @@ async def process_local_impairment_calculation(
             # Get the loans
             loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
             
+            logger.info(f"Found {len(loans)} loans for portfolio {portfolio_id}")
+            
             get_task_manager().update_progress(
                 task_id,
                 progress=30,
                 status_message=f"Re-staging {len(loans)} loans based on configuration"
             )
+            await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
             
             # Re-stage them
             for loan in loans:
@@ -466,6 +519,7 @@ async def process_local_impairment_calculation(
             progress=40,
             status_message="Retrieving loan data"
         )
+        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
         
         # Get all loans in the portfolio
         loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
@@ -513,24 +567,43 @@ async def process_local_impairment_calculation(
             logger.error(f"Error parsing provision rates: {str(e)}")
             raise ValueError(f"Could not parse provision rates from configuration: {str(e)}")
 
+        # Calculate stage statistics
+        stage_stats = {}
+        for stage in ["Current", "OLEM", "Substandard", "Doubtful", "Loss"]:
+            stage_loans = [loan for loan in staging_data if loan["stage"] == stage]
+            total_balance = sum(loan["outstanding_loan_balance"] for loan in stage_loans)
+            stage_stats[stage] = {
+                "num_loans": len(stage_loans),
+                "total_loan_value": round(total_balance, 2),
+            }
+            
+        logger.info(f"Local impairment stage statistics for portfolio {portfolio_id}:")
+        logger.info(f"Current: {stage_stats['Current']['num_loans']} loans, balance: {stage_stats['Current']['total_loan_value']}")
+        logger.info(f"OLEM: {stage_stats['OLEM']['num_loans']} loans, balance: {stage_stats['OLEM']['total_loan_value']}")
+        logger.info(f"Substandard: {stage_stats['Substandard']['num_loans']} loans, balance: {stage_stats['Substandard']['total_loan_value']}")
+        logger.info(f"Doubtful: {stage_stats['Doubtful']['num_loans']} loans, balance: {stage_stats['Doubtful']['total_loan_value']}")
+        logger.info(f"Loss: {stage_stats['Loss']['num_loans']} loans, balance: {stage_stats['Loss']['total_loan_value']}")
+        
         get_task_manager().update_progress(
             task_id,
             progress=60,
             status_message=f"Calculating local impairment for {len(staging_data)} loans"
         )
+        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
         
         # Process loans using staging data
         total_items = len(staging_data)
         for i, stage_info in enumerate(staging_data):
-            if i % 100 == 0:  # Update progress every 100 loans
+            if i % 50 == 0:  # Update progress every 50 loans (more frequent updates)
                 progress = 60 + (i / total_items) * 30  # Progress from 60% to 90%
                 get_task_manager().update_progress(
                     task_id,
-                    progress=progress,
+                    progress=round(progress, 2),  # Round to 2 decimal places
                     processed_items=i,
                     total_items=total_items,
-                    status_message=f"Processed {i}/{total_items} loans"
+                    status_message=f"Calculating local impairment: Processed {i}/{total_items} loans ({round(i/total_items*100, 1)}%)"
                 )
+                await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
                 
             loan_id = stage_info.get("loan_id")
             stage = stage_info.get("stage")
@@ -572,9 +645,8 @@ async def process_local_impairment_calculation(
             task_id,
             progress=90,
             status_message="Finalizing local impairment calculation results",
-            processed_items=len(staging_data),
-            total_items=len(staging_data)
         )
+        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
         
         # Calculate provisions for each category
         current_provision = current_total * current_rate
@@ -583,6 +655,13 @@ async def process_local_impairment_calculation(
         doubtful_provision = doubtful_total * doubtful_rate
         loss_provision = loss_total * loss_rate
 
+        logger.info(f"Local impairment provisions for portfolio {portfolio_id}:")
+        logger.info(f"Current: rate={current_rate}, value={current_total}, provision={current_provision}")
+        logger.info(f"OLEM: rate={olem_rate}, value={olem_total}, provision={olem_provision}")
+        logger.info(f"Substandard: rate={substandard_rate}, value={substandard_total}, provision={substandard_provision}")
+        logger.info(f"Doubtful: rate={doubtful_rate}, value={doubtful_total}, provision={doubtful_provision}")
+        logger.info(f"Loss: rate={loss_rate}, value={loss_total}, provision={loss_provision}")
+        
         # Calculate total loan value and provision amount
         total_loan_value = current_total + olem_total + substandard_total + doubtful_total + loss_total
         total_provision = current_provision + olem_provision + substandard_provision + doubtful_provision + loss_provision
@@ -641,11 +720,17 @@ async def process_local_impairment_calculation(
 
         get_task_manager().update_progress(
             task_id,
+            progress=95,
+            status_message="Saving local impairment calculation results to database"
+        )
+        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
+        
+        get_task_manager().update_progress(
+            task_id,
             progress=100,
-            processed_items=len(staging_data),
-            total_items=len(staging_data),
             status_message="Local impairment calculation completed successfully"
         )
+        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
         
         # Return the calculation result ID
         return {

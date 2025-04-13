@@ -99,7 +99,7 @@ async def process_loan_details_with_progress(
         sheet_name = xlsx.sheet_names[0]
         
         # Get total rows for progress tracking
-        total_rows = len(pd.read_excel(xlsx, sheet_name=sheet_name, usecols=[0], nrows=None)) - 1
+        total_rows = len(pd.read_excel(xlsx, sheet_name=sheet_name, usecols=[0], nrows=None))
         
         # Update task with total items
         task_manager.update_task(task_id, total_items=total_rows, status_message="Processing data")
@@ -597,7 +597,7 @@ async def process_client_data_with_progress(
         sheet_name = xlsx.sheet_names[0]
         
         # Get total rows for progress tracking
-        total_rows = len(pd.read_excel(xlsx, sheet_name=sheet_name, usecols=[0], nrows=None)) - 1
+        total_rows = len(pd.read_excel(xlsx, sheet_name=sheet_name, usecols=[0], nrows=None))
         
         # Update task with total items
         task_manager.update_task(task_id, total_items=total_rows, status_message="Processing data")

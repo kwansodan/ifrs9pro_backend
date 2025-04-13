@@ -19,19 +19,25 @@ async def stage_loans_ecl_orm(portfolio_id: int, config: ECLStagingConfig, db: S
     """
     try:
         logger.info(f"Starting ECL staging for portfolio {portfolio_id}")
+        logger.info(f"ECL staging config: {config.dict()}")
         
         # Parse days ranges from config
         stage_1_range = config.stage_1.days_range
         stage_2_range = config.stage_2.days_range
         stage_3_range = config.stage_3.days_range
         
+        logger.info(f"ECL staging ranges: Stage 1: {stage_1_range}, Stage 2: {stage_2_range}, Stage 3: {stage_3_range}")
+        
         # Extract min and max days for each stage
         stage_1_min, stage_1_max = parse_days_range(stage_1_range)
         stage_2_min, stage_2_max = parse_days_range(stage_2_range)
         stage_3_min, stage_3_max = parse_days_range(stage_3_range)
         
+        logger.info(f"Parsed day ranges: Stage 1: {stage_1_min}-{stage_1_max}, Stage 2: {stage_2_min}-{stage_2_max}, Stage 3: {stage_3_min}-{stage_3_max}")
+        
         # Get total loan count for the portfolio
         total_loans = db.query(func.count(Loan.id)).filter(Loan.portfolio_id == portfolio_id).scalar() or 0
+        logger.info(f"Total loans in portfolio {portfolio_id}: {total_loans}")
         
         # Initialize counters
         stage_counts = {1: 0, 2: 0, 3: 0}
@@ -41,6 +47,10 @@ async def stage_loans_ecl_orm(portfolio_id: int, config: ECLStagingConfig, db: S
         # Use batch processing to reduce memory usage
         batch_size = 5000
         offset = 0
+        
+        # Sample logging for NDIA values
+        ndia_sample = []
+        sample_size = min(20, total_loans)
         
         while True:
             # Get a batch of loans
@@ -56,6 +66,10 @@ async def stage_loans_ecl_orm(portfolio_id: int, config: ECLStagingConfig, db: S
             for loan in loan_batch:
                 # Get the ndia value (days past due)
                 ndia = loan.ndia if loan.ndia is not None else 0
+                
+                # Sample some NDIA values for debugging
+                if len(ndia_sample) < sample_size:
+                    ndia_sample.append((loan.loan_no, ndia))
                 
                 # Get outstanding loan balance
                 balance = float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance is not None else 0.0
@@ -86,8 +100,17 @@ async def stage_loans_ecl_orm(portfolio_id: int, config: ECLStagingConfig, db: S
             # Log progress
             logger.info(f"Processed {offset} loans out of {total_loans} for ECL staging")
         
+        # Log sample NDIA values
+        logger.info(f"Sample NDIA values from portfolio {portfolio_id}: {ndia_sample}")
+        
         # Round balances to 2 decimal places
         stage_balances = {k: round(v, 2) for k, v in stage_balances.items()}
+        
+        # Log final stage counts and balances
+        logger.info(f"ECL staging results for portfolio {portfolio_id}:")
+        logger.info(f"Stage 1: {stage_counts[1]} loans, balance: {stage_balances[1]}")
+        logger.info(f"Stage 2: {stage_counts[2]} loans, balance: {stage_balances[2]}")
+        logger.info(f"Stage 3: {stage_counts[3]} loans, balance: {stage_balances[3]}")
         
         # Update the staging result
         staging_result = db.query(StagingResult).filter(
@@ -155,6 +178,7 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, config: LocalImpai
     """
     try:
         logger.info(f"Starting local impairment staging for portfolio {portfolio_id}")
+        logger.info(f"Local impairment config: {config.dict()}")
         
         # Parse days ranges from config
         current_range = config.current.days_range
@@ -163,6 +187,8 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, config: LocalImpai
         doubtful_range = config.doubtful.days_range
         loss_range = config.loss.days_range
         
+        logger.info(f"Local impairment ranges: Current: {current_range}, OLEM: {olem_range}, Substandard: {substandard_range}, Doubtful: {doubtful_range}, Loss: {loss_range}")
+        
         # Extract min and max days for each category
         current_min, current_max = parse_days_range(current_range)
         olem_min, olem_max = parse_days_range(olem_range)
@@ -170,22 +196,25 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, config: LocalImpai
         doubtful_min, doubtful_max = parse_days_range(doubtful_range)
         loss_min, loss_max = parse_days_range(loss_range)
         
+        logger.info(f"Parsed day ranges: Current: {current_min}-{current_max}, OLEM: {olem_min}-{olem_max}, Substandard: {substandard_min}-{substandard_max}, Doubtful: {doubtful_min}-{doubtful_max}, Loss: {loss_min}-{loss_max}")
+        
         # Get total loan count for the portfolio
         total_loans = db.query(func.count(Loan.id)).filter(Loan.portfolio_id == portfolio_id).scalar() or 0
+        logger.info(f"Total loans in portfolio {portfolio_id} for local impairment: {total_loans}")
         
         # Initialize counters
         category_counts = {
-            "Current": 0,
-            "OLEM": 0,
-            "Substandard": 0,
-            "Doubtful": 0,
+            "Current": 0, 
+            "OLEM": 0, 
+            "Substandard": 0, 
+            "Doubtful": 0, 
             "Loss": 0
         }
         category_balances = {
-            "Current": 0.0,
-            "OLEM": 0.0,
-            "Substandard": 0.0,
-            "Doubtful": 0.0,
+            "Current": 0.0, 
+            "OLEM": 0.0, 
+            "Substandard": 0.0, 
+            "Doubtful": 0.0, 
             "Loss": 0.0
         }
         timestamp = datetime.now()
@@ -193,6 +222,10 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, config: LocalImpai
         # Use batch processing to reduce memory usage
         batch_size = 5000
         offset = 0
+        
+        # Sample logging for NDIA values
+        ndia_sample = []
+        sample_size = min(20, total_loans)
         
         while True:
             # Get a batch of loans
@@ -208,6 +241,10 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, config: LocalImpai
             for loan in loan_batch:
                 # Get the ndia value (days past due)
                 ndia = loan.ndia if loan.ndia is not None else 0
+                
+                # Sample some NDIA values for debugging
+                if len(ndia_sample) < sample_size:
+                    ndia_sample.append((loan.loan_no, ndia))
                 
                 # Get outstanding loan balance
                 balance = float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance is not None else 0.0
@@ -246,8 +283,19 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, config: LocalImpai
             # Log progress
             logger.info(f"Processed {offset} loans out of {total_loans} for local impairment staging")
         
+        # Log sample NDIA values
+        logger.info(f"Sample NDIA values from portfolio {portfolio_id} for local impairment: {ndia_sample}")
+        
         # Round balances to 2 decimal places
         category_balances = {k: round(v, 2) for k, v in category_balances.items()}
+        
+        # Log final category counts and balances
+        logger.info(f"Local impairment staging results for portfolio {portfolio_id}:")
+        logger.info(f"Current: {category_counts['Current']} loans, balance: {category_balances['Current']}")
+        logger.info(f"OLEM: {category_counts['OLEM']} loans, balance: {category_balances['OLEM']}")
+        logger.info(f"Substandard: {category_counts['Substandard']} loans, balance: {category_balances['Substandard']}")
+        logger.info(f"Doubtful: {category_counts['Doubtful']} loans, balance: {category_balances['Doubtful']}")
+        logger.info(f"Loss: {category_counts['Loss']} loans, balance: {category_balances['Loss']}")
         
         # Update the staging result
         staging_result = db.query(StagingResult).filter(

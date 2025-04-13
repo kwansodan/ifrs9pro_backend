@@ -25,7 +25,8 @@ from app.models import (
 from app.database import SessionLocal
 from app.schemas import ECLStagingConfig, LocalImpairmentConfig, DaysRangeConfig
 from app.utils.staging import stage_loans_ecl_orm, stage_loans_local_impairment_orm
-from app.utils.quality_checks import create_quality_issues_if_needed
+from app.utils.quality_checks import create_quality_issues_if_needed, create_and_save_quality_issues
+from app.utils.background_tasks import get_task_manager
 
 logger = logging.getLogger(__name__)
 
@@ -585,9 +586,10 @@ async def process_portfolio_ingestion(
                 progress=99,
                 status_message="Checking data quality"
             )
+            await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
             
             # Create quality issues
-            quality_result = create_quality_issues_if_needed(db, portfolio_id)
+            quality_result = create_and_save_quality_issues(db, portfolio_id, task_id)
             results["quality_checks"] = quality_result
             db.commit()
             
@@ -605,6 +607,7 @@ async def process_portfolio_ingestion(
             progress=100,
             status_message=f"Completed processing {results['files_processed']} files"
         )
+        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
         
         return results
         
