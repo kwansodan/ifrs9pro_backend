@@ -99,7 +99,7 @@ async def process_loan_details_with_progress(task_id: str, file_content: bytes, 
         task_manager.update_task(task_id, total_items=total_rows, status_message="Processing data")
         
         # Process in chunks to reduce memory usage
-        chunk_size = 500  # Adjust based on your memory constraints
+        chunk_size = 50  # Adjust based on your memory constraints
         num_chunks = (total_rows + chunk_size - 1) // chunk_size
         
         # Track overall processing stats
@@ -389,7 +389,7 @@ async def process_client_data_with_progress(task_id: str, file_content: bytes, p
         task_manager.update_task(task_id, total_items=total_rows, status_message="Processing data")
         
         # Process in chunks to reduce memory usage
-        chunk_size = 500  # Adjust based on your memory constraints
+        chunk_size = 50  # Adjust based on your memory constraints
         num_chunks = (total_rows + chunk_size - 1) // chunk_size
         
         # Track overall processing stats
