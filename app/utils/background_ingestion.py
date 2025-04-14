@@ -3,31 +3,40 @@ import logging
 from typing import Optional, Dict, Any, List
 from fastapi import UploadFile
 from sqlalchemy.orm import Session
-import threading
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 import io
+import random
+from datetime import datetime, date
+from decimal import Decimal
 
+from app.models import (
+    Loan,
+    Guarantee,
+    Client,
+    Security,
+    Portfolio,
+    StagingResult,
+    CalculationResult,
+    QualityIssue
+)
 from app.utils.background_tasks import get_task_manager, run_background_task
 from app.utils.background_processors import (
     process_loan_details_with_progress,
     process_client_data_with_progress
 )
-from app.models import (
-    Portfolio,
-    Loan,
-    Client,
-    Guarantee,
-    Security,
-    QualityIssue,
-    StagingResult,
-    CalculationResult
+from app.utils.sync_processors import (
+    process_loan_details_sync,
+    process_client_data_sync,
+    run_quality_checks_sync
 )
 from app.database import SessionLocal
 from app.schemas import ECLStagingConfig, LocalImpairmentConfig, DaysRangeConfig
-from app.utils.staging import stage_loans_ecl_orm, stage_loans_local_impairment_orm
+from app.utils.staging import (
+    stage_loans_ecl_orm, 
+    stage_loans_local_impairment_orm,
+    stage_loans_ecl_orm_sync,
+    stage_loans_local_impairment_orm_sync
+)
 from app.utils.quality_checks import create_quality_issues_if_needed, create_and_save_quality_issues
-from app.utils.background_tasks import get_task_manager
 
 logger = logging.getLogger(__name__)
 
@@ -83,29 +92,15 @@ async def process_portfolio_ingestion(
             # Commit the deletions
             db.commit()
             
-            get_task_manager().update_progress(
-                task_id,
-                progress=10,
-                status_message=f"Cleared existing data: {loan_count} loans, {client_count} clients, {guarantee_count} guarantees"
-            )
+            logger.info(f"Cleared existing data: {loan_count} loans, {client_count} clients, {guarantee_count} guarantees")
             
-            # Add deletion results to the overall results
-            results["data_cleared"] = {
-                "loans": loan_count,
-                "clients": client_count,
-                "guarantees": guarantee_count,
-                "quality_issues": quality_count,
-                "staging_results": staging_count,
-                "calculation_results": calculation_count
-            }
+            # Log the deletion results but don't add to response
+            logger.info(f"Data cleared: loans={loan_count}, clients={client_count}, guarantees={guarantee_count}, " +
+                       f"quality_issues={quality_count}, staging_results={staging_count}, calculation_results={calculation_count}")
             
         except Exception as e:
             logger.error(f"Error clearing existing data: {str(e)}")
-            db.rollback()
-            results["data_cleared"] = {
-                "status": "error",
-                "error": str(e)
-            }
+            results["errors"] = results.get("errors", []) + [f"Error clearing existing data: {str(e)}"]
         
         # Count total files to process
         files_to_process = []
@@ -655,15 +650,9 @@ def process_portfolio_ingestion_sync(
             
             logger.info(f"Cleared existing data: {loan_count} loans, {client_count} clients, {guarantee_count} guarantees")
             
-            # Add deletion results to the overall results
-            results["data_cleared"] = {
-                "loans": loan_count,
-                "clients": client_count,
-                "guarantees": guarantee_count,
-                "quality_issues": quality_count,
-                "staging_results": staging_count,
-                "calculation_results": calculation_count
-            }
+            # Log the deletion results but don't add to response
+            logger.info(f"Data cleared: loans={loan_count}, clients={client_count}, guarantees={guarantee_count}, " +
+                       f"quality_issues={quality_count}, staging_results={staging_count}, calculation_results={calculation_count}")
             
         except Exception as e:
             logger.error(f"Error clearing existing data: {str(e)}")
@@ -780,12 +769,56 @@ def process_portfolio_ingestion_sync(
             # Add results to the overall results
             results["quality_checks"] = quality_results
             
-            logger.info(f"Found {len(quality_results.get('issues', []))} quality issues")
+            logger.info(f"Found {quality_results.get('total_issues', 0)} quality issues")
             
         except Exception as e:
             logger.error(f"Error running quality checks: {str(e)}")
             results["quality_checks"] = {"error": str(e)}
             results["errors"] = results.get("errors", []) + [f"Error running quality checks: {str(e)}"]
+        
+        # Perform loan staging
+        try:
+            logger.info(f"Performing loan staging for portfolio {portfolio_id}")
+            
+            # Get the current date as the reporting date
+            reporting_date = date.today()
+            
+            # Perform ECL staging
+            ecl_config = ECLStagingConfig(
+                stage_1=DaysRangeConfig(days_range="0-30"),
+                stage_2=DaysRangeConfig(days_range="31-90"),
+                stage_3=DaysRangeConfig(days_range="91+")
+            )
+            ecl_staging_result = stage_loans_ecl_orm_sync(portfolio_id, ecl_config, db)
+            
+            # Perform local impairment staging
+            local_config = LocalImpairmentConfig(
+                current=DaysRangeConfig(days_range="0-30"),
+                olem=DaysRangeConfig(days_range="31-90"),
+                substandard=DaysRangeConfig(days_range="91-180"),
+                doubtful=DaysRangeConfig(days_range="181-360"),
+                loss=DaysRangeConfig(days_range="361+")
+            )
+            local_staging_result = stage_loans_local_impairment_orm_sync(portfolio_id, local_config, db)
+            
+            # Add staging results to the overall results
+            results["staging"] = {
+                "ecl": {
+                    "status": "success",
+                    "date": reporting_date.isoformat()
+                },
+                "local_impairment": {
+                    "status": "success",
+                    "date": reporting_date.isoformat()
+                }
+            }
+            
+            logger.info(f"Successfully completed staging for portfolio {portfolio_id}")
+            
+        except Exception as e:
+            logger.error(f"Error during loan staging: {str(e)}")
+            results["staging"] = {"error": str(e)}
+            results["errors"] = results.get("errors", []) + [f"Error during loan staging: {str(e)}"]
         
         # Final status
         if "errors" in results and results["errors"]:

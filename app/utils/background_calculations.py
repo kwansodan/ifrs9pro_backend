@@ -554,7 +554,7 @@ async def process_local_impairment_calculation(
                 if is_in_range(ndia, current_range):
                     stage = "Current"
                 elif is_in_range(ndia, olem_range):
-                    stage = "Olem"
+                    stage = "OLEM"
                 elif is_in_range(ndia, substandard_range):
                     stage = "Substandard"
                 elif is_in_range(ndia, doubtful_range):
@@ -610,7 +610,7 @@ async def process_local_impairment_calculation(
             if provision_config:
                 # Get rates from provision_config
                 current_rate = Decimal(provision_config.get("Current", 0.01))
-                olem_rate = Decimal(provision_config.get("Olem", 0.03))
+                olem_rate = Decimal(provision_config.get("OLEM", 0.03))
                 substandard_rate = Decimal(provision_config.get("Substandard", 0.2))
                 doubtful_rate = Decimal(provision_config.get("Doubtful", 0.5))
                 loss_rate = Decimal(provision_config.get("Loss", 1.0))
@@ -623,7 +623,7 @@ async def process_local_impairment_calculation(
                 loss_rate = Decimal(config.get("loss", {}).get("rate", 1.0))
             
             # Log the rates being used
-            logger.info(f"Using provision rates - Current: {current_rate}, Olem: {olem_rate}, Substandard: {substandard_rate}, Doubtful: {doubtful_rate}, Loss: {loss_rate}")
+            logger.info(f"Using provision rates - Current: {current_rate}, OLEM: {olem_rate}, Substandard: {substandard_rate}, Doubtful: {doubtful_rate}, Loss: {loss_rate}")
             
         except (KeyError, ValueError) as e:
             logger.error(f"Error parsing provision rates: {str(e)}")
@@ -631,7 +631,7 @@ async def process_local_impairment_calculation(
 
         # Calculate stage statistics
         stage_stats = {}
-        for stage in ["Current", "Olem", "Substandard", "Doubtful", "Loss"]:
+        for stage in ["Current", "OLEM", "Substandard", "Doubtful", "Loss"]:
             stage_loans = [loan for loan in staging_data if loan["stage"] == stage]
             total_balance = sum(loan["outstanding_loan_balance"] for loan in stage_loans)
             stage_stats[stage] = {
@@ -641,7 +641,7 @@ async def process_local_impairment_calculation(
             
         logger.info(f"Local impairment stage statistics for portfolio {portfolio_id}:")
         logger.info(f"Current: {stage_stats['Current']['num_loans']} loans, balance: {stage_stats['Current']['total_loan_value']}")
-        logger.info(f"Olem: {stage_stats['Olem']['num_loans']} loans, balance: {stage_stats['Olem']['total_loan_value']}")
+        logger.info(f"OLEM: {stage_stats['OLEM']['num_loans']} loans, balance: {stage_stats['OLEM']['total_loan_value']}")
         logger.info(f"Substandard: {stage_stats['Substandard']['num_loans']} loans, balance: {stage_stats['Substandard']['total_loan_value']}")
         logger.info(f"Doubtful: {stage_stats['Doubtful']['num_loans']} loans, balance: {stage_stats['Doubtful']['total_loan_value']}")
         logger.info(f"Loss: {stage_stats['Loss']['num_loans']} loans, balance: {stage_stats['Loss']['total_loan_value']}")
@@ -685,7 +685,7 @@ async def process_local_impairment_calculation(
             if stage == "Current":
                 current_loans.append(loan)
                 current_total += outstanding_loan_balance
-            elif stage == "Olem":
+            elif stage == "OLEM":
                 olem_loans.append(loan)
                 olem_total += outstanding_loan_balance
             elif stage == "Substandard":
@@ -719,7 +719,7 @@ async def process_local_impairment_calculation(
 
         logger.info(f"Local impairment provisions for portfolio {portfolio_id}:")
         logger.info(f"Current: rate={current_rate}, value={current_total}, provision={current_provision}")
-        logger.info(f"Olem: rate={olem_rate}, value={olem_total}, provision={olem_provision}")
+        logger.info(f"OLEM: rate={olem_rate}, value={olem_total}, provision={olem_provision}")
         logger.info(f"Substandard: rate={substandard_rate}, value={substandard_total}, provision={substandard_provision}")
         logger.info(f"Doubtful: rate={doubtful_rate}, value={doubtful_total}, provision={doubtful_provision}")
         logger.info(f"Loss: rate={loss_rate}, value={loss_total}, provision={loss_provision}")
@@ -747,7 +747,7 @@ async def process_local_impairment_calculation(
                     "provision_amount": float(current_provision),
                     "provision_rate": float(current_rate),
                 },
-                "Olem": {
+                "OLEM": {
                     "num_loans": len(olem_loans),
                     "total_loan_value": float(olem_total),
                     "provision_amount": float(olem_provision),
@@ -1110,7 +1110,7 @@ def process_local_impairment_calculation_sync(
     # Initialize counters for each category
     category_counters = {
         "Current": {"count": 0, "outstanding_balance": 0, "provision": 0},
-        "Olem": {"count": 0, "outstanding_balance": 0, "provision": 0},
+        "OLEM": {"count": 0, "outstanding_balance": 0, "provision": 0},
         "Substandard": {"count": 0, "outstanding_balance": 0, "provision": 0},
         "Doubtful": {"count": 0, "outstanding_balance": 0, "provision": 0},
         "Loss": {"count": 0, "outstanding_balance": 0, "provision": 0}
@@ -1121,7 +1121,7 @@ def process_local_impairment_calculation_sync(
     if "loans" in staging_data and staging_data.get("loans"):
         loans_processed = True
         for loan_data in staging_data.get("loans", []):
-            category = loan_data.get("category", "Current").lower()
+            category = loan_data.get("category", "Current").capitalize()
             if category in category_counters:
                 category_counters[category]["count"] += 1
                 
@@ -1133,15 +1133,15 @@ def process_local_impairment_calculation_sync(
                     
                     # Calculate provision based on category rate
                     provision_rate = 0
-                    if category == "current":
+                    if category == "Current":
                         provision_rate = 0.01  # 1%
-                    elif category == "olem":
+                    elif category == "OLEM":
                         provision_rate = 0.05  # 5%
-                    elif category == "substandard":
+                    elif category == "Substandard":
                         provision_rate = 0.25  # 25%
-                    elif category == "doubtful":
+                    elif category == "Doubtful":
                         provision_rate = 0.50  # 50%
-                    elif category == "loss":
+                    elif category == "Loss":
                         provision_rate = 1.00  # 100%
                     
                     provision = outstanding_balance * provision_rate
@@ -1170,9 +1170,9 @@ def process_local_impairment_calculation_sync(
                     if random.random() < 0.7:
                         category = "Current"
                         provision_rate = 0.01  # 1%
-                    # Categorize 15% as olem
+                    # Categorize 15% as OLEM
                     elif random.random() < 0.85:
-                        category = "Olem"
+                        category = "OLEM"
                         provision_rate = 0.05  # 5%
                     # Categorize 10% as substandard
                     elif random.random() < 0.95:
@@ -1209,10 +1209,10 @@ def process_local_impairment_calculation_sync(
                 "outstanding_balance": category_counters["Current"]["outstanding_balance"],
                 "provision": category_counters["Current"]["provision"],
             },
-            "Olem": {
-                "num_loans": category_counters["Olem"]["count"],
-                "outstanding_balance": category_counters["Olem"]["outstanding_balance"],
-                "provision": category_counters["Olem"]["provision"],
+            "OLEM": {
+                "num_loans": category_counters["OLEM"]["count"],
+                "outstanding_balance": category_counters["OLEM"]["outstanding_balance"],
+                "provision": category_counters["OLEM"]["provision"],
             },
             "Substandard": {
                 "num_loans": category_counters["Substandard"]["count"],
