@@ -3,30 +3,40 @@ import logging
 from typing import Optional, Dict, Any, List
 from fastapi import UploadFile
 from sqlalchemy.orm import Session
-import threading
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+import io
+import random
+from datetime import datetime, date
+from decimal import Decimal
 
+from app.models import (
+    Loan,
+    Guarantee,
+    Client,
+    Security,
+    Portfolio,
+    StagingResult,
+    CalculationResult,
+    QualityIssue
+)
 from app.utils.background_tasks import get_task_manager, run_background_task
 from app.utils.background_processors import (
     process_loan_details_with_progress,
     process_client_data_with_progress
 )
-from app.models import (
-    Portfolio,
-    Loan,
-    Client,
-    Guarantee,
-    Security,
-    QualityIssue,
-    StagingResult,
-    CalculationResult
+from app.utils.sync_processors import (
+    process_loan_details_sync,
+    process_client_data_sync,
+    run_quality_checks_sync
 )
 from app.database import SessionLocal
 from app.schemas import ECLStagingConfig, LocalImpairmentConfig, DaysRangeConfig
-from app.utils.staging import stage_loans_ecl_orm, stage_loans_local_impairment_orm
+from app.utils.staging import (
+    stage_loans_ecl_orm, 
+    stage_loans_local_impairment_orm,
+    stage_loans_ecl_orm_sync,
+    stage_loans_local_impairment_orm_sync
+)
 from app.utils.quality_checks import create_quality_issues_if_needed, create_and_save_quality_issues
-from app.utils.background_tasks import get_task_manager
 
 logger = logging.getLogger(__name__)
 
@@ -82,29 +92,15 @@ async def process_portfolio_ingestion(
             # Commit the deletions
             db.commit()
             
-            get_task_manager().update_progress(
-                task_id,
-                progress=10,
-                status_message=f"Cleared existing data: {loan_count} loans, {client_count} clients, {guarantee_count} guarantees"
-            )
+            logger.info(f"Cleared existing data: {loan_count} loans, {client_count} clients, {guarantee_count} guarantees")
             
-            # Add deletion results to the overall results
-            results["data_cleared"] = {
-                "loans": loan_count,
-                "clients": client_count,
-                "guarantees": guarantee_count,
-                "quality_issues": quality_count,
-                "staging_results": staging_count,
-                "calculation_results": calculation_count
-            }
+            # Log the deletion results but don't add to response
+            logger.info(f"Data cleared: loans={loan_count}, clients={client_count}, guarantees={guarantee_count}, " +
+                       f"quality_issues={quality_count}, staging_results={staging_count}, calculation_results={calculation_count}")
             
         except Exception as e:
             logger.error(f"Error clearing existing data: {str(e)}")
-            db.rollback()
-            results["data_cleared"] = {
-                "status": "error",
-                "error": str(e)
-            }
+            results["errors"] = results.get("errors", []) + [f"Error clearing existing data: {str(e)}"]
         
         # Count total files to process
         files_to_process = []
@@ -608,6 +604,239 @@ async def process_portfolio_ingestion(
             progress=100
         )
         raise
+
+def process_portfolio_ingestion_sync(
+    portfolio_id: int,
+    loan_details_content: Optional[bytes] = None,
+    client_data_content: Optional[bytes] = None,
+    loan_guarantee_data_content: Optional[bytes] = None,
+    loan_collateral_data_content: Optional[bytes] = None,
+    db: Session = None
+) -> Dict[str, Any]:
+    """
+    Process portfolio data ingestion synchronously.
+    
+    This function orchestrates the processing of multiple data files for a portfolio
+    and returns the results directly.
+    """
+    try:
+        # Initialize result tracking
+        results = {
+            "portfolio_id": portfolio_id,
+            "files_processed": 0,
+            "total_files": 0,
+            "details": {}
+        }
+        
+        # Check for and delete existing data for this portfolio
+        try:
+            logger.info(f"Checking for existing data in portfolio {portfolio_id}")
+            
+            # Delete existing data in reverse order of dependencies
+            # First delete staging results and calculation results
+            staging_count = db.query(StagingResult).filter(StagingResult.portfolio_id == portfolio_id).delete()
+            calculation_count = db.query(CalculationResult).filter(CalculationResult.portfolio_id == portfolio_id).delete()
+            
+            # Delete quality issues
+            quality_count = db.query(QualityIssue).filter(QualityIssue.portfolio_id == portfolio_id).delete()
+            
+            # Delete loans, guarantees, and clients
+            loan_count = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).delete()
+            guarantee_count = db.query(Guarantee).filter(Guarantee.portfolio_id == portfolio_id).delete()
+            client_count = db.query(Client).filter(Client.portfolio_id == portfolio_id).delete()
+            
+            # Commit the deletions
+            db.commit()
+            
+            logger.info(f"Cleared existing data: {loan_count} loans, {client_count} clients, {guarantee_count} guarantees")
+            
+            # Log the deletion results but don't add to response
+            logger.info(f"Data cleared: loans={loan_count}, clients={client_count}, guarantees={guarantee_count}, " +
+                       f"quality_issues={quality_count}, staging_results={staging_count}, calculation_results={calculation_count}")
+            
+        except Exception as e:
+            logger.error(f"Error clearing existing data: {str(e)}")
+            results["errors"] = results.get("errors", []) + [f"Error clearing existing data: {str(e)}"]
+        
+        # Count files to process
+        files_to_process = 0
+        if loan_details_content:
+            files_to_process += 1
+        if client_data_content:
+            files_to_process += 1
+        if loan_guarantee_data_content:
+            files_to_process += 1
+        if loan_collateral_data_content:
+            files_to_process += 1
+        
+        results["total_files"] = files_to_process
+        
+        # Process loan details if provided
+        if loan_details_content:
+            try:
+                logger.info(f"Processing loan details for portfolio {portfolio_id}")
+                
+                # Create BytesIO object from content
+                loan_details_io = io.BytesIO(loan_details_content)
+                
+                # Process the loan details
+                loan_results = process_loan_details_sync(loan_details_io, portfolio_id, db)
+                
+                # Add results to the overall results
+                results["details"]["loan_details"] = loan_results
+                results["files_processed"] += 1
+                
+                logger.info(f"Processed {loan_results.get('processed', 0)} loan records")
+                
+            except Exception as e:
+                logger.error(f"Error processing loan details: {str(e)}")
+                results["details"]["loan_details"] = {"error": str(e)}
+                results["errors"] = results.get("errors", []) + [f"Error processing loan details: {str(e)}"]
+        
+        # Process client data if provided
+        if client_data_content:
+            try:
+                logger.info(f"Processing client data for portfolio {portfolio_id}")
+                
+                # Create BytesIO object from content
+                client_data_io = io.BytesIO(client_data_content)
+                
+                # Process the client data
+                client_results = process_client_data_sync(client_data_io, portfolio_id, db)
+                
+                # Add results to the overall results
+                results["details"]["client_data"] = client_results
+                results["files_processed"] += 1
+                
+                logger.info(f"Processed {client_results.get('processed', 0)} client records")
+                
+            except Exception as e:
+                logger.error(f"Error processing client data: {str(e)}")
+                results["details"]["client_data"] = {"error": str(e)}
+                results["errors"] = results.get("errors", []) + [f"Error processing client data: {str(e)}"]
+        
+        # Process loan guarantee data if provided
+        if loan_guarantee_data_content:
+            try:
+                logger.info(f"Processing loan guarantee data for portfolio {portfolio_id}")
+                
+                # Create BytesIO object from content
+                loan_guarantee_data_io = io.BytesIO(loan_guarantee_data_content)
+                
+                # Process the loan guarantee data
+                guarantee_results = process_loan_guarantees_sync(loan_guarantee_data_io, portfolio_id, db)
+                
+                # Add results to the overall results
+                results["details"]["loan_guarantee_data"] = guarantee_results
+                results["files_processed"] += 1
+                
+                logger.info(f"Processed {guarantee_results.get('processed', 0)} guarantee records")
+                
+            except Exception as e:
+                logger.error(f"Error processing loan guarantee data: {str(e)}")
+                results["details"]["loan_guarantee_data"] = {"error": str(e)}
+                results["errors"] = results.get("errors", []) + [f"Error processing loan guarantee data: {str(e)}"]
+        
+        # Process loan collateral data if provided
+        if loan_collateral_data_content:
+            try:
+                logger.info(f"Processing loan collateral data for portfolio {portfolio_id}")
+                
+                # Create BytesIO object from content
+                loan_collateral_data_io = io.BytesIO(loan_collateral_data_content)
+                
+                # Process the loan collateral data
+                collateral_results = process_collateral_data_sync(loan_collateral_data_io, portfolio_id, db)
+                
+                # Add results to the overall results
+                results["details"]["loan_collateral_data"] = collateral_results
+                results["files_processed"] += 1
+                
+                logger.info(f"Processed {collateral_results.get('processed', 0)} collateral records")
+                
+            except Exception as e:
+                logger.error(f"Error processing loan collateral data: {str(e)}")
+                results["details"]["loan_collateral_data"] = {"error": str(e)}
+                results["errors"] = results.get("errors", []) + [f"Error processing loan collateral data: {str(e)}"]
+        
+        # Perform quality checks
+        try:
+            logger.info(f"Performing quality checks for portfolio {portfolio_id}")
+            
+            # Run quality checks
+            quality_results = run_quality_checks_sync(portfolio_id, db)
+            
+            # Add results to the overall results
+            results["quality_checks"] = quality_results
+            
+            logger.info(f"Found {quality_results.get('total_issues', 0)} quality issues")
+            
+        except Exception as e:
+            logger.error(f"Error running quality checks: {str(e)}")
+            results["quality_checks"] = {"error": str(e)}
+            results["errors"] = results.get("errors", []) + [f"Error running quality checks: {str(e)}"]
+        
+        # Perform loan staging
+        try:
+            logger.info(f"Performing loan staging for portfolio {portfolio_id}")
+            
+            # Get the current date as the reporting date
+            reporting_date = date.today()
+            
+            # Perform ECL staging
+            ecl_config = ECLStagingConfig(
+                stage_1=DaysRangeConfig(days_range="0-30"),
+                stage_2=DaysRangeConfig(days_range="31-90"),
+                stage_3=DaysRangeConfig(days_range="91+")
+            )
+            ecl_staging_result = stage_loans_ecl_orm_sync(portfolio_id, ecl_config, db)
+            
+            # Perform local impairment staging
+            local_config = LocalImpairmentConfig(
+                current=DaysRangeConfig(days_range="0-30"),
+                olem=DaysRangeConfig(days_range="31-90"),
+                substandard=DaysRangeConfig(days_range="91-180"),
+                doubtful=DaysRangeConfig(days_range="181-360"),
+                loss=DaysRangeConfig(days_range="361+")
+            )
+            local_staging_result = stage_loans_local_impairment_orm_sync(portfolio_id, local_config, db)
+            
+            # Add staging results to the overall results
+            results["staging"] = {
+                "ecl": {
+                    "status": "success",
+                    "date": reporting_date.isoformat()
+                },
+                "local_impairment": {
+                    "status": "success",
+                    "date": reporting_date.isoformat()
+                }
+            }
+            
+            logger.info(f"Successfully completed staging for portfolio {portfolio_id}")
+            
+        except Exception as e:
+            logger.error(f"Error during loan staging: {str(e)}")
+            results["staging"] = {"error": str(e)}
+            results["errors"] = results.get("errors", []) + [f"Error during loan staging: {str(e)}"]
+        
+        # Final status
+        if "errors" in results and results["errors"]:
+            results["status"] = "completed_with_errors"
+        else:
+            results["status"] = "completed"
+        
+        logger.info(f"Portfolio ingestion completed with status: {results['status']}")
+        
+        return results
+        
+    except Exception as e:
+        logger.error(f"Error in portfolio ingestion: {str(e)}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "portfolio_id": portfolio_id
+        }
 
 async def start_background_ingestion(
     portfolio_id: int,
