@@ -1,10 +1,10 @@
-import pickle
 import numpy as np
-import pandas as pd
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional, Tuple, List, Union, Dict, Any
 from app.models import Client
+from dateutil.relativedelta import relativedelta
+from calendar import monthrange
 
 
 def calculate_effective_interest_rate_lender(loan_amount, administrative_fees, loan_term, monthly_payment):
@@ -311,3 +311,133 @@ def calculate_probability_of_default(loan, db):
         # Handle exceptions but maintain return type as float
         print(f"Error calculating probability of default: {str(e)}")
         return 5.0  # Default 5% probability on error
+
+
+
+def get_amortization_schedule(
+    loan_amount: float,
+    loan_term: int,
+    annual_interest_rate: float,
+    monthly_installment: float,
+    start_date: str,
+    reporting_date: str,
+    pd: float = None,
+    db = None,
+    loan = None
+) -> Tuple[List[List], float, float]:
+    """Generates amortization schedule and returns schedule, 12-month ECL and lifetime ECL.
+    
+    Args:
+        loan_amount: The principal amount of the loan
+        loan_term: The loan term in months
+        annual_interest_rate: Annual interest rate as a percentage
+        monthly_installment: Monthly payment amount
+        start_date: Loan start date in format DD/MM/YYYY
+        reporting_date: Reporting date in format DD/MM/YYYY
+        pd: Probability of default as a percentage (0-100). If None, will be calculated using the loan object
+        db: Database session (required if pd is None)
+        loan: Loan object (required if pd is None)
+        
+    Returns:
+        Tuple containing:
+        - Amortization schedule as a list of lists
+        - 12-month ECL
+        - Lifetime ECL
+    """
+
+    def pv_at_month(pmt, rate, total_months, present_month):
+        remaining_months = total_months - present_month
+        return pmt / ((1 + rate) ** remaining_months)
+
+    # If PD is not provided, calculate it using the loan object
+    if pd is None:
+        if loan is None or db is None:
+            raise ValueError("If pd is not provided, both loan and db must be provided")
+        pd = calculate_probability_of_default(loan, db)
+
+    current_date = datetime.strptime(start_date, "%d/%m/%Y")
+    monthly_rate = annual_interest_rate / 12 / 100
+    balance = loan_amount
+    schedule: List[List] = []
+
+    # Use the actual PD instead of the placeholder
+    ecl = balance * pd / 100  # Convert percentage to decimal
+    pv_ecl = pv_at_month(ecl, monthly_rate, loan_term, 0)
+
+    schedule.append(
+        ["Month", "Date", "Closing Balance", "Principal", "Interest", "Gross Carrying Amount", "Exposure", "ECL", "PV of ECL"]
+    )
+    schedule.append(
+        [0, current_date.strftime("%d/%m/%Y"), round(balance, 2), 0.0, 0.0, round(balance, 2), round(balance, 2), round(ecl, 2), round(pv_ecl, 2)]
+    )
+
+    for month in range(1, loan_term + 1):
+        interest = balance * monthly_rate
+        principal = max(0, min(monthly_installment, balance + interest) - interest)
+        balance = max(0, balance - principal)
+
+        ecl = balance * pd / 100  # Convert percentage to decimal
+        pv_ecl = pv_at_month(ecl, monthly_rate, loan_term, month)
+
+        current_date += relativedelta(months=1)
+        schedule.append(
+            [month, current_date.strftime("%d/%m/%Y"), round(balance, 2), round(principal, 2), round(interest, 2),
+             round(balance, 2), round(balance, 2), round(ecl, 2), round(pv_ecl, 2)]
+        )
+
+    # --- Determine start index for ECL calculation based on reporting date ---
+    def get_start_index(reporting_date_str: str) -> int:
+        reporting_dt = datetime.strptime(reporting_date_str, "%d/%m/%Y")
+        last_day = monthrange(reporting_dt.year, reporting_dt.month)[1]
+
+        if reporting_dt.day != last_day:
+            adjusted_date = (reporting_dt - relativedelta(months=1)).replace(day=1)
+        else:
+            adjusted_date = reporting_dt.replace(day=1)
+
+        reporting_month_str = adjusted_date.strftime("%m/%Y")
+        for idx, row in enumerate(schedule[1:], start=1):  # Skip header
+            if reporting_month_str in row[1]:
+                return idx
+        raise ValueError("Reporting month not found in schedule.")
+
+    # --- Calculate ECLs ---
+    def compute_pv(schedule, start_index, rate, months: int = None):
+        total_pv = 0.0
+        monthly_rate = rate / 12 / 100
+        data_rows = schedule[start_index + 1:]  # future only
+
+        if months:
+            data_rows = data_rows[:months]
+
+        for i, row in enumerate(data_rows, start=1):
+            ecl = row[7]
+            pv = ecl / ((1 + monthly_rate) ** i)
+            total_pv += pv
+
+        return round(total_pv, 2)
+
+    start_index = get_start_index(reporting_date)
+    ecl_12_month = compute_pv(schedule, start_index, annual_interest_rate, months=12)
+    ecl_lifetime = compute_pv(schedule, start_index, annual_interest_rate)
+
+    return schedule, ecl_12_month, ecl_lifetime
+
+
+def get_ecl_by_stage(schedule, ecl_12_month, ecl_lifetime, stage):
+    """
+    Select the appropriate ECL value based on the loan's stage.
+    
+    Args:
+        schedule: The amortization schedule from get_amortization_schedule
+        ecl_12_month: The 12-month ECL value from get_amortization_schedule
+        ecl_lifetime: The lifetime ECL value from get_amortization_schedule
+        stage: The loan stage (1, 2, or 3)
+        
+    Returns:
+        float: The appropriate ECL value based on stage
+    """
+    if stage == 1:
+        return ecl_12_month
+    else:  # Stage 2 or 3
+        return ecl_lifetime
