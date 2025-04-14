@@ -272,12 +272,13 @@ def get_portfolio(
         total_loan_value = float(loan_stats.total_loan_value or 0)
         average_loan_amount = float(loan_stats.average_loan_amount or 0)
 
-        # Customer statistics
+        # Customer statistics - use the same values as in CustomerType enum
+        # CustomerType values: "individuals", "institution", "mixed"
         customer_stats = db.query(
             func.count(Client.id).label("total_customers"),
-            func.sum(case((Client.client_type == "consumer", 1), else_=0)).label("individual_customers"),
+            func.sum(case((Client.client_type == "individuals", 1), else_=0)).label("individual_customers"),
             func.sum(case((Client.client_type == "institution", 1), else_=0)).label("institutions"),
-            func.sum(case((Client.client_type.notin_(["consumer", "institution"]), 1), else_=0)).label("mixed")
+            func.sum(case((Client.client_type == "mixed", 1), else_=0)).label("mixed")
         ).filter(Client.portfolio_id == portfolio_id).first()
         
         total_customers = customer_stats.total_customers or 0

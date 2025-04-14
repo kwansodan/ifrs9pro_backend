@@ -9,7 +9,8 @@ from app.models import (
     Loan,
     Guarantee,
     Client,
-    Security
+    Security,
+    Portfolio
 )
 
 async def process_loan_details(loan_details, portfolio_id, db):
@@ -321,6 +322,10 @@ async def process_client_data(client_data, portfolio_id, db):
     try:
         content = await client_data.read()
         
+        # Get the portfolio's customer_type
+        portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
+        portfolio_customer_type = portfolio.customer_type if portfolio and portfolio.customer_type else "individuals"
+        
         # Create a case-insensitive column mapping
         target_columns = {
             "employee id": "employee_id",
@@ -387,6 +392,9 @@ async def process_client_data(client_data, portfolio_id, db):
         
         # Add portfolio_id to all records
         df = df.with_columns(pl.lit(portfolio_id).alias("portfolio_id"))
+        
+        # Set client_type based on portfolio's customer_type
+        df = df.with_columns(pl.lit(portfolio_customer_type).alias("client_type"))
         
         # Remove rows with missing employee_id
         df = df.filter(pl.col("employee_id").is_not_null())

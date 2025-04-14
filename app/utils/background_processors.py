@@ -14,7 +14,8 @@ from app.models import (
     Loan,
     Guarantee,
     Client,
-    Security
+    Security,
+    Portfolio
 )
 from app.utils.background_tasks import get_task_manager
 
@@ -825,38 +826,34 @@ async def process_client_data_with_progress(
                 # Log the first few rows for debugging
                 logger.info(f"First row of client data to insert: {df_insert.iloc[0].to_dict() if len(df_insert) > 0 else 'No data'}")
                 
-                # Create a CSV-like string buffer
+                # Get the portfolio's customer_type
+                portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
+                portfolio_customer_type = portfolio.customer_type if portfolio and portfolio.customer_type else "individuals"
+                
+                # Add client_type to all rows based on portfolio's customer_type
+                df_insert['client_type'] = portfolio_customer_type
+                
+                # Create a CSV-like string buffer for COPY
                 csv_buffer = io.StringIO()
                 
-                # Write data to the buffer in CSV format
+                # Write data to the buffer in tab-separated format
                 for _, row in df_insert.iterrows():
                     values = []
-                    for col in ["portfolio_id", "employee_id", "last_name", "other_names", 
-                               "residential_address", "postal_address", "phone_number", "title", 
-                               "marital_status", "gender", "date_of_birth", "employer", 
-                               "previous_employee_no", "social_security_no", "voters_id_no", 
-                               "employment_date", "next_of_kin", "next_of_kin_contact", 
-                               "next_of_kin_address"]:
-                        if col in row:
-                            if col in date_columns and pd.notna(row[col]):
-                                values.append(str(row[col]))
-                            elif pd.isna(row[col]):
-                                # For required fields, provide default values
-                                if col in ["last_name", "other_names"]:
-                                    values.append("Unknown")  # Default name for required fields
-                                else:
-                                    values.append("")  # NULL in COPY format
-                            else:
-                                val = str(row[col])
-                                # Escape special characters for COPY
-                                val = val.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")
-                                values.append(val)
+                    for col in [
+                        "portfolio_id", "employee_id", "last_name", "other_names", 
+                        "residential_address", "postal_address", "phone_number", "title", 
+                        "marital_status", "gender", "date_of_birth", "employer", 
+                        "previous_employee_no", "social_security_no", "voters_id_no", 
+                        "employment_date", "next_of_kin", "next_of_kin_contact", 
+                        "next_of_kin_address", "client_type"
+                    ]:
+                        if col in row and not pd.isna(row[col]):
+                            # Escape special characters for COPY
+                            val = str(row[col])
+                            val = val.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")
+                            values.append(val)
                         else:
-                            # For required fields, provide default values
-                            if col in ["last_name", "other_names"]:
-                                values.append("Unknown")  # Default name for required fields
-                            else:
-                                values.append("")  # NULL in COPY format
+                            values.append("")  # NULL in COPY format
                     csv_buffer.write("\t".join(values) + "\n")
                 
                 # Reset buffer position to start
@@ -866,23 +863,24 @@ async def process_client_data_with_progress(
                     # Get raw connection from SQLAlchemy session
                     connection = db.connection().connection
                     
-                    # Use a cursor for the COPY command
-                    with connection.cursor() as cursor:
-                        # Start a COPY command
-                        cursor.copy_from(
-                            csv_buffer,
-                            "clients",
-                            columns=[
-                                "portfolio_id", "employee_id", "last_name", "other_names", 
-                                "residential_address", "postal_address", "phone_number", "title", 
-                                "marital_status", "gender", "date_of_birth", "employer", 
-                                "previous_employee_no", "social_security_no", "voters_id_no", 
-                                "employment_date", "next_of_kin", "next_of_kin_contact", 
-                                "next_of_kin_address"
-                            ],
-                            sep="\t",
-                            null=""
-                        )
+                    # Create a cursor
+                    cursor = connection.cursor()
+                    
+                    # Execute COPY command
+                    cursor.copy_from(
+                        csv_buffer,
+                        "clients",
+                        columns=[
+                            "portfolio_id", "employee_id", "last_name", "other_names", 
+                            "residential_address", "postal_address", "phone_number", "title", 
+                            "marital_status", "gender", "date_of_birth", "employer", 
+                            "previous_employee_no", "social_security_no", "voters_id_no", 
+                            "employment_date", "next_of_kin", "next_of_kin_contact", 
+                            "next_of_kin_address", "client_type"
+                        ],
+                        sep="\t",
+                        null=""
+                    )
                 except Exception as e:
                     logger.error(f"Error during bulk client insert: {str(e)}")
                     # Try individual inserts as a fallback
@@ -898,7 +896,8 @@ async def process_client_data_with_progress(
                                 portfolio_id=portfolio_id,
                                 employee_id=row.get('employee_id'),
                                 last_name=row.get('last_name', 'Unknown'),
-                                other_names=row.get('other_names', 'Unknown')
+                                other_names=row.get('other_names', 'Unknown'),
+                                client_type=portfolio_customer_type  # Set client_type from portfolio
                             )
                             
                             # Add other fields if they exist
