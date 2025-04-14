@@ -384,12 +384,12 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
                     severity="high",
                     status="open",
                     description=f"Duplicate employee ID: {client_info['employee_id']}",
-                    affected_records={
+                    affected_records=[{
                         "entity_type": "client",
                         "entity_id": client_info["id"],
                         "employee_id": client_info["employee_id"],
                         "duplicate_count": len(group)
-                    }
+                    }]
                 )
                 db.add(issue)
             issue_counts["duplicate_customer_ids"] += len(group)
@@ -420,12 +420,12 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
                     severity="medium",
                     status="open",
                     description=f"Duplicate address: {client_info.get('address', 'Unknown')}",
-                    affected_records={
+                    affected_records=[{
                         "entity_type": "client",
                         "entity_id": client_info["id"],
                         "address": client_info.get("address", "Unknown"),
                         "duplicate_count": len(group)
-                    }
+                    }]
                 )
                 db.add(issue)
             issue_counts["duplicate_addresses"] += len(group)
@@ -456,12 +456,12 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
                     severity="medium",
                     status="open",
                     description=f"Duplicate date of birth: {client_info.get('date_of_birth', 'Unknown')}",
-                    affected_records={
+                    affected_records=[{
                         "entity_type": "client",
                         "entity_id": client_info["id"],
                         "date_of_birth": client_info.get("date_of_birth", "Unknown"),
                         "duplicate_count": len(group)
-                    }
+                    }]
                 )
                 db.add(issue)
             issue_counts["duplicate_dob"] += len(group)
@@ -492,12 +492,12 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
                     severity="high",
                     status="open",
                     description=f"Duplicate loan ID: {loan_info['loan_no']}",
-                    affected_records={
+                    affected_records=[{
                         "entity_type": "loan",
                         "entity_id": loan_info["id"],
                         "loan_no": loan_info["loan_no"],
                         "duplicate_count": len(group)
-                    }
+                    }]
                 )
                 db.add(issue)
             issue_counts["duplicate_loan_ids"] += len(group)
@@ -527,12 +527,12 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
                 severity="high",
                 status="open",
                 description=f"Client has no matching loan with employee ID: {client_info['employee_id']}",
-                affected_records={
+                affected_records=[{
                     "entity_type": "client",
                     "entity_id": client_info["id"],
                     "employee_id": client_info["employee_id"],
                     "name": client_info.get("name", "Unknown")
-                }
+                }]
             )
             db.add(issue)
         
@@ -563,12 +563,12 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
                 severity="high",
                 status="open",
                 description=f"Loan has no matching client with employee ID: {loan_info['employee_id']}",
-                affected_records={
+                affected_records=[{
                     "entity_type": "loan",
                     "entity_id": loan_info["id"],
                     "employee_id": loan_info["employee_id"],
                     "loan_amount": loan_info.get("loan_amount", 0)
-                }
+                }]
             )
             db.add(issue)
         
@@ -599,12 +599,12 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
                 severity="medium",
                 status="open",
                 description=f"Client has no date of birth",
-                affected_records={
+                affected_records=[{
                     "entity_type": "client",
                     "entity_id": client_info["id"],
                     "employee_id": client_info["employee_id"],
                     "name": client_info["name"]
-                }
+                }]
             )
             db.add(issue)
         

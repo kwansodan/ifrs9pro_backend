@@ -8,10 +8,11 @@ from fastapi import (
 )
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from datetime import datetime
 from io import BytesIO
 import pandas as pd
+import logging
 
 from app.database import get_db
 from app.models import Portfolio, User, QualityIssue, QualityIssueComment
@@ -27,6 +28,27 @@ from app.utils.quality_checks import create_quality_issues_if_needed
 
 # Create a separate router for quality issues
 router = APIRouter(prefix="/portfolios", tags=["quality-issues"])
+
+
+def transform_affected_records(quality_issues: List[QualityIssue]) -> List[QualityIssue]:
+    """
+    Transform affected_records from dictionary to list format for backward compatibility.
+    This is needed because the schema expects affected_records to be a list of dictionaries,
+    but older records in the database might have it as a single dictionary.
+    """
+    logger = logging.getLogger(__name__)
+    
+    for issue in quality_issues:
+        try:
+            # Check if affected_records is a dictionary (old format)
+            if isinstance(issue.affected_records, dict):
+                # Convert it to a list containing that dictionary
+                issue.affected_records = [issue.affected_records]
+                logger.debug(f"Transformed affected_records for issue {issue.id} to list format")
+        except Exception as e:
+            logger.error(f"Error transforming affected_records for issue {issue.id}: {str(e)}")
+    
+    return quality_issues
 
 
 @router.get("/{portfolio_id}/quality-issues", response_model=List[QualityIssueResponse])
@@ -71,6 +93,9 @@ def get_quality_issues(
         raise HTTPException(
             status_code=status.HTTP_200_OK, detail="No quality issues found"
         )
+
+    # Transform affected_records from dictionary to list format if needed
+    quality_issues = transform_affected_records(quality_issues)
 
     return quality_issues
 
@@ -118,6 +143,9 @@ async def download_all_quality_issues_excel(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="No quality issues found"
         )
+
+    # Transform affected_records from dictionary to list format if needed
+    quality_issues = transform_affected_records(quality_issues)
 
     # Create filename with appropriate filters indicated
     status_suffix = f"_{status_type}" if status_type else ""
@@ -204,7 +232,6 @@ async def download_all_quality_issues_excel(
     )
 
 
-
 @router.get("/{portfolio_id}/quality-issues/{issue_id}", response_model=QualityIssueResponse)
 def get_quality_issue(
     portfolio_id: int,
@@ -238,6 +265,9 @@ def get_quality_issue(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Quality issue not found"
         )
+
+    # Transform affected_records from dictionary to list format if needed
+    issue = transform_affected_records([issue])[0]
 
     return issue
 
@@ -284,6 +314,9 @@ def update_quality_issue(
 
     db.commit()
     db.refresh(issue)
+
+    # Transform affected_records from dictionary to list format if needed
+    issue = transform_affected_records([issue])[0]
 
     return issue
 
@@ -385,6 +418,7 @@ def get_quality_issue_comments(
 
     return comments
 
+
 @router.put(
     "/{portfolio_id}/quality-issues/{issue_id}/comments/{comment_id}",
     response_model=QualityIssueCommentModel,
@@ -445,6 +479,7 @@ def edit_quality_issue_comment(
     db.refresh(comment)
     return comment
 
+
 @router.post(
     "/{portfolio_id}/quality-issues/{issue_id}/approve", response_model=QualityIssueResponse
 )
@@ -497,6 +532,9 @@ def approve_quality_issue(
 
     db.commit()
     db.refresh(issue)
+
+    # Transform affected_records from dictionary to list format if needed
+    issue = transform_affected_records([issue])[0]
 
     return issue
 
@@ -627,6 +665,9 @@ async def download_quality_issue_excel(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Quality issue not found"
         )
+
+    # Transform affected_records from dictionary to list format if needed
+    issue = transform_affected_records([issue])[0]
 
     # Create filename
     filename = f"quality_issue_{issue.id}_{datetime.now().strftime('%Y%m%d')}.xlsx"
