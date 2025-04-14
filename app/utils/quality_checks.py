@@ -127,6 +127,32 @@ def find_duplicate_loan_ids(db: Session, portfolio_id: int) -> List[Dict]:
     return duplicates
 
 
+def find_duplicate_phone_numbers(db: Session, portfolio_id: int) -> List[Dict]:
+    """
+    Find clients with duplicate phone numbers in the portfolio.
+    Returns a list of groups of clients with the same phone number.
+    """
+    # Get all clients in the portfolio
+    clients = db.query(Client).filter(Client.portfolio_id == portfolio_id).all()
+
+    # Group clients by phone number
+    phone_groups = defaultdict(list)
+    for client in clients:
+        if client.phone_number:  # Skip empty phone numbers
+            phone_groups[client.phone_number].append(
+                {
+                    "id": client.id,
+                    "employee_id": client.employee_id,
+                    "name": f"{client.last_name} {client.other_names}",
+                    "phone_number": client.phone_number,
+                }
+            )
+
+    duplicates = [group for phone, group in phone_groups.items() if len(group) > 1]
+
+    return duplicates
+
+
 def find_clients_without_matching_loans(db: Session, portfolio_id: int) -> List[Dict]:
     """
     Find clients who cannot be matched to loans in the portfolio.
@@ -230,6 +256,7 @@ def create_quality_issues_if_needed(db: Session, portfolio_id: int) -> Dict[str,
         "duplicate_addresses": 0,
         "duplicate_dob": 0,
         "duplicate_loan_ids": 0,
+        "duplicate_phones": 0,
         "clients_without_matching_loans": 0,
         "loans_without_matching_clients": 0,
         "missing_dob": 0,
@@ -261,6 +288,8 @@ def create_quality_issues_if_needed(db: Session, portfolio_id: int) -> Dict[str,
             issue_counts["duplicate_dob"] += 1
         elif issue_type == "duplicate_loan_id":
             issue_counts["duplicate_loan_ids"] += 1
+        elif issue_type == "duplicate_phone":
+            issue_counts["duplicate_phones"] += 1
         elif issue_type == "client_without_matching_loan":
             issue_counts["clients_without_matching_loans"] += 1
         elif issue_type == "loan_without_matching_client":
@@ -336,6 +365,7 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
         "duplicate_addresses": 0,
         "duplicate_dob": 0,
         "duplicate_loan_ids": 0,
+        "duplicate_phones": 0,
         "clients_without_matching_loans": 0,
         "loans_without_matching_clients": 0,
         "missing_dob": 0,
@@ -375,24 +405,32 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
     
     # 1. Check for duplicate customer IDs
     try:
-        duplicate_customers = find_duplicate_customer_ids(db, portfolio_id)
-        for group in duplicate_customers:
+        duplicate_ids = find_duplicate_customer_ids(db, portfolio_id)
+        for group in duplicate_ids:
+            employee_id = group[0]['employee_id']
+            count = len(group)
+            
+            # Create affected_records as an array with one entry per affected client
+            affected_records = []
             for client_info in group:
-                issue = QualityIssue(
-                    portfolio_id=portfolio_id,
-                    issue_type="duplicate_customer_id",
-                    severity="high",
-                    status="open",
-                    description=f"Duplicate employee ID: {client_info['employee_id']}",
-                    affected_records=[{
-                        "entity_type": "client",
-                        "entity_id": client_info["id"],
-                        "employee_id": client_info["employee_id"],
-                        "duplicate_count": len(group)
-                    }]
-                )
-                db.add(issue)
-            issue_counts["duplicate_customer_ids"] += len(group)
+                affected_records.append({
+                    "entity_type": "client",
+                    "entity_id": client_info["id"],
+                    "employee_id": client_info["employee_id"],
+                    "name": client_info.get("name", "Unknown")
+                })
+            
+            # Create a single issue for each duplicate employee ID group
+            issue = QualityIssue(
+                portfolio_id=portfolio_id,
+                issue_type="duplicate_customer_id",
+                severity="high",
+                status="open",
+                description=f"Duplicate employee ID: {employee_id} (found in {count} clients)",
+                affected_records=affected_records
+            )
+            db.add(issue)
+            issue_counts["duplicate_customer_ids"] += 1
         
         # Commit in batches to avoid memory issues
         db.commit()
@@ -413,22 +451,31 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
     try:
         duplicate_addresses = find_duplicate_addresses(db, portfolio_id)
         for group in duplicate_addresses:
+            address = group[0].get('address', 'Unknown')
+            count = len(group)
+            
+            # Create affected_records as an array with one entry per affected client
+            affected_records = []
             for client_info in group:
-                issue = QualityIssue(
-                    portfolio_id=portfolio_id,
-                    issue_type="duplicate_address",
-                    severity="medium",
-                    status="open",
-                    description=f"Duplicate address: {client_info.get('address', 'Unknown')}",
-                    affected_records=[{
-                        "entity_type": "client",
-                        "entity_id": client_info["id"],
-                        "address": client_info.get("address", "Unknown"),
-                        "duplicate_count": len(group)
-                    }]
-                )
-                db.add(issue)
-            issue_counts["duplicate_addresses"] += len(group)
+                affected_records.append({
+                    "entity_type": "client",
+                    "entity_id": client_info["id"],
+                    "employee_id": client_info.get("employee_id", "Unknown"),
+                    "name": client_info.get("name", "Unknown"),
+                    "address": client_info.get("address", "Unknown")
+                })
+            
+            # Create a single issue for each duplicate address group
+            issue = QualityIssue(
+                portfolio_id=portfolio_id,
+                issue_type="duplicate_address",
+                severity="medium",
+                status="open",
+                description=f"Duplicate address: {address} (found in {count} clients)",
+                affected_records=affected_records
+            )
+            db.add(issue)
+            issue_counts["duplicate_addresses"] += 1
         
         # Commit in batches
         db.commit()
@@ -449,22 +496,31 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
     try:
         duplicate_dobs = find_duplicate_dobs(db, portfolio_id)
         for group in duplicate_dobs:
+            dob_value = group[0].get('date_of_birth', 'Unknown')
+            count = len(group)
+            
+            # Create affected_records as an array with one entry per affected client
+            affected_records = []
             for client_info in group:
-                issue = QualityIssue(
-                    portfolio_id=portfolio_id,
-                    issue_type="duplicate_dob",
-                    severity="medium",
-                    status="open",
-                    description=f"Duplicate date of birth: {client_info.get('date_of_birth', 'Unknown')}",
-                    affected_records=[{
-                        "entity_type": "client",
-                        "entity_id": client_info["id"],
-                        "date_of_birth": client_info.get("date_of_birth", "Unknown"),
-                        "duplicate_count": len(group)
-                    }]
-                )
-                db.add(issue)
-            issue_counts["duplicate_dob"] += len(group)
+                affected_records.append({
+                    "entity_type": "client",
+                    "entity_id": client_info["id"],
+                    "employee_id": client_info.get("employee_id", "Unknown"),
+                    "name": client_info.get("name", "Unknown"),
+                    "date_of_birth": dob_value
+                })
+            
+            # Create a single issue for each duplicate DOB group
+            issue = QualityIssue(
+                portfolio_id=portfolio_id,
+                issue_type="duplicate_dob",
+                severity="medium",
+                status="open",
+                description=f"Duplicate date of birth: {dob_value} (found in {count} clients)",
+                affected_records=affected_records
+            )
+            db.add(issue)
+            issue_counts["duplicate_dob"] += 1
         
         # Commit in batches
         db.commit()
@@ -485,22 +541,31 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
     try:
         duplicate_loans = find_duplicate_loan_ids(db, portfolio_id)
         for group in duplicate_loans:
+            loan_no = group[0]['loan_no']
+            count = len(group)
+            
+            # Create affected_records as an array with one entry per affected loan
+            affected_records = []
             for loan_info in group:
-                issue = QualityIssue(
-                    portfolio_id=portfolio_id,
-                    issue_type="duplicate_loan_id",
-                    severity="high",
-                    status="open",
-                    description=f"Duplicate loan ID: {loan_info['loan_no']}",
-                    affected_records=[{
-                        "entity_type": "loan",
-                        "entity_id": loan_info["id"],
-                        "loan_no": loan_info["loan_no"],
-                        "duplicate_count": len(group)
-                    }]
-                )
-                db.add(issue)
-            issue_counts["duplicate_loan_ids"] += len(group)
+                affected_records.append({
+                    "entity_type": "loan",
+                    "entity_id": loan_info["id"],
+                    "loan_no": loan_info["loan_no"],
+                    "employee_id": loan_info.get("employee_id", "Unknown"),
+                    "loan_amount": loan_info.get("loan_amount", 0)
+                })
+            
+            # Create a single issue for each duplicate loan ID group
+            issue = QualityIssue(
+                portfolio_id=portfolio_id,
+                issue_type="duplicate_loan_id",
+                severity="high",
+                status="open",
+                description=f"Duplicate loan ID: {loan_no} (found in {count} loans)",
+                affected_records=affected_records
+            )
+            db.add(issue)
+            issue_counts["duplicate_loan_ids"] += 1
         
         # Commit in batches
         db.commit()
@@ -508,6 +573,51 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
     except Exception as e:
         db.rollback()
         logger.error(f"Error checking duplicate loan IDs: {str(e)}")
+    
+    # Update progress if task_id provided
+    if task_id:
+        get_task_manager().update_task(
+            task_id,
+            status_message="Checking for duplicate phone numbers"
+        )
+        time.sleep(0.1)
+    
+    # 4. Check for duplicate phone numbers
+    try:
+        duplicate_phones = find_duplicate_phone_numbers(db, portfolio_id)
+        for group in duplicate_phones:
+            phone = group[0].get('phone_number', 'Unknown')
+            count = len(group)
+            
+            # Create affected_records as an array with one entry per affected client
+            affected_records = []
+            for client_info in group:
+                affected_records.append({
+                    "entity_type": "client",
+                    "entity_id": client_info["id"],
+                    "employee_id": client_info.get("employee_id", "Unknown"),
+                    "name": client_info.get("name", "Unknown"),
+                    "phone_number": client_info.get("phone_number", "Unknown")
+                })
+            
+            # Create a single issue for each duplicate phone number group
+            issue = QualityIssue(
+                portfolio_id=portfolio_id,
+                issue_type="duplicate_phone",
+                severity="medium",
+                status="open",
+                description=f"Duplicate phone number: {phone} (found in {count} clients)",
+                affected_records=affected_records
+            )
+            db.add(issue)
+            issue_counts["duplicate_phones"] += 1
+        
+        # Commit in batches
+        db.commit()
+        logger.info(f"Created {issue_counts['duplicate_phones']} duplicate phone number issues")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error checking duplicate phone numbers: {str(e)}")
     
     # Update progress if task_id provided
     if task_id:
@@ -521,18 +631,23 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
     try:
         unmatched_clients = find_clients_without_matching_loans(db, portfolio_id)
         for client_info in unmatched_clients:
+            # Create affected_records as an array with one entry per affected client
+            affected_records = [{
+                "entity_type": "client",
+                "entity_id": client_info["id"],
+                "employee_id": client_info["employee_id"],
+                "name": client_info.get("name", "Unknown"),
+                "phone_number": client_info.get("phone_number", "Unknown")
+            }]
+            
+            # Create a single issue for each unmatched client
             issue = QualityIssue(
                 portfolio_id=portfolio_id,
                 issue_type="client_without_matching_loan",
                 severity="high",
                 status="open",
                 description=f"Client has no matching loan with employee ID: {client_info['employee_id']}",
-                affected_records=[{
-                    "entity_type": "client",
-                    "entity_id": client_info["id"],
-                    "employee_id": client_info["employee_id"],
-                    "name": client_info.get("name", "Unknown")
-                }]
+                affected_records=affected_records
             )
             db.add(issue)
         
@@ -557,18 +672,23 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
     try:
         unmatched_loans = find_loans_without_matching_clients(db, portfolio_id)
         for loan_info in unmatched_loans:
+            # Create affected_records as an array with one entry per affected loan
+            affected_records = [{
+                "entity_type": "loan",
+                "entity_id": loan_info["id"],
+                "loan_no": loan_info["loan_no"],
+                "employee_id": loan_info["employee_id"],
+                "loan_amount": loan_info.get("loan_amount", 0)
+            }]
+            
+            # Create a single issue for each unmatched loan
             issue = QualityIssue(
                 portfolio_id=portfolio_id,
                 issue_type="loan_without_matching_client",
                 severity="high",
                 status="open",
                 description=f"Loan has no matching client with employee ID: {loan_info['employee_id']}",
-                affected_records=[{
-                    "entity_type": "loan",
-                    "entity_id": loan_info["id"],
-                    "employee_id": loan_info["employee_id"],
-                    "loan_amount": loan_info.get("loan_amount", 0)
-                }]
+                affected_records=affected_records
             )
             db.add(issue)
         
@@ -593,18 +713,23 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
     try:
         missing_dob_clients = find_missing_dob(db, portfolio_id)
         for client_info in missing_dob_clients:
+            # Create affected_records as an array with one entry per affected client
+            affected_records = [{
+                "entity_type": "client",
+                "entity_id": client_info["id"],
+                "employee_id": client_info["employee_id"],
+                "name": client_info["name"],
+                "phone_number": client_info.get("phone_number", "Unknown")
+            }]
+            
+            # Create a single issue for each client with missing DOB
             issue = QualityIssue(
                 portfolio_id=portfolio_id,
                 issue_type="missing_dob",
                 severity="medium",
                 status="open",
                 description=f"Client has no date of birth",
-                affected_records=[{
-                    "entity_type": "client",
-                    "entity_id": client_info["id"],
-                    "employee_id": client_info["employee_id"],
-                    "name": client_info["name"]
-                }]
+                affected_records=affected_records
             )
             db.add(issue)
         
