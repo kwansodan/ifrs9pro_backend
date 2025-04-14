@@ -1,14 +1,10 @@
 import io
-import csv
-import pandas as pd
 import polars as pl
-import numpy as np
 from datetime import datetime
-import concurrent.futures
-from sqlalchemy import text
 import logging
 import asyncio
 from typing import Optional, Dict, Any, List, Callable
+from sqlalchemy import text
 
 from app.models import (
     Loan,
@@ -95,26 +91,28 @@ async def process_loan_details_with_progress(
         # Update task status
         task_manager.update_task(task_id, status_message="Reading Excel file")
         
-        # CHUNKED PROCESSING: Read Excel file in chunks to reduce memory usage
-        xlsx = pd.ExcelFile(io.BytesIO(file_content))
-        sheet_name = xlsx.sheet_names[0]
+        # Create a BytesIO object from the file content
+        excel_buffer = io.BytesIO(file_content)
         
-        # Get total rows for progress tracking
-        total_rows = len(pd.read_excel(xlsx, sheet_name=sheet_name, usecols=[0], nrows=None))
+        # Read the Excel file with Polars
+        df_excel = pl.read_excel(excel_buffer)
+        
+        # Get total rows
+        total_rows = df_excel.height
+        
+        # Get column names
+        column_names = df_excel.columns
         
         # Update task with total items
         task_manager.update_task(task_id, total_items=total_rows, status_message="Processing data")
-        
-        # Read the header row to determine column mapping once for all chunks
-        header_df = pd.read_excel(xlsx, sheet_name=sheet_name, nrows=1)
         
         # Create a mapping of actual column names to our target column names
         case_insensitive_mapping = {}
         
         # Log all available columns for debugging
-        logger.info(f"Available columns in Excel file: {list(header_df.columns)}")
+        logger.info(f"Available columns in Excel file: {column_names}")
         
-        for col in header_df.columns:
+        for col in column_names:
             col_lower = str(col).lower().strip() if col is not None else ""
             
             # Normalize column name by removing spaces, dots, underscores, etc.
@@ -138,7 +136,7 @@ async def process_loan_details_with_progress(
         
         # Create a list of target column names in the order they appear in the Excel file
         target_column_order = []
-        for col in header_df.columns:
+        for col in column_names:
             if col in case_insensitive_mapping:
                 target_column_order.append(case_insensitive_mapping[col])
             else:
@@ -172,60 +170,32 @@ async def process_loan_details_with_progress(
                 status_message=f"Processing chunk {chunk_idx + 1}/{num_chunks} (rows {start_row}-{end_row})"
             )
             
-            # Read chunk with pandas first (more reliable for chunked Excel reading)
-            skiprows = 1 + start_row  # +1 for header
-            nrows = end_row - start_row
+            # Read chunk
+            df_chunk = df_excel.slice(start_row, end_row - start_row)
             
-            pd_chunk = pd.read_excel(
-                xlsx, 
-                sheet_name=sheet_name,
-                skiprows=skiprows,
-                nrows=nrows,
-                header=None  # Don't use the first row as header
-            )
-            
-            # Assign the target column names to the dataframe
-            if len(pd_chunk.columns) == len(target_column_order):
-                pd_chunk.columns = target_column_order
-            else:
-                # If column counts don't match, log an error and try to handle it
-                logger.error(f"Column count mismatch in chunk {chunk_idx + 1}: Expected {len(target_column_order)}, got {len(pd_chunk.columns)}")
-                # Use as many columns as we have, padding with None if needed
-                if len(pd_chunk.columns) < len(target_column_order):
-                    pd_chunk.columns = target_column_order[:len(pd_chunk.columns)]
-                else:
-                    # More columns than expected, use target columns and add extras
-                    columns = target_column_order.copy()
-                    for i in range(len(target_column_order), len(pd_chunk.columns)):
-                        columns.append(f"extra_col_{i}")
-                    pd_chunk.columns = columns
-            
-            # Convert to Polars for processing
-            df = pl.from_pandas(pd_chunk)
-            
-            # Free pandas memory
-            del pd_chunk
+            # Assign column names
+            df_chunk.columns = target_column_order
             
             # Log column names for debugging
-            logger.info(f"Columns in chunk {chunk_idx + 1} after applying target column order: {df.columns}")
+            logger.info(f"Columns in chunk {chunk_idx + 1} after applying target column order: {df_chunk.columns}")
             
             # Process date columns
             date_columns = ["loan_issue_date", "deduction_start_period", "submission_period", "maturity_period"]
             for date_col in date_columns:
-                if date_col in df.columns:
+                if date_col in df_chunk.columns:
                     # Try to parse dates with multiple common formats
                     # First clean the data
-                    df = df.with_columns(
+                    df_chunk = df_chunk.with_columns(
                         pl.col(date_col)
                         .cast(pl.Utf8)
                         .str.replace(r"^\s*-\s*$|^\s*$|None|NaN|nan|-", "")
                     )
                     
                     # Create a clean column for date parsing
-                    clean_col = df[date_col]
+                    clean_col = df_chunk[date_col]
                     
                     # Initialize a column with null values
-                    parsed_dates = pl.Series(name=date_col, values=[None] * len(df))
+                    parsed_dates = pl.Series(name=date_col, values=[None] * len(df_chunk))
                     
                     # Try different date formats
                     date_formats = [
@@ -251,13 +221,13 @@ async def process_loan_details_with_progress(
                     
                     # Use current date for any remaining null values
                     current_date = datetime.now().date()
-                    df = df.with_columns(
+                    df_chunk = df_chunk.with_columns(
                         parsed_dates.fill_null(current_date).alias(date_col)
                     )
 
             # Handle loan_term separately as it needs to be an integer
-            if "loan_term" in df.columns:
-                df = df.with_columns(
+            if "loan_term" in df_chunk.columns:
+                df_chunk = df_chunk.with_columns(
                     pl.col("loan_term")
                     .cast(pl.Utf8)
                     .str.replace(r"^\s*-\s*$|^\s*$|None|NaN|nan|-", "")
@@ -278,10 +248,10 @@ async def process_loan_details_with_progress(
             ]
             
             for col in numeric_columns:
-                if col in df.columns:
+                if col in df_chunk.columns:
                     # Replace problematic values and convert to float
                     # First ensure the column is string type, then clean and convert to float
-                    df = df.with_columns(
+                    df_chunk = df_chunk.with_columns(
                         pl.col(col)
                         .cast(pl.Utf8)
                         .str.replace(r"^\s*-\s*$|^\s*$|None|NaN|nan|-", "")
@@ -292,91 +262,85 @@ async def process_loan_details_with_progress(
             # Convert boolean columns
             bool_values = ["Yes", "TRUE", "True", "true", "1", "Y", "y"]
             for col in ["paid", "cancelled"]:
-                if col in df.columns:
-                    df = df.with_columns(
+                if col in df_chunk.columns:
+                    df_chunk = df_chunk.with_columns(
                         pl.col(col).cast(pl.Utf8).is_in(bool_values).fill_null(False)
                     )
             
             # Add portfolio_id to all records
-            df = df.with_columns(pl.lit(portfolio_id).alias("portfolio_id"))
+            df_chunk = df_chunk.with_columns(pl.lit(portfolio_id).alias("portfolio_id"))
             
             # Check if loan_no column exists after mapping
-            if "loan_no" not in df.columns:
+            if "loan_no" not in df_chunk.columns:
                 # If loan_no doesn't exist, use the first column as loan_no
-                if len(df.columns) > 0:
-                    first_col = df.columns[0]
+                if len(df_chunk.columns) > 0:
+                    first_col = df_chunk.columns[0]
                     logger.info(f"loan_no column not found after mapping, using first column '{first_col}' as loan_no")
-                    df = df.rename({first_col: "loan_no"})
+                    df_chunk = df_chunk.rename({first_col: "loan_no"})
                 else:
                     logger.error("No columns available in the dataframe")
                     continue
             
             # Filter out rows with no loan_no
-            df = df.filter(pl.col("loan_no").is_not_null())
-                
-            # Convert to pandas for easier processing with existing_loan_nos
-            pdf = df.to_pandas()
-                
-            # Free polars memory
-            del df
+            df_chunk = df_chunk.filter(pl.col("loan_no").is_not_null())
                 
             # Split into updates and inserts
-            mask_update = pdf["loan_no"].isin(existing_loan_nos.keys())
-            df_update = pdf[mask_update].copy()
-            df_insert = pdf[~mask_update].copy()
-                
-            # Free memory
-            del pdf
-            del mask_update
+            mask_update = df_chunk["loan_no"].is_in(existing_loan_nos.keys())
+            df_update = df_chunk.filter(mask_update)
+            df_insert = df_chunk.filter(~mask_update)
                 
             # Process this chunk
             chunk_inserted = len(df_insert)
             inserted_count += chunk_inserted
-                
+            
             # Process updates if any
             chunk_updated = 0
-            if not df_update.empty:
+            if df_update.height > 0:
                 # Process updates in batches
                 batch_size = 1000
-                for i in range(0, len(df_update), batch_size):
-                    batch = df_update.iloc[i:i+batch_size]
+                for i in range(0, df_update.height, batch_size):
+                    batch = df_update.slice(i, min(batch_size, df_update.height - i))
                         
                     # Prepare update statements
-                    for _, row in batch.iterrows():
+                    for row in batch.iter_rows(named=True):
                         # Build update statement
                         update_values = {}
                         for col in df_update.columns:
-                            if col not in ["id", "portfolio_id", "loan_no"] and not pd.isna(row[col]):
+                            if col not in ["id", "portfolio_id", "loan_no"] and row[col] is not None:
                                 update_values[col] = row[col]
                         
-                        if update_values:
-                            loan = db.query(Loan).filter(Loan.id == row["id"]).first()
+                        if update_values and row["loan_no"] in existing_loan_nos:
+                            loan = db.query(Loan).filter(Loan.id == existing_loan_nos[row["loan_no"]]).first()
                             if loan:
                                 for key, value in update_values.items():
                                     setattr(loan, key, value)
                                 chunk_updated += 1
-                        
+                    
                     # Commit batch
                     db.commit()
             
             rows_updated += chunk_updated
                 
             # Process inserts if any
-            if not df_insert.empty:
+            if df_insert.height > 0:
                 # Log the first few rows for debugging
-                logger.info(f"First row of data to insert: {df_insert.iloc[0].to_dict() if len(df_insert) > 0 else 'No data'}")
+                logger.info(f"First row of data to insert: {df_insert.row(0, named=True) if df_insert.height > 0 else 'No data'}")
                 
                 # Ensure loan_amount has a default value (required field)
                 if 'loan_amount' in df_insert.columns:
-                    df_insert['loan_amount'] = df_insert['loan_amount'].fillna(0)
+                    df_insert = df_insert.with_columns(
+                        pl.col('loan_amount').fill_null(0)
+                    )
                 else:
-                    df_insert['loan_amount'] = 0
+                    df_insert = df_insert.with_columns(
+                        pl.lit(0).alias('loan_amount')
+                    )
                 
                 # Create a CSV-like string buffer
                 csv_buffer = io.StringIO()
                 
                 # Write data to the buffer in CSV format
-                for _, row in df_insert.iterrows():
+                for row in df_insert.rows(named=True):
                     values = []
                     for col in ["portfolio_id", "loan_no", "employee_id", "employee_name", 
                                "employer", "loan_issue_date", "deduction_start_period", 
@@ -390,16 +354,16 @@ async def process_loan_details_with_progress(
                                "accumulated_arrears", "ndia", "prevailing_posted_repayment", 
                                "prevailing_due_payment", "current_missed_deduction", 
                                "admin_charge", "recovery_rate", "deduction_status"]:
-                        if col in row:
-                            if col in date_columns and pd.notna(row[col]):
+                        if col in df_insert.columns:
+                            if col in date_columns and row[col] is not None:
                                 values.append(str(row[col]))
-                            elif col == "loan_term" and pd.notna(row[col]):
+                            elif col == "loan_term" and row[col] is not None:
                                 # Ensure loan_term is an integer
                                 values.append(str(int(float(row[col]))))
-                            elif col in ["paid", "cancelled"] and pd.notna(row[col]):
+                            elif col in ["paid", "cancelled"] and row[col] is not None:
                                 # Convert boolean to string representation
                                 values.append(str(row[col]).lower())
-                            elif pd.isna(row[col]):
+                            elif row[col] is None:
                                 # Handle required fields with default values
                                 if col == "loan_amount":
                                     values.append("0")  # Default to 0 for loan_amount
@@ -456,10 +420,10 @@ async def process_loan_details_with_progress(
                     logger.error(f"Error during bulk insert: {str(e)}")
                     # Try individual inserts as a fallback
                     logger.info("Attempting individual inserts as fallback")
-                    for i, row in df_insert.iterrows():
+                    for i, row in enumerate(df_insert.rows(named=True)):
                         try:
                             # Ensure required fields have values
-                            if pd.isna(row.get('loan_amount')):
+                            if row['loan_amount'] is None:
                                 row['loan_amount'] = 0
                                 
                             # Create a new Loan object
@@ -471,7 +435,7 @@ async def process_loan_details_with_progress(
                             
                             # Add other fields if they exist
                             for col in df_insert.columns:
-                                if col not in ['portfolio_id', 'loan_no', 'loan_amount'] and not pd.isna(row.get(col)):
+                                if col not in ['portfolio_id', 'loan_no', 'loan_amount'] and row[col] is not None:
                                     setattr(loan, col, row[col])
                             
                             db.add(loan)
@@ -484,10 +448,6 @@ async def process_loan_details_with_progress(
                     
                     # Final commit for remaining rows
                     db.commit()
-            
-            # Free memory
-            del df_update
-            del df_insert
             
             # Update progress for this chunk
             chunk_progress = round(min(95, (chunk_idx + 1) / num_chunks * 95), 2)
@@ -593,26 +553,28 @@ async def process_client_data_with_progress(
         # Update task status
         task_manager.update_task(task_id, status_message="Reading Excel file")
         
-        # CHUNKED PROCESSING: Read Excel file in chunks to reduce memory usage
-        xlsx = pd.ExcelFile(io.BytesIO(file_content))
-        sheet_name = xlsx.sheet_names[0]
+        # Create a BytesIO object from the file content
+        excel_buffer = io.BytesIO(file_content)
         
-        # Get total rows for progress tracking
-        total_rows = len(pd.read_excel(xlsx, sheet_name=sheet_name, usecols=[0], nrows=None))
+        # Read the Excel file with Polars
+        df_excel = pl.read_excel(excel_buffer)
+        
+        # Get total rows
+        total_rows = df_excel.height
+        
+        # Get column names
+        column_names = df_excel.columns
         
         # Update task with total items
         task_manager.update_task(task_id, total_items=total_rows, status_message="Processing data")
-        
-        # Read the header row to determine column mapping once for all chunks
-        header_df = pd.read_excel(xlsx, sheet_name=sheet_name, nrows=1)
         
         # Create a mapping of actual column names to our target column names
         case_insensitive_mapping = {}
         
         # Log all available columns for debugging
-        logger.info(f"Available columns in Excel file: {list(header_df.columns)}")
+        logger.info(f"Available columns in Excel file: {column_names}")
         
-        for col in header_df.columns:
+        for col in column_names:
             col_lower = str(col).lower().strip() if col is not None else ""
             
             # Normalize column name by removing spaces, dots, underscores, etc.
@@ -636,7 +598,7 @@ async def process_client_data_with_progress(
         
         # Create a list of target column names in the order they appear in the Excel file
         target_column_order = []
-        for col in header_df.columns:
+        for col in column_names:
             if col in case_insensitive_mapping:
                 target_column_order.append(case_insensitive_mapping[col])
             else:
@@ -670,60 +632,32 @@ async def process_client_data_with_progress(
                 status_message=f"Processing chunk {chunk_idx + 1}/{num_chunks} (rows {start_row}-{end_row})"
             )
             
-            # Read chunk with pandas first (more reliable for chunked Excel reading)
-            skiprows = 1 + start_row  # +1 for header
-            nrows = end_row - start_row
+            # Read chunk
+            df_chunk = df_excel.slice(start_row, end_row - start_row)
             
-            pd_chunk = pd.read_excel(
-                xlsx, 
-                sheet_name=sheet_name,
-                skiprows=skiprows,
-                nrows=nrows,
-                header=None  # Don't use the first row as header
-            )
-            
-            # Assign the target column names to the dataframe
-            if len(pd_chunk.columns) == len(target_column_order):
-                pd_chunk.columns = target_column_order
-            else:
-                # If column counts don't match, log an error and try to handle it
-                logger.error(f"Column count mismatch in chunk {chunk_idx + 1}: Expected {len(target_column_order)}, got {len(pd_chunk.columns)}")
-                # Use as many columns as we have, padding with None if needed
-                if len(pd_chunk.columns) < len(target_column_order):
-                    pd_chunk.columns = target_column_order[:len(pd_chunk.columns)]
-                else:
-                    # More columns than expected, use target columns and add extras
-                    columns = target_column_order.copy()
-                    for i in range(len(target_column_order), len(pd_chunk.columns)):
-                        columns.append(f"extra_col_{i}")
-                    pd_chunk.columns = columns
-            
-            # Convert to Polars for processing
-            df = pl.from_pandas(pd_chunk)
-            
-            # Free pandas memory
-            del pd_chunk
+            # Assign column names
+            df_chunk.columns = target_column_order
             
             # Log column names for debugging
-            logger.info(f"Columns in chunk {chunk_idx + 1} after applying target column order: {df.columns}")
+            logger.info(f"Columns in chunk {chunk_idx + 1} after applying target column order: {df_chunk.columns}")
             
             # Process date columns
             date_columns = ["date_of_birth"]
             for date_col in date_columns:
-                if date_col in df.columns:
+                if date_col in df_chunk.columns:
                     # Try to parse dates with multiple common formats
                     # First clean the data
-                    df = df.with_columns(
+                    df_chunk = df_chunk.with_columns(
                         pl.col(date_col)
                         .cast(pl.Utf8)
                         .str.replace(r"^\s*-\s*$|^\s*$|None|NaN|nan|-", "")
                     )
                     
                     # Create a clean column for date parsing
-                    clean_col = df[date_col]
+                    clean_col = df_chunk[date_col]
                     
                     # Initialize a column with null values
-                    parsed_dates = pl.Series(name=date_col, values=[None] * len(df))
+                    parsed_dates = pl.Series(name=date_col, values=[None] * len(df_chunk))
                     
                     # Try different date formats
                     date_formats = [
@@ -749,45 +683,31 @@ async def process_client_data_with_progress(
                     
                     # Use a default date for any remaining null values
                     default_date = datetime(1970, 1, 1).date()
-                    df = df.with_columns(
+                    df_chunk = df_chunk.with_columns(
                         parsed_dates.fill_null(default_date).alias(date_col)
                     )
             
             # Add portfolio_id to all records
-            df = df.with_columns(pl.lit(portfolio_id).alias("portfolio_id"))
+            df_chunk = df_chunk.with_columns(pl.lit(portfolio_id).alias("portfolio_id"))
             
             # Check if employee_id column exists after mapping
-            if "employee_id" not in df.columns:
+            if "employee_id" not in df_chunk.columns:
                 # If employee_id doesn't exist, use the first column as employee_id
-                if len(df.columns) > 0:
-                    first_col = df.columns[0]
+                if len(df_chunk.columns) > 0:
+                    first_col = df_chunk.columns[0]
                     logger.info(f"employee_id column not found after mapping, using first column '{first_col}' as employee_id")
-                    df = df.rename({first_col: "employee_id"})
+                    df_chunk = df_chunk.rename({first_col: "employee_id"})
                 else:
                     logger.error("No columns available in the dataframe")
                     continue
             
             # Filter out rows with no employee_id
-            df = df.filter(pl.col("employee_id").is_not_null())
+            df_chunk = df_chunk.filter(pl.col("employee_id").is_not_null())
                 
-            # Convert to pandas for easier processing with existing_employee_ids
-            pdf = df.to_pandas()
-            
-            # Free polars memory
-            del df
-            
             # Split into updates and inserts
-            mask_update = pdf["employee_id"].isin(existing_employee_ids.keys())
-            df_update = pdf[mask_update].copy()
-            df_insert = pdf[~mask_update].copy()
-            
-            # Free memory
-            del pdf
-            del mask_update
-            
-            # Add id column to updates
-            if not df_update.empty:
-                df_update["id"] = df_update["employee_id"].map(existing_employee_ids)
+            mask_update = df_chunk["employee_id"].is_in(existing_employee_ids.keys())
+            df_update = df_chunk.filter(mask_update)
+            df_insert = df_chunk.filter(~mask_update)
             
             # Process this chunk
             chunk_inserted = len(df_insert)
@@ -795,22 +715,22 @@ async def process_client_data_with_progress(
             
             # Process updates if any
             chunk_updated = 0
-            if not df_update.empty:
+            if df_update.height > 0:
                 # Process updates in batches
                 batch_size = 1000
-                for i in range(0, len(df_update), batch_size):
-                    batch = df_update.iloc[i:i+batch_size]
+                for i in range(0, df_update.height, batch_size):
+                    batch = df_update.slice(i, min(batch_size, df_update.height - i))
                         
                     # Prepare update statements
-                    for _, row in batch.iterrows():
+                    for row in batch.iter_rows(named=True):
                         # Build update statement
                         update_values = {}
                         for col in df_update.columns:
-                            if col not in ["id", "portfolio_id", "employee_id"] and not pd.isna(row[col]):
+                            if col not in ["id", "portfolio_id", "employee_id"] and row[col] is not None:
                                 update_values[col] = row[col]
                         
-                        if update_values:
-                            client = db.query(Client).filter(Client.id == row["id"]).first()
+                        if update_values and row["employee_id"] in existing_employee_ids:
+                            client = db.query(Client).filter(Client.id == existing_employee_ids[row["employee_id"]]).first()
                             if client:
                                 for key, value in update_values.items():
                                     setattr(client, key, value)
@@ -822,22 +742,24 @@ async def process_client_data_with_progress(
             rows_updated += chunk_updated
             
             # Process inserts if any
-            if not df_insert.empty:
+            if df_insert.height > 0:
                 # Log the first few rows for debugging
-                logger.info(f"First row of client data to insert: {df_insert.iloc[0].to_dict() if len(df_insert) > 0 else 'No data'}")
+                logger.info(f"First row of client data to insert: {df_insert.row(0, named=True) if df_insert.height > 0 else 'No data'}")
                 
                 # Get the portfolio's customer_type
                 portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
                 portfolio_customer_type = portfolio.customer_type if portfolio and portfolio.customer_type else "individuals"
                 
                 # Add client_type to all rows based on portfolio's customer_type
-                df_insert['client_type'] = portfolio_customer_type
+                df_insert = df_insert.with_columns(
+                    pl.lit(portfolio_customer_type).alias('client_type')
+                )
                 
                 # Create a CSV-like string buffer for COPY
                 csv_buffer = io.StringIO()
                 
                 # Write data to the buffer in tab-separated format
-                for _, row in df_insert.iterrows():
+                for row in df_insert.rows(named=True):
                     values = []
                     for col in [
                         "portfolio_id", "employee_id", "last_name", "other_names", 
@@ -847,7 +769,7 @@ async def process_client_data_with_progress(
                         "employment_date", "next_of_kin", "next_of_kin_contact", 
                         "next_of_kin_address", "client_type"
                     ]:
-                        if col in row and not pd.isna(row[col]):
+                        if col in row and row[col] is not None:
                             # Escape special characters for COPY
                             val = str(row[col])
                             val = val.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")
@@ -889,7 +811,7 @@ async def process_client_data_with_progress(
                     # Rollback the failed transaction
                     db.rollback()
                     
-                    for i, row in df_insert.iterrows():
+                    for i, row in enumerate(df_insert.rows(named=True)):
                         try:
                             # Create a new Client object with required fields
                             client = Client(
@@ -908,7 +830,7 @@ async def process_client_data_with_progress(
                                     "previous_employee_no", "social_security_no", "voters_id_no", 
                                     "employment_date", "next_of_kin", "next_of_kin_contact", 
                                     "next_of_kin_address"
-                                ] and not pd.isna(row.get(col)):
+                                ] and row[col] is not None:
                                     setattr(client, col, row[col])
                             
                             db.add(client)
@@ -927,10 +849,6 @@ async def process_client_data_with_progress(
                     except Exception as commit_e:
                         logger.error(f"Error during final commit: {str(commit_e)}")
                         db.rollback()
-            
-            # Free memory
-            del df_update
-            del df_insert
             
             # Update progress for this chunk
             chunk_progress = round(min(95, (chunk_idx + 1) / num_chunks * 95), 2)
