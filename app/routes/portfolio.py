@@ -93,11 +93,16 @@ from app.schemas import (
 from app.auth.utils import get_current_active_user
 from app.utils.quality_checks import create_quality_issues_if_needed
 from app.utils.background_processors import process_loan_details_with_progress as process_loan_details, process_client_data_with_progress as process_client_data
-from app.utils.background_ingestion import start_background_ingestion
+from app.utils.background_ingestion import (
+    start_background_ingestion,
+    process_portfolio_ingestion_sync
+)
 from app.utils.staging import parse_days_range
 from app.utils.background_calculations import (
     start_background_ecl_calculation,
     start_background_local_impairment_calculation,
+    process_ecl_calculation_sync,
+    process_local_impairment_calculation_sync
 )
 import os
 
@@ -784,8 +789,8 @@ def delete_portfolio(
     return None
 
 
-@router.post("/{portfolio_id}/ingest", status_code=status.HTTP_202_ACCEPTED)
-async def ingest_portfolio_data(
+@router.post("/{portfolio_id}/ingest", status_code=status.HTTP_200_OK)
+def ingest_portfolio_data(
     portfolio_id: int,
     loan_details: Optional[UploadFile] = File(None),
     client_data: Optional[UploadFile] = File(None),
@@ -824,26 +829,20 @@ async def ingest_portfolio_data(
             detail="At least one file must be provided",
         )
     
-    # Start background processing
-    task_id = await start_background_ingestion(
+    # Process files synchronously
+    result = process_portfolio_ingestion_sync(
         portfolio_id=portfolio_id,
-        loan_details=loan_details,
-        client_data=client_data,
-        loan_guarantee_data=loan_guarantee_data,
-        loan_collateral_data=loan_collateral_data,
+        loan_details_content=loan_details.file.read() if loan_details else None,
+        client_data_content=client_data.file.read() if client_data else None,
+        loan_guarantee_data_content=loan_guarantee_data.file.read() if loan_guarantee_data else None,
+        loan_collateral_data_content=loan_collateral_data.file.read() if loan_collateral_data else None,
         db=db
     )
     
-    # Return task ID for tracking progress
-    return {
-        "task_id": task_id,
-        "message": "Data ingestion started in the background",
-        "status": "processing",
-        "websocket_url": f"wss://{os.getenv('BASE_URL', 'localhost:8000').replace('https://', '')}/ws/tasks/{task_id}"
-    }
+    return result
 
 @router.get("/{portfolio_id}/calculate-ecl")
-async def calculate_ecl_provision(
+def calculate_ecl_provision(
     portfolio_id: int,
     reporting_date: Optional[date] = None,
     db: Session = Depends(get_db),
@@ -887,19 +886,16 @@ async def calculate_ecl_provision(
         )
     
     # Start the background task for ECL calculation
-    task_id = await start_background_ecl_calculation(
-        portfolio_id=portfolio_id,
-        reporting_date=reporting_date,
-        db=db
-    )
-    
-    # Return task ID for tracking progress
-    return {
-        "task_id": task_id,
-        "message": "ECL calculation started in the background",
-        "status": "processing",
-        "websocket_url": f"wss://{os.getenv('BASE_URL', 'localhost:8000').replace('https://', '')}/ws/tasks/{task_id}"
-    }
+    try:
+        return process_ecl_calculation_sync(
+            portfolio_id=portfolio_id,
+            reporting_date=reporting_date,
+            staging_result=latest_staging,
+            db=db
+        )
+    except Exception as e:
+        logger.error(f"ECL calculation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{portfolio_id}/stage-loans-ecl", response_model=StagingResponse)
 def stage_loans_ecl(
@@ -1301,7 +1297,7 @@ def stage_loans_local_impairment(
     return StagingResponse(loans=staged_loans)
 
 @router.get("/{portfolio_id}/calculate-local-impairment")
-async def calculate_local_provision(
+def calculate_local_provision(
     portfolio_id: int,
     reporting_date: Optional[date] = None,
     db: Session = Depends(get_db),
@@ -1345,19 +1341,16 @@ async def calculate_local_provision(
         )
     
     # Start the background task for local impairment calculation
-    task_id = await start_background_local_impairment_calculation(
-        portfolio_id=portfolio_id,
-        reporting_date=reporting_date,
-        db=db
-    )
-    
-    # Return task ID for tracking progress
-    return {
-        "task_id": task_id,
-        "message": "Local impairment calculation started in the background",
-        "status": "processing",
-        "websocket_url": f"wss://{os.getenv('BASE_URL', 'localhost:8000').replace('https://', '')}/ws/tasks/{task_id}"
-    }
+    try:
+        return process_local_impairment_calculation_sync(
+            portfolio_id=portfolio_id,
+            reporting_date=reporting_date,
+            staging_result=latest_staging,
+            db=db
+        )
+    except Exception as e:
+        logger.error(f"Local impairment calculation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Fixed optimized ECL staging implementation
 async def stage_loans_ecl_optimized(portfolio_id: int, config: ECLStagingConfig, db: Session):
