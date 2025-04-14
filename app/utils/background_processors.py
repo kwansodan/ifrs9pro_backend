@@ -154,7 +154,7 @@ async def process_loan_details_with_progress(
             logger.info(f"No loan_no column found, using first column as loan_no")
         
         # Process in chunks to reduce memory usage
-        chunk_size = 50  # Adjust based on your memory constraints
+        chunk_size = 25  # Adjust based on your memory constraints
         num_chunks = (total_rows + chunk_size - 1) // chunk_size
         
         # Track overall processing stats
@@ -652,7 +652,7 @@ async def process_client_data_with_progress(
             logger.info(f"No employee_id column found, using first column as employee_id")
         
         # Process in chunks to reduce memory usage
-        chunk_size = 50  # Adjust based on your memory constraints
+        chunk_size = 25  # Adjust based on your memory constraints
         num_chunks = (total_rows + chunk_size - 1) // chunk_size
         
         # Track overall processing stats
