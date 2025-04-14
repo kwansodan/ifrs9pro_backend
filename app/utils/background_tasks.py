@@ -5,6 +5,8 @@ import uuid
 import time
 from datetime import datetime
 import json
+import threading
+from collections import deque
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +40,13 @@ class BackgroundTaskManager:
     """
     Manages background tasks and their progress tracking.
     """
-    def __init__(self):
+    def __init__(self, max_concurrent_tasks=5):
         self.tasks: Dict[str, Dict[str, Any]] = {}
         self._loop = None
+        self.max_concurrent_tasks = max_concurrent_tasks
+        self.running_tasks = 0
+        self.task_queue = deque()
+        self.task_semaphore = asyncio.Semaphore(max_concurrent_tasks)
         
     def _ensure_loop(self):
         """Ensure we have an event loop for the current thread"""
@@ -256,13 +262,29 @@ def get_task_manager():
 async def run_background_task(task_id: str, func, *args, **kwargs):
     """
     Run a function as a background task with progress tracking.
+    This function will wait for a semaphore if the maximum number of concurrent tasks is reached.
     """
     task_manager = get_task_manager()
     try:
-        task_manager.mark_as_started(task_id)
-        result = await func(task_id=task_id, *args, **kwargs)
-        task_manager.mark_as_completed(task_id, result)
-        return result
+        # Update status to queued if we can't acquire the semaphore immediately
+        if not task_manager.task_semaphore.locked() and task_manager.running_tasks >= task_manager.max_concurrent_tasks:
+            task_manager.update_task(
+                task_id, 
+                status="queued",
+                status_message="Waiting for resources to become available"
+            )
+        
+        # Acquire semaphore to limit concurrent tasks
+        async with task_manager.task_semaphore:
+            task_manager.running_tasks += 1
+            task_manager.mark_as_started(task_id)
+            
+            try:
+                result = await func(task_id=task_id, *args, **kwargs)
+                task_manager.mark_as_completed(task_id, result)
+                return result
+            finally:
+                task_manager.running_tasks -= 1
     except Exception as e:
         logger.exception(f"Background task {task_id} failed: {e}")
         task_manager.mark_as_failed(task_id, str(e))
