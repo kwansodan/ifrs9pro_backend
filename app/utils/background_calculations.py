@@ -13,7 +13,8 @@ from app.models import (
 from app.utils.background_tasks import get_task_manager, run_background_task
 from app.utils.ecl_calculator import (
     calculate_loss_given_default, calculate_probability_of_default,
-    calculate_exposure_at_default_percentage, calculate_marginal_ecl, is_in_range
+    calculate_exposure_at_default_percentage, calculate_marginal_ecl, is_in_range,
+    get_amortization_schedule, get_ecl_by_stage, calculate_effective_interest_rate_lender
 )
 from app.utils.staging import parse_days_range
 
@@ -265,8 +266,68 @@ async def process_ecl_calculation(
             lgd = calculate_loss_given_default(loan, client_securities_list)
             pd = calculate_probability_of_default(loan, db)
             ead_percentage = calculate_exposure_at_default_percentage(loan, reporting_date)
-            ecl = calculate_marginal_ecl(loan, ead_percentage, pd, lgd)
-
+            
+            # Convert stage string to numeric value for get_ecl_by_stage function
+            stage_num = 1
+            if stage == "Stage 2":
+                stage_num = 2
+            elif stage == "Stage 3":
+                stage_num = 3
+            
+            # Format the reporting date for the amortization schedule
+            reporting_date_str = reporting_date.strftime("%d/%m/%Y")
+            
+            # Extract loan details for amortization schedule
+            loan_amount = float(loan.loan_amount) if loan.loan_amount else 0
+            loan_term = int(loan.loan_term) if loan.loan_term else 12  # Default to 12 months
+            
+            # Get monthly installment
+            monthly_installment = float(loan.monthly_installment) if loan.monthly_installment else 0
+            
+            # Get effective interest rate
+            admin_fees = float(loan.administrative_fees) if loan.administrative_fees else 0
+            effective_interest_rate = calculate_effective_interest_rate_lender(
+                loan_amount, admin_fees, loan_term, monthly_installment
+            )
+            
+            # Default to 24% if calculation fails
+            if effective_interest_rate is None:
+                effective_interest_rate = 24.0
+            
+            # Format loan issue date
+            if loan.loan_issue_date:
+                if isinstance(loan.loan_issue_date, str):
+                    try:
+                        date_obj = datetime.strptime(loan.loan_issue_date, "%Y-%m-%d")
+                        start_date = date_obj.strftime("%d/%m/%Y")
+                    except ValueError:
+                        start_date = datetime.now().replace(day=1).strftime("%d/%m/%Y")
+                else:
+                    start_date = loan.loan_issue_date.strftime("%d/%m/%Y")
+            else:
+                start_date = datetime.now().replace(day=1).strftime("%d/%m/%Y")
+            
+            # Calculate amortization schedule and ECL values
+            try:
+                schedule, ecl_12_month, ecl_lifetime = get_amortization_schedule(
+                    loan_amount=loan_amount,
+                    loan_term=loan_term,
+                    annual_interest_rate=effective_interest_rate,
+                    monthly_installment=monthly_installment,
+                    start_date=start_date,
+                    reporting_date=reporting_date_str,
+                    pd=pd,
+                    db=db,
+                    loan=loan
+                )
+                
+                # Get the appropriate ECL based on loan stage
+                ecl = get_ecl_by_stage(schedule, ecl_12_month, ecl_lifetime, stage_num)
+            except Exception as e:
+                logger.warning(f"Error calculating ECL using amortization schedule for loan {loan_id}: {str(e)}")
+                # Fall back to the original calculation method if the new method fails
+                ecl = calculate_marginal_ecl(loan, ead_percentage, pd, lgd)
+            
             logger.info(f"ECL calculation for loan {loan_id}: LGD={lgd}, PD={pd}, EAD={ead_percentage}, ECL={ecl}")
             
             # Update stage totals based on the assigned stage
