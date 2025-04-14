@@ -3,9 +3,11 @@ import logging
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from sqlalchemy.orm import Session
 from app.database import get_db, init_db
-from app.routes import auth, portfolio, admin, reports, dashboard, user as user_router, quality_issues
+# Import all routers including websocket
+from app.routes import auth, portfolio, admin, reports, dashboard, user as user_router, quality_issues, websocket
 from app.models import User, UserRole
 from app.auth.utils import get_password_hash
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -20,6 +22,7 @@ import pickle
 import numpy as np
 import asyncio
 
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("app")
@@ -32,6 +35,9 @@ app = FastAPI()
 async def health_check():
     """Simple health check endpoint for Azure health probes"""
     return {"status": "healthy"}
+
+# Add GZip compression middleware
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Configure CORS
 app.add_middleware(
@@ -50,6 +56,7 @@ app.include_router(reports.router)
 app.include_router(dashboard.router)
 app.include_router(user_router.router)
 app.include_router(quality_issues.router)
+app.include_router(websocket.router)
 
 @app.get("/")
 async def root():
@@ -202,16 +209,9 @@ async def startup_event():
     """
     Application startup event handler
     - First responds to health checks
-    - Then initializes database and creates admin user in background
     """
     logger.info("Application startup event triggered")
     
-    # Schedule these tasks to run in the background
-    # This allows the health check to respond immediately
-    loop = asyncio.get_event_loop()
-    loop.create_task(init_db_async())
-    loop.create_task(create_admin_user_async())
-
 if __name__ == "__main__":
     import uvicorn
 

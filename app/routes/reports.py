@@ -24,6 +24,11 @@ from app.utils.report_generators import (
     generate_probability_default_report,
     generate_exposure_default_report,
     generate_loss_given_default_report,
+    generate_ecl_detailed_report,
+    generate_ecl_report_summarised,
+    generate_local_impairment_details_report,
+    generate_local_impairment_report_summarised,
+    generate_journal_report,
     generate_report_excel,  # Changed from generate_report_pdf
 )
 from app.schemas import (
@@ -113,6 +118,31 @@ async def generate_report(
         elif report_request.report_type == ReportTypeEnum.LOSS_GIVEN_DEFAULT:
             report_data = generate_loss_given_default_report(
                 db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
+            )
+
+        elif report_request.report_type == ReportTypeEnum.ECL_DETAILED_REPORT:
+            report_data = generate_ecl_detailed_report(
+                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
+            )
+
+        elif report_request.report_type == ReportTypeEnum.ECL_REPORT_SUMMARISED:
+            report_data = generate_ecl_report_summarised(
+                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
+            )
+
+        elif report_request.report_type == ReportTypeEnum.LOCAL_IMPAIRMENT_DETAILS_REPORT:
+            report_data = generate_local_impairment_details_report(
+                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
+            )
+
+        elif report_request.report_type == ReportTypeEnum.LOCAL_IMPAIRMENT_REPORT_SUMMARISED:
+            report_data = generate_local_impairment_report_summarised(
+                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
+            )
+
+        elif report_request.report_type == ReportTypeEnum.JOURNALS_REPORT:
+            report_data = generate_journal_report(
+                db=db, portfolio_ids=[portfolio_id], report_date=report_request.report_date
             )
 
         else:
