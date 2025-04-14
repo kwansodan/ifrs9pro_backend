@@ -9,6 +9,7 @@ class Settings:
     DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
     INVITATION_EXPIRE_HOURS: int = int(os.getenv("INVITATION_EXPIRE_HOURS", "24"))
     ACCESS_TOKEN_EXPIRE_HOURS: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_HOURS", "24"))
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
     
     @property
     def SQLALCHEMY_DATABASE_URL(self) -> str:

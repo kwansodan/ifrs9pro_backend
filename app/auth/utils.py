@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, WebSocket, Query
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -15,8 +15,6 @@ from app.config import settings
 
 
 ALGORITHM = "HS256"
-settings.ACCESS_TOKEN_EXPIRE_MINUTES = 30
-settings.INVITATION_EXPIRE_HOURS = 24
 
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
@@ -49,6 +47,35 @@ def create_email_verification_token(email: str):
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
+
+
+def get_token_from_query_param(websocket: WebSocket) -> Optional[str]:
+    """
+    Extract token from WebSocket query parameters.
+    Returns None if no token is found.
+    """
+    query_params = websocket.scope.get("query_string", b"").decode()
+    if not query_params:
+        return None
+    
+    # Parse query parameters
+    params = {}
+    for param in query_params.split("&"):
+        if "=" in param:
+            key, value = param.split("=", 1)
+            params[key] = value
+    
+    # Look for token parameter
+    return params.get("token")
+
+
+def verify_token(token: str) -> dict:
+    """
+    Verify JWT token and return payload.
+    Raises jwt.PyJWTError if token is invalid.
+    """
+    payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+    return payload
 
 
 def create_invitation_token(email: str):
@@ -115,3 +142,32 @@ def is_admin(current_user: User = Depends(get_current_active_user)):
     if current_user.role != models.UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     return current_user
+
+
+async def get_current_active_user_ws(
+    websocket: WebSocket, 
+    token: str = Query(...),
+    db: Session = Depends(get_db)
+):
+    """
+    Authenticate a WebSocket connection using a token query parameter.
+    Similar to get_current_active_user but for WebSocket connections.
+    """
+    try:
+        token_data, token_type = decode_token(token)
+        if token_type != "access":
+            await websocket.close(code=1008, reason="Invalid token type")
+            return None
+            
+        user = db.query(User).filter(User.email == token_data.email).first()
+        if user is None or not user.is_active:
+            await websocket.close(code=1008, reason="Invalid or inactive user")
+            return None
+            
+        return user
+    except JWTError:
+        await websocket.close(code=1008, reason="Invalid token")
+        return None
+    except Exception as e:
+        await websocket.close(code=1011, reason=f"Server error: {str(e)}")
+        return None

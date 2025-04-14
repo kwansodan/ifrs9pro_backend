@@ -2,10 +2,12 @@ from datetime import date
 from typing import Dict, Any, List
 from io import BytesIO
 import pandas as pd
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.chart import BarChart, Reference, PieChart
+import os
+from datetime import datetime
 
 
 def create_report_excel(
@@ -26,7 +28,21 @@ def create_report_excel(
     Returns:
         BytesIO: Excel file as a bytes buffer
     """
-    wb = Workbook()
+    wb = load_excel_template(report_type)
+    
+    # Handle specialized report types
+    if report_type.lower() == "ecl_detailed_report":
+        return populate_ecl_detailed_report(wb, portfolio_name, report_date, report_data)
+    elif report_type.lower() == "local_impairment_details_report":
+        return populate_local_impairment_details_report(wb, portfolio_name, report_date, report_data)
+    elif report_type.lower() == "ecl_report_summarised":
+        return populate_ecl_report_summarised(wb, portfolio_name, report_date, report_data)
+    elif report_type.lower() == "local_impairment_report_summarised":
+        return populate_local_impairment_report_summarised(wb, portfolio_name, report_date, report_data)
+    elif report_type.lower() == "journals_report":
+        return populate_journal_report(wb, portfolio_name, report_date, report_data)
+    
+    # Default handling for other report types
     ws = wb.active
     ws.title = "Summary"
     
@@ -223,3 +239,454 @@ def create_report_excel(
     wb.save(buffer)
     buffer.seek(0)
     return buffer
+
+
+def populate_ecl_detailed_report(
+    wb: Workbook, 
+    portfolio_name: str, 
+    report_date: date, 
+    report_data: Dict[str, Any]
+) -> BytesIO:
+    """
+    Populate the ECL detailed report template with data.
+    
+    Args:
+        wb: Excel workbook (template)
+        portfolio_name: Name of the portfolio
+        report_date: Date of the report
+        report_data: Data for the report
+        
+    Returns:
+        BytesIO: Excel file as bytes buffer
+    """
+    # Get the main worksheet (should be the first one)
+    ws = wb.active
+    
+    # Define number formats
+    currency_format = '#,##0.00'
+    percentage_format = '0.00%'
+    
+    # Populate header information
+    ws['B3'] = report_date
+    ws['B4'] = report_data.get('report_run_date', datetime.now().strftime("%Y-%m-%d"))
+    ws['B6'] = report_data.get('description', f"ECL Detailed Report for {portfolio_name}")
+    
+    # Populate summary values
+    ws['B9'] = report_data.get('total_ead', 0)
+    ws['B9'].number_format = currency_format
+    
+    ws['B10'] = report_data.get('total_lgd', 0)
+    ws['B10'].number_format = currency_format
+    
+    ws['B12'] = report_data.get('total_ecl', 0)
+    ws['B12'].number_format = currency_format
+    
+    # Populate loan details starting from row 15
+    loans = report_data.get('loans', [])
+    start_row = 15
+    
+    for i, loan in enumerate(loans, start=0):
+        row = start_row + i
+        
+        # Map loan data to columns
+        ws.cell(row=row, column=1, value=loan.get('loan_id', ''))
+        ws.cell(row=row, column=2, value=loan.get('employee_id', ''))
+        ws.cell(row=row, column=3, value=loan.get('employee_name', ''))
+        
+        # Loan value with currency format
+        ws.cell(row=row, column=4, value=loan.get('loan_value', 0))
+        ws.cell(row=row, column=4).number_format = currency_format
+        
+        # Outstanding loan balance with currency format
+        ws.cell(row=row, column=5, value=loan.get('outstanding_loan_balance', 0))
+        ws.cell(row=row, column=5).number_format = currency_format
+        
+        # Accumulated arrears with currency format
+        ws.cell(row=row, column=6, value=loan.get('accumulated_arrears', 0))
+        ws.cell(row=row, column=6).number_format = currency_format
+        
+        # NDIA with currency format
+        ws.cell(row=row, column=7, value=loan.get('ndia', 0))
+        ws.cell(row=row, column=7).number_format = currency_format
+        
+        # Stage
+        ws.cell(row=row, column=8, value=loan.get('stage', ''))
+        
+        # EAD with currency format
+        ws.cell(row=row, column=9, value=loan.get('ead', 0))
+        ws.cell(row=row, column=9).number_format = currency_format
+        
+        # LGD as percentage
+        ws.cell(row=row, column=10, value=loan.get('lgd', 0))
+        ws.cell(row=row, column=10).number_format = percentage_format
+        
+        # EIR as percentage
+        ws.cell(row=row, column=11, value=loan.get('eir', 0))
+        ws.cell(row=row, column=11).number_format = percentage_format
+        
+        # PD as percentage
+        ws.cell(row=row, column=12, value=loan.get('pd', 0))
+        ws.cell(row=row, column=12).number_format = percentage_format
+        
+        # ECL with currency format
+        ws.cell(row=row, column=13, value=loan.get('ecl', 0))
+        ws.cell(row=row, column=13).number_format = currency_format
+    
+    # Save to BytesIO
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+def populate_ecl_report_summarised(
+    wb: Workbook, 
+    portfolio_name: str, 
+    report_date: date, 
+    report_data: Dict[str, Any]
+) -> BytesIO:
+    """
+    Populate the ECL summarised report template with data.
+    
+    Args:
+        wb: Excel workbook (template)
+        portfolio_name: Name of the portfolio
+        report_date: Date of the report
+        report_data: Data for the report
+        
+    Returns:
+        BytesIO: Excel file as bytes buffer
+    """
+    # Get the main worksheet (should be the first one)
+    ws = wb.active
+    
+    # Define number formats
+    currency_format = '#,##0.00'
+    percentage_format = '0.00%'
+    
+    # Populate header information
+    ws['B3'] = report_date
+    ws['B4'] = report_data.get('report_run_date', datetime.now().date())
+    ws['B6'] = report_data.get('description', f"ECL Summarised Report for {portfolio_name}")
+    
+    # Populate stage data
+    # Loan values
+    ws['C18'] = report_data.get('stage_1', {}).get('loan_value', 0)
+    ws['D18'] = report_data.get('stage_2', {}).get('loan_value', 0)
+    ws['E18'] = report_data.get('stage_3', {}).get('loan_value', 0)
+    
+    # Apply currency format to loan values
+    for col in ['C', 'D', 'E']:
+        ws[f'{col}18'].number_format = currency_format
+    
+    # Outstanding loan balances
+    ws['C19'] = report_data.get('stage_1', {}).get('outstanding_balance', 0)
+    ws['D19'] = report_data.get('stage_2', {}).get('outstanding_balance', 0)
+    ws['E19'] = report_data.get('stage_3', {}).get('outstanding_balance', 0)
+    
+    # Apply currency format to outstanding balances
+    for col in ['C', 'D', 'E']:
+        ws[f'{col}19'].number_format = currency_format
+    
+    # ECL amounts
+    ws['C20'] = report_data.get('stage_1', {}).get('ecl', 0)
+    ws['D20'] = report_data.get('stage_2', {}).get('ecl', 0)
+    ws['E20'] = report_data.get('stage_3', {}).get('ecl', 0)
+    
+    # Apply currency format to ECL amounts
+    for col in ['C', 'D', 'E']:
+        ws[f'{col}20'].number_format = currency_format
+    
+    # Save to BytesIO
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+def populate_local_impairment_details_report(
+    wb: Workbook, 
+    portfolio_name: str, 
+    report_date: date, 
+    report_data: Dict[str, Any]
+) -> BytesIO:
+    """
+    Populate the local impairment detailed report template with data.
+    
+    Args:
+        wb: Excel workbook (template)
+        portfolio_name: Name of the portfolio
+        report_date: Date of the report
+        report_data: Data for the report
+        
+    Returns:
+        BytesIO: Excel file as bytes buffer
+    """
+    # Get the main worksheet (should be the first one)
+    ws = wb.active
+    
+    # Define number formats
+    currency_format = '#,##0.00'
+    percentage_format = '0.00%'
+    
+    # Populate header information
+    ws['B3'] = report_date
+    ws['B4'] = report_data.get('report_run_date', datetime.now().strftime("%Y-%m-%d"))
+    ws['B6'] = report_data.get('description', f"Local Impairment Details Report for {portfolio_name}")
+    
+    # Populate total provision
+    ws['B12'] = report_data.get('total_provision', 0)
+    ws['B12'].number_format = currency_format
+    
+    # Populate loan details starting from row 15
+    loans = report_data.get('loans', [])
+    start_row = 15
+    
+    for i, loan in enumerate(loans, start=0):
+        row = start_row + i
+        
+        # Map loan data to columns
+        ws.cell(row=row, column=1, value=loan.get('loan_id', ''))
+        ws.cell(row=row, column=2, value=loan.get('employee_id', ''))
+        ws.cell(row=row, column=3, value=loan.get('employee_name', ''))
+        
+        # Loan value with currency format
+        ws.cell(row=row, column=4, value=loan.get('loan_value', 0))
+        ws.cell(row=row, column=4).number_format = currency_format
+        
+        # Outstanding loan balance with currency format
+        ws.cell(row=row, column=5, value=loan.get('outstanding_loan_balance', 0))
+        ws.cell(row=row, column=5).number_format = currency_format
+        
+        # Accumulated arrears with currency format
+        ws.cell(row=row, column=6, value=loan.get('accumulated_arrears', 0))
+        ws.cell(row=row, column=6).number_format = currency_format
+        
+        # NDIA with currency format
+        ws.cell(row=row, column=7, value=loan.get('ndia', 0))
+        ws.cell(row=row, column=7).number_format = currency_format
+        
+        # Stage (local impairment category)
+        ws.cell(row=row, column=8, value=loan.get('stage', ''))
+        
+        # Provision rate as percentage
+        ws.cell(row=row, column=9, value=loan.get('provision_rate', 0))
+        ws.cell(row=row, column=9).number_format = percentage_format
+        
+        # Provision amount with currency format
+        ws.cell(row=row, column=10, value=loan.get('provision', 0))
+        ws.cell(row=row, column=10).number_format = currency_format
+    
+    # Save to BytesIO
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+def populate_local_impairment_report_summarised(
+    wb: Workbook, 
+    portfolio_name: str, 
+    report_date: date, 
+    report_data: Dict[str, Any]
+) -> BytesIO:
+    """
+    Populate the local impairment summarised report template with data.
+    
+    Args:
+        wb: Excel workbook (template)
+        portfolio_name: Name of the portfolio
+        report_date: Date of the report
+        report_data: Data for the report
+        
+    Returns:
+        BytesIO: Excel file as bytes buffer
+    """
+    # Get the main worksheet (should be the first one)
+    ws = wb.active
+    
+    # Define number formats
+    currency_format = '#,##0.00'
+    percentage_format = '0.00%'
+    
+    # Populate header information
+    ws['B3'] = report_date
+    ws['B4'] = report_data.get('report_run_date', datetime.now().date())
+    ws['B6'] = report_data.get('description', f"Local Impairment Summarised Report for {portfolio_name}")
+    
+    # Populate category data
+    # Loan values
+    ws['C18'] = report_data.get('current', {}).get('loan_value', 0)
+    ws['D18'] = report_data.get('olem', {}).get('loan_value', 0)
+    ws['E18'] = report_data.get('substandard', {}).get('loan_value', 0)
+    ws['F18'] = report_data.get('doubtful', {}).get('loan_value', 0)
+    ws['G18'] = report_data.get('loss', {}).get('loan_value', 0)
+    
+    # Apply currency format to loan values
+    for col in ['C', 'D', 'E', 'F', 'G']:
+        ws[f'{col}18'].number_format = currency_format
+    
+    # Outstanding loan balances
+    ws['C19'] = report_data.get('current', {}).get('outstanding_balance', 0)
+    ws['D19'] = report_data.get('olem', {}).get('outstanding_balance', 0)
+    ws['E19'] = report_data.get('substandard', {}).get('outstanding_balance', 0)
+    ws['F19'] = report_data.get('doubtful', {}).get('outstanding_balance', 0)
+    ws['G19'] = report_data.get('loss', {}).get('outstanding_balance', 0)
+    
+    # Apply currency format to outstanding balances
+    for col in ['C', 'D', 'E', 'F', 'G']:
+        ws[f'{col}19'].number_format = currency_format
+    
+    # Provision amounts
+    ws['C20'] = report_data.get('current', {}).get('provision', 0)
+    ws['D20'] = report_data.get('olem', {}).get('provision', 0)
+    ws['E20'] = report_data.get('substandard', {}).get('provision', 0)
+    ws['F20'] = report_data.get('doubtful', {}).get('provision', 0)
+    ws['G20'] = report_data.get('loss', {}).get('provision', 0)
+    
+    # Apply currency format to provision amounts
+    for col in ['C', 'D', 'E', 'F', 'G']:
+        ws[f'{col}20'].number_format = currency_format
+    
+    # Save to BytesIO
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+def populate_journal_report(
+    wb: Workbook, 
+    portfolio_name: str, 
+    report_date: date, 
+    report_data: Dict[str, Any]
+) -> BytesIO:
+    """
+    Populate the journal report template with data.
+    
+    Args:
+        wb: Excel workbook (template)
+        portfolio_name: Name of the portfolio (not used in this report as it handles multiple portfolios)
+        report_date: Date of the report
+        report_data: Data for the report
+        
+    Returns:
+        BytesIO: Excel file as bytes buffer
+    """
+    # Get the main worksheet (should be the first one)
+    ws = wb.active
+    
+    # Define styles
+    bold_font = Font(name='Calibri', size=10, bold=True)
+    
+    # Define border for header cells
+    thin_border = Border(
+        bottom=Side(style='thin')
+    )
+    
+    # Define number formats
+    currency_format = '#,##0.00_);(#,##0.00)'
+    
+    # Populate header information
+    ws['B3'] = report_date
+    ws['B4'] = report_data.get('report_run_date', datetime.now().date())
+    ws['B6'] = report_data.get('description', "Journal Report")
+    
+    # Get portfolios data
+    portfolios = report_data.get('portfolios', [])
+    
+    # Start row for the first portfolio
+    current_row = 8
+    
+    # Process each portfolio
+    for index, portfolio in enumerate(portfolios, 1):
+        # Portfolio header
+        ws[f'A{current_row}'] = f"Portfolio {index}"
+        # ws[f'A{current_row}'].font = bold_font
+        current_row += 1
+        
+        # Column headers
+        ws[f'A{current_row}'] = "Account code"
+        ws[f'B{current_row}'] = "Journal description"
+        ws[f'C{current_row}'] = "Amount (GHS)"
+        
+        # Apply bold and underline to headers
+        for col in ['A', 'B', 'C']:
+            ws[f'{col}{current_row}'].font = bold_font
+            ws[f'{col}{current_row}'].border = thin_border
+        
+        current_row += 1
+        
+        # Journal entries
+        # IFRS9 Impairment - P&L charge
+        ws[f'A{current_row}'] = portfolio.get('ecl_impairment_account', '')
+        ws[f'B{current_row}'] = "IFRS9 Impairment - P&l charge"
+        ws[f'C{current_row}'] = portfolio.get('total_ecl', 0)
+        ws[f'C{current_row}'].number_format = currency_format
+        current_row += 1
+        
+        # IFRS9 Impairment - impact on loans
+        ws[f'A{current_row}'] = portfolio.get('loan_assets', '')
+        ws[f'B{current_row}'] = "IFRS9 Impairment - impact on loans"
+        ws[f'C{current_row}'] = -portfolio.get('total_ecl', 0)  # Negative value
+        ws[f'C{current_row}'].number_format = currency_format
+        current_row += 1
+        
+        # Top up for BOG Impairment - P&L charge
+        ws[f'A{current_row}'] = portfolio.get('ecl_impairment_account', '')
+        ws[f'B{current_row}'] = "Top up for BOG Impairment - P&l charge"
+        ws[f'C{current_row}'] = portfolio.get('risk_reserve', 0)
+        ws[f'C{current_row}'].number_format = currency_format
+        current_row += 1
+        
+        # Credit risk reserve
+        ws[f'A{current_row}'] = portfolio.get('credit_risk_reserve', '')
+        ws[f'B{current_row}'] = "Credit risk reserve"
+        ws[f'C{current_row}'] = -portfolio.get('risk_reserve', 0)  # Negative value
+        ws[f'C{current_row}'].number_format = currency_format
+        current_row += 1
+        
+        # Skip a row before the next portfolio
+        current_row += 1
+    
+    # Save to BytesIO
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+def load_excel_template(report_type: str) -> Workbook:
+    """
+    Load an Excel template for a specific report type.
+    
+    Args:
+        report_type: Type of the report
+        
+    Returns:
+        Workbook: Excel workbook template
+    """
+    import os
+    from openpyxl import load_workbook
+    
+    # Define template paths
+    template_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "reports")
+    
+    # Map report types to template files
+    template_map = {
+        "ecl_detailed_report": "ecl_detailed_report.xlsx",
+        "ecl_report_summarised": "ecl_report_summarised.xlsx",
+        "local_impairment_details_report": "local_impairment_details_report.xlsx",
+        "local_impairment_report_summarised": "local_impairment_report_summarised.xlsx",
+        "journals_report": "journals_report.xlsx",
+    }
+    
+    # Get the template file name
+    template_file = template_map.get(report_type.lower())
+    
+    # If we have a template for this report type, load it
+    if template_file and os.path.exists(os.path.join(template_dir, template_file)):
+        return load_workbook(os.path.join(template_dir, template_file))
+    
+    # If no template exists, return a new workbook
+    return Workbook()
