@@ -1,11 +1,14 @@
 import numpy as np
+import pickle
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional, Tuple, List, Union, Dict, Any
-from app.models import Client
 from dateutil.relativedelta import relativedelta
 from calendar import monthrange
+import pickle 
+import logging
 
+logger = logging.getLogger(__name__)
 
 def calculate_effective_interest_rate_lender(loan_amount, administrative_fees, loan_term, monthly_payment):
     """
@@ -387,20 +390,59 @@ def get_amortization_schedule(
 
     # --- Determine start index for ECL calculation based on reporting date ---
     def get_start_index(reporting_date_str: str) -> int:
-        reporting_dt = datetime.strptime(reporting_date_str, "%d/%m/%Y")
+        logger.info(f"get_start_index: Input reporting_date_str: {reporting_date_str}, type: {type(reporting_date_str)}")
+        
+        try:
+            reporting_dt = datetime.strptime(reporting_date_str, "%d/%m/%Y")
+            logger.info(f"Successfully parsed reporting date: {reporting_dt}")
+        except Exception as e:
+            logger.error(f"Error parsing reporting date: {str(e)}")
+            try:
+                # Try alternative format
+                if isinstance(reporting_date_str, str) and "-" in reporting_date_str:
+                    reporting_dt = datetime.strptime(reporting_date_str, "%Y-%m-%d")
+                    logger.info(f"Successfully parsed reporting date using alternative format: {reporting_dt}")
+                elif hasattr(reporting_date_str, 'strftime'):
+                    # It's already a date/datetime object
+                    reporting_dt = reporting_date_str
+                    logger.info(f"reporting_date_str is already a date object: {reporting_dt}")
+                else:
+                    logger.error(f"Could not parse reporting date in any format: {reporting_date_str}")
+                    raise ValueError(f"Invalid reporting date format: {reporting_date_str}")
+            except Exception as e2:
+                logger.error(f"Error in fallback date parsing: {str(e2)}")
+                raise ValueError(f"Invalid reporting date format: {reporting_date_str}")
+        
         last_day = monthrange(reporting_dt.year, reporting_dt.month)[1]
+        logger.info(f"Last day of month: {last_day}, current day: {reporting_dt.day}")
 
         if reporting_dt.day != last_day:
             adjusted_date = (reporting_dt - relativedelta(months=1)).replace(day=1)
+            logger.info(f"Adjusted date (not last day): {adjusted_date}")
         else:
             adjusted_date = reporting_dt.replace(day=1)
+            logger.info(f"Adjusted date (last day): {adjusted_date}")
 
         reporting_month_str = adjusted_date.strftime("%m/%Y")
+        logger.info(f"Looking for reporting month: {reporting_month_str} in schedule")
+        
+        # Log the first few rows of the schedule to see what we're working with
+        logger.info(f"Schedule has {len(schedule)} rows")
+        for i, row in enumerate(schedule[:min(5, len(schedule))]):
+            logger.info(f"Schedule row {i}: {row}")
+        
         for idx, row in enumerate(schedule[1:], start=1):  # Skip header
-            if reporting_month_str in row[1]:
-                return idx
+            try:
+                logger.info(f"Checking row {idx}: date part is {row[1]}")
+                if reporting_month_str in row[1]:
+                    logger.info(f"Found matching month at index {idx}")
+                    return idx
+            except Exception as e:
+                logger.error(f"Error checking row {idx}: {str(e)}")
+                
+        logger.error(f"Reporting month {reporting_month_str} not found in schedule")
         raise ValueError("Reporting month not found in schedule.")
-
+    
     # --- Calculate ECLs ---
     def compute_pv(schedule, start_index, rate, months: int = None):
         total_pv = 0.0
