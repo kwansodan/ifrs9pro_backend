@@ -158,7 +158,7 @@ def generate_loan_progress(loan_amount, total_interest, total_collectible, loan_
     accumulated_arrears = total_due - total_paid if payment_consistency == "partial" else 0
     
     # NDIA (Non-Deduction In Arrears) - random for partial payments
-    ndia = random.choice([0, random.uniform(30, 90)]) if payment_consistency == "partial" else 0
+    ndia = random.choice([0, random.uniform(0, 500)]) if payment_consistency == "partial" else 0
     
     # Deduction status based on payment consistency
     if payment_consistency == "full":
@@ -184,7 +184,7 @@ def generate_loan_progress(loan_amount, total_interest, total_collectible, loan_
             'cancelled': "FALSE",
             'outstanding_loan_balance': f" {total_collectible:.2f} ",
             'accumulated_arrears': " -   ",
-            'ndia': " -   ",
+            'ndia': " 0.00 ",
             'prevailing_posted_repayment': 0,
             'prevailing_due_payment': 0,
             'current_missed_deduction': 0,
@@ -211,7 +211,7 @@ def generate_loan_progress(loan_amount, total_interest, total_collectible, loan_
         'cancelled': "FALSE",
         'outstanding_loan_balance': f" {outstanding_balance:.2f} ",
         'accumulated_arrears': f" {accumulated_arrears:.2f} " if accumulated_arrears > 0 else " -   ",
-        'ndia': f" {ndia:.2f} " if ndia > 0 else " -   ",
+        'ndia': f" {ndia:.2f} " if ndia > 0 else " 0.00 ",
         'prevailing_posted_repayment': monthly_installment,
         'prevailing_due_payment': monthly_installment,
         'current_missed_deduction': (
@@ -483,13 +483,13 @@ def generate_loan_data(employee_ids, client_data, count, extra_loan_ids=None):
             "Dalex Paddy": dalex_paddy,
             "Team Leader": team_leader,
             "Loan Type": loan_type,
-            "Loan Amount": str(loan_amount),
+            "Loan Amount": f"{loan_amount:.2f}",
             "Loan Term": str(loan_term),
-            "Administrative Fees": str(financial['admin_fees']),
-            "Total Interest": str(financial['total_interest']),
-            "Total Collectible": str(financial['total_collectible']),
-            "Net Loan Amount": str(financial['net_loan_amount']),
-            "Monthly Installment": str(financial['monthly_installment']),
+            "Administrative Fees": f"{financial['admin_fees']:.2f}",
+            "Total Interest": f"{financial['total_interest']:.2f}",
+            "Total Collectible": f"{financial['total_collectible']:.2f}",
+            "Net Loan Amount": f"{financial['net_loan_amount']:.2f}",
+            "Monthly Installment": f"{financial['monthly_installment']:.2f}",
             "Principal Due": str(progress['principal_due']),
             "Interest Due": str(progress['interest_due']),
             "Total Due": str(progress['total_due']),
@@ -573,13 +573,13 @@ def generate_loan_data(employee_ids, client_data, count, extra_loan_ids=None):
                 "Dalex Paddy": dalex_paddy,
                 "Team Leader": team_leader,
                 "Loan Type": loan_type,
-                "Loan Amount": str(loan_amount),
+                "Loan Amount": f"{loan_amount:.2f}",
                 "Loan Term": str(loan_term),
-                "Administrative Fees": str(financial['admin_fees']),
-                "Total Interest": str(financial['total_interest']),
-                "Total Collectible": str(financial['total_collectible']),
-                "Net Loan Amount": str(financial['net_loan_amount']),
-                "Monthly Installment": str(financial['monthly_installment']),
+                "Administrative Fees": f"{financial['admin_fees']:.2f}",
+                "Total Interest": f"{financial['total_interest']:.2f}",
+                "Total Collectible": f"{financial['total_collectible']:.2f}",
+                "Net Loan Amount": f"{financial['net_loan_amount']:.2f}",
+                "Monthly Installment": f"{financial['monthly_installment']:.2f}",
                 "Principal Due": str(progress['principal_due']),
                 "Interest Due": str(progress['interest_due']),
                 "Total Due": str(progress['total_due']),
@@ -610,7 +610,12 @@ def generate_loan_data(employee_ids, client_data, count, extra_loan_ids=None):
         # Create a copy with some variations
         duplicate_loan = original_loan.copy()
         duplicate_loan["Loan Issue Date"] = format_date(random_date(start_loan_date, end_loan_date))
-        duplicate_loan["Loan Amount"] = str(int(original_loan["Loan Amount"]) + random.randint(-1000, 1000))
+        
+        # Parse the original loan amount, add a random value, and format it back
+        original_amount = float(original_loan["Loan Amount"].replace(',', ''))
+        new_amount = original_amount + random.randint(-1000, 1000)
+        duplicate_loan["Loan Amount"] = f"{new_amount:.2f}"
+        
         loans.append(duplicate_loan)
     
     return loans
@@ -682,7 +687,7 @@ def write_to_excel(data, file_path, sheet_name, batch_size=10000):
     print(f"Successfully wrote {total_records} records to {file_path}")
 
 # Main function to generate the data
-def generate_data(client_count=70000, loan_count=70000, batch_size=10000, output_dir=".", output_format="both"):
+def generate_data(client_count=70000, loan_count=70000, batch_size=10000, output_dir=".", output_format="xlsx"):
     """
     Generate dummy loan and client data with intentional issues.
     
@@ -766,8 +771,8 @@ if __name__ == "__main__":
                         help='Batch size for writing data to manage memory (default: 10000)')
     parser.add_argument('--output-dir', type=str, default='.', 
                         help='Directory to save output files (default: current directory)')
-    parser.add_argument('--format', type=str, choices=['csv', 'xlsx', 'both'], default='both',
-                        help='Output format: csv, xlsx, or both (default: both)')
+    parser.add_argument('--format', type=str, choices=['csv', 'xlsx', 'both'], default='xlsx',
+                        help='Output format: csv, xlsx, or both (default: xlsx)')
     
     args = parser.parse_args()
     
