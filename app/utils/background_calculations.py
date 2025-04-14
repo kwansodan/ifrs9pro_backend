@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any
 from datetime import date, datetime
 from decimal import Decimal
 from sqlalchemy.orm import Session
-
+import pickle
 from app.database import SessionLocal
 from app.models import (
     Portfolio, Loan, Client, Security, StagingResult, CalculationResult
