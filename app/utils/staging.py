@@ -7,6 +7,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from typing import Dict, Any, List, Tuple
 from sqlalchemy import func
+from decimal import Decimal
 
 from app.models import StagingResult, Loan
 from app.schemas import ECLStagingConfig, LocalImpairmentConfig
@@ -289,6 +290,20 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, config: LocalImpai
         # Round balances to 2 decimal places
         category_balances = {k: round(v, 2) for k, v in category_balances.items()}
         
+        # Calculate provision amounts based on the provision rates
+        current_rate = Decimal("0.01")  # 1% for Current
+        olem_rate = Decimal("0.05")     # 5% for OLEM
+        substandard_rate = Decimal("0.25")  # 25% for Substandard
+        doubtful_rate = Decimal("0.5")  # 50% for Doubtful
+        loss_rate = Decimal("1.0")     # 100% for Loss
+        
+        # Convert category balances to Decimal before multiplication
+        current_provision = Decimal(str(category_balances["Current"])) * current_rate
+        olem_provision = Decimal(str(category_balances["OLEM"])) * olem_rate
+        substandard_provision = Decimal(str(category_balances["Substandard"])) * substandard_rate
+        doubtful_provision = Decimal(str(category_balances["Doubtful"])) * doubtful_rate
+        loss_provision = Decimal(str(category_balances["Loss"])) * loss_rate
+        
         # Log final category counts and balances
         logger.info(f"Local impairment staging results for portfolio {portfolio_id}:")
         logger.info(f"Current: {category_counts['Current']} loans, balance: {category_balances['Current']}")
@@ -310,23 +325,38 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, config: LocalImpai
                 "total_loans": total_loans,
                 "Current": {
                     "num_loans": category_counts["Current"],
-                    "outstanding_loan_balance": category_balances["Current"]
+                    "outstanding_loan_balance": category_balances["Current"],
+                    "total_loan_value": category_balances["Current"],
+                    "provision_amount": float(current_provision),
+                    "provision_rate": float(current_rate)
                 },
                 "OLEM": {
                     "num_loans": category_counts["OLEM"],
-                    "outstanding_loan_balance": category_balances["OLEM"]
+                    "outstanding_loan_balance": category_balances["OLEM"],
+                    "total_loan_value": category_balances["OLEM"],
+                    "provision_amount": float(olem_provision),
+                    "provision_rate": float(olem_rate)
                 },
                 "Substandard": {
                     "num_loans": category_counts["Substandard"],
-                    "outstanding_loan_balance": category_balances["Substandard"]
+                    "outstanding_loan_balance": category_balances["Substandard"],
+                    "total_loan_value": category_balances["Substandard"],
+                    "provision_amount": float(substandard_provision),
+                    "provision_rate": float(substandard_rate)
                 },
                 "Doubtful": {
                     "num_loans": category_counts["Doubtful"],
-                    "outstanding_loan_balance": category_balances["Doubtful"]
+                    "outstanding_loan_balance": category_balances["Doubtful"],
+                    "total_loan_value": category_balances["Doubtful"],
+                    "provision_amount": float(doubtful_provision),
+                    "provision_rate": float(doubtful_rate)
                 },
                 "Loss": {
                     "num_loans": category_counts["Loss"],
-                    "outstanding_loan_balance": category_balances["Loss"]
+                    "outstanding_loan_balance": category_balances["Loss"],
+                    "total_loan_value": category_balances["Loss"],
+                    "provision_amount": float(loss_provision),
+                    "provision_rate": float(loss_rate)
                 },
                 "config": {
                     "current": {"days_range": current_range},
@@ -347,23 +377,28 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, config: LocalImpai
             "total_loans": total_loans,
             "Current": {
                 "num_loans": category_counts["Current"],
-                "outstanding_loan_balance": category_balances["Current"]
+                "outstanding_loan_balance": category_balances["Current"],
+                "provision_amount": float(current_provision)
             },
             "OLEM": {
                 "num_loans": category_counts["OLEM"],
-                "outstanding_loan_balance": category_balances["OLEM"]
+                "outstanding_loan_balance": category_balances["OLEM"],
+                "provision_amount": float(olem_provision)
             },
             "Substandard": {
                 "num_loans": category_counts["Substandard"],
-                "outstanding_loan_balance": category_balances["Substandard"]
+                "outstanding_loan_balance": category_balances["Substandard"],
+                "provision_amount": float(substandard_provision)
             },
             "Doubtful": {
                 "num_loans": category_counts["Doubtful"],
-                "outstanding_loan_balance": category_balances["Doubtful"]
+                "outstanding_loan_balance": category_balances["Doubtful"],
+                "provision_amount": float(doubtful_provision)
             },
             "Loss": {
                 "num_loans": category_counts["Loss"],
-                "outstanding_loan_balance": category_balances["Loss"]
+                "outstanding_loan_balance": category_balances["Loss"],
+                "provision_amount": float(loss_provision)
             }
         }
     
@@ -637,6 +672,20 @@ def stage_loans_local_impairment_orm_sync(portfolio_id: int, config: LocalImpair
         logger.info(f"Doubtful: {category_counts['Doubtful']} loans, balance: {category_balances['Doubtful']}")
         logger.info(f"Loss: {category_counts['Loss']} loans, balance: {category_balances['Loss']}")
         
+        # Calculate provision amounts based on the provision rates
+        current_rate = Decimal("0.01")  # 1% for Current
+        olem_rate = Decimal("0.05")     # 5% for OLEM
+        substandard_rate = Decimal("0.25")  # 25% for Substandard
+        doubtful_rate = Decimal("0.5")  # 50% for Doubtful
+        loss_rate = Decimal("1.0")     # 100% for Loss
+        
+        # Convert category balances to Decimal before multiplication
+        current_provision = Decimal(str(category_balances["Current"])) * current_rate
+        olem_provision = Decimal(str(category_balances["OLEM"])) * olem_rate
+        substandard_provision = Decimal(str(category_balances["Substandard"])) * substandard_rate
+        doubtful_provision = Decimal(str(category_balances["Doubtful"])) * doubtful_rate
+        loss_provision = Decimal(str(category_balances["Loss"])) * loss_rate
+        
         # Create a new staging result
         staging_result = StagingResult(
             portfolio_id=portfolio_id,
@@ -651,23 +700,38 @@ def stage_loans_local_impairment_orm_sync(portfolio_id: int, config: LocalImpair
             result_summary={
                 "Current": {
                     "num_loans": category_counts["Current"],
-                    "outstanding_loan_balance": category_balances["Current"]
+                    "outstanding_loan_balance": category_balances["Current"],
+                    "total_loan_value": category_balances["Current"],
+                    "provision_amount": float(current_provision),
+                    "provision_rate": float(current_rate)
                 },
                 "OLEM": {
                     "num_loans": category_counts["OLEM"],
-                    "outstanding_loan_balance": category_balances["OLEM"]
+                    "outstanding_loan_balance": category_balances["OLEM"],
+                    "total_loan_value": category_balances["OLEM"],
+                    "provision_amount": float(olem_provision),
+                    "provision_rate": float(olem_rate)
                 },
                 "Substandard": {
                     "num_loans": category_counts["Substandard"],
-                    "outstanding_loan_balance": category_balances["Substandard"]
+                    "outstanding_loan_balance": category_balances["Substandard"],
+                    "total_loan_value": category_balances["Substandard"],
+                    "provision_amount": float(substandard_provision),
+                    "provision_rate": float(substandard_rate)
                 },
                 "Doubtful": {
                     "num_loans": category_counts["Doubtful"],
-                    "outstanding_loan_balance": category_balances["Doubtful"]
+                    "outstanding_loan_balance": category_balances["Doubtful"],
+                    "total_loan_value": category_balances["Doubtful"],
+                    "provision_amount": float(doubtful_provision),
+                    "provision_rate": float(doubtful_rate)
                 },
                 "Loss": {
                     "num_loans": category_counts["Loss"],
-                    "outstanding_loan_balance": category_balances["Loss"]
+                    "outstanding_loan_balance": category_balances["Loss"],
+                    "total_loan_value": category_balances["Loss"],
+                    "provision_amount": float(loss_provision),
+                    "provision_rate": float(loss_rate)
                 }
             }
         )
