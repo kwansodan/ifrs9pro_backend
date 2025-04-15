@@ -161,7 +161,7 @@ def calculate_exposure_at_default_percentage(loan, reporting_date):
     EAD% = (Bt + Accumulated Arrears) / P * 100
     """
     if not loan.loan_amount or loan.loan_amount <= 0:
-        return 100  # If no original amount, assume 100% exposure
+        return 0  # If no original amount, assume 0% exposure
 
     original_amount = loan.loan_amount
 
@@ -202,10 +202,9 @@ def calculate_exposure_at_default_percentage(loan, reporting_date):
     if hasattr(loan, "accumulated_arrears") and loan.accumulated_arrears:
         theoretical_balance += loan.accumulated_arrears
 
-    ead_percentage = (theoretical_balance / original_amount) * 100
+    ead = theoretical_balance
 
-    # Ensure EAD% is between 0 and 100
-    return max(0, min(100, ead_percentage))
+    return ead
 
 
 def calculate_marginal_ecl(loan, ead_percentage, pd, lgd):

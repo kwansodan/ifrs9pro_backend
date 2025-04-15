@@ -1021,6 +1021,7 @@ def generate_ecl_detailed_report(
         else:
             print(f"No staging data found in result_summary with keys: {latest_staging.result_summary.keys()}")
         
+        # Process staging data in batch
         for stage_info in staging_data:
             loan_id = stage_info.get("loan_id")
             stage = stage_info.get("stage")
@@ -1030,69 +1031,90 @@ def generate_ecl_detailed_report(
                 
             loan_stage_map[loan_id] = stage
     
-    # Get securities for LGD calculation
+    # Get securities for LGD calculation - optimize with a join
     client_securities = {}
     employee_ids = [loan.employee_id for loan in loans if loan.employee_id]
+    
     if employee_ids:
-        securities = (
-            db.query(Security)
+        # Fetch all securities and clients in a single query with a join
+        securities_with_clients = (
+            db.query(Security, Client)
             .join(Client, Security.client_id == Client.id)
             .filter(Client.employee_id.in_(employee_ids))
             .all()
         )
         
         # Group securities by client employee_id
-        for security in securities:
-            client = db.query(Client).filter(Client.id == security.client_id).first()
+        for security, client in securities_with_clients:
             if client and client.employee_id:
                 if client.employee_id not in client_securities:
                     client_securities[client.employee_id] = []
                 client_securities[client.employee_id].append(security)
     
+    # Pre-calculate PD values for all loans in batch
+    loan_pd_map = {}
     for loan in loans:
-        # Determine stage for this loan
-        stage = loan_stage_map.get(loan.id, "Stage 1")  # Default to Stage 1 if not found
+        loan_pd_map[loan.id] = calculate_probability_of_default(loan, db)
+    
+    # Process loans in batches
+    batch_size = 100
+    loan_batches = [loans[i:i + batch_size] for i in range(0, len(loans), batch_size)]
+    
+    for batch in loan_batches:
+        batch_loan_data = []
         
-        # Calculate ECL components for the loan
-        client_securities_list = client_securities.get(loan.employee_id, [])
-        lgd = calculate_loss_given_default(loan, client_securities_list)
-        pd = calculate_probability_of_default(loan, db)
-        eir = calculate_effective_interest_rate_lender(
-            loan_amount=float(loan.loan_amount) if loan.loan_amount else 0,
-            administrative_fees=float(loan.administrative_fees) if loan.administrative_fees else 0,
-            loan_term=int(loan.loan_term) if loan.loan_term else 0,
-            monthly_payment=float(loan.monthly_installment) if loan.monthly_installment else 0
-        )
-        ead_percentage = calculate_exposure_at_default_percentage(loan, report_date)
+        for loan in batch:
+            # Determine stage for this loan
+            stage = loan_stage_map.get(loan.id, "Stage 1")  # Default to Stage 1 if not found
+            
+            # Get pre-calculated values or calculate as needed
+            client_securities_list = client_securities.get(loan.employee_id, [])
+            lgd = calculate_loss_given_default(loan, client_securities_list)
+            pd = loan_pd_map[loan.id]  # Use pre-calculated PD
+            
+            # Calculate EIR only once per loan
+            eir = calculate_effective_interest_rate_lender(
+                loan_amount=float(loan.loan_amount) if loan.loan_amount else 0,
+                administrative_fees=float(loan.administrative_fees) if loan.administrative_fees else 0,
+                loan_term=int(loan.loan_term) if loan.loan_term else 0,
+                monthly_payment=float(loan.monthly_installment) if loan.monthly_installment else 0
+            )
+            
+            # Calculate EAD
+            ead_value = calculate_exposure_at_default_percentage(loan, report_date)
+            
+            # Convert to float to ensure consistent types
+            outstanding_balance = float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance else 0
+            
+            # Calculate ECL
+            ecl = float(ead_value) * float(pd) * float(lgd) / 100.0  # Adjust for percentage values
+            
+            # Add to totals
+            total_ead += float(ead_value)
+            total_lgd += float(lgd) * outstanding_balance
+            total_ecl += ecl
+            
+            # Create loan entry
+            loan_entry = {
+                "loan_id": loan.id,
+                "employee_id": loan.employee_id,
+                "employee_name": client_map.get(loan.employee_id, "Unknown"),
+                "loan_value": loan.loan_amount,
+                "outstanding_loan_balance": loan.outstanding_loan_balance,
+                "accumulated_arrears": loan.accumulated_arrears or Decimal(0),
+                "ndia": loan.ndia or Decimal(0),
+                "stage": stage,
+                "ead": ead_value,
+                "lgd": lgd,
+                "eir": eir,
+                "pd": pd,
+                "ecl": ecl
+            }
+            
+            batch_loan_data.append(loan_entry)
         
-        # Convert to float to ensure consistent types
-        outstanding_balance = float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance else 0
-        ead = float(outstanding_balance) * float(ead_percentage)
-        ecl = float(ead) * float(pd) * float(lgd)
-        
-        # Add to totals
-        total_ead += ead
-        total_lgd += float(lgd) * outstanding_balance
-        total_ecl += ecl
-        
-        # Create loan entry
-        loan_entry = {
-            "loan_id": loan.id,
-            "employee_id": loan.employee_id,
-            "employee_name": client_map.get(loan.employee_id, "Unknown"),
-            "loan_value": loan.loan_amount,
-            "outstanding_loan_balance": loan.outstanding_loan_balance,
-            "accumulated_arrears": loan.accumulated_arrears or Decimal(0),
-            "ndia": loan.ndia or Decimal(0),
-            "stage": stage,
-            "ead": ead,
-            "lgd": lgd,
-            "eir": eir,
-            "pd": pd,
-            "ecl": ecl
-        }
-        
-        loan_data.append(loan_entry)
+        # Add batch results to overall results
+        loan_data.extend(batch_loan_data)
     
     # Create the report data structure
     report_data = {
@@ -1272,72 +1294,92 @@ def generate_local_impairment_details_report(
     # Get provision rates from calculation
     calculation_summary = latest_calculation.result_summary
     
-    # Extract provision rates for each category
+    # Extract provision rates for each category - using the correct default rates from memory
     provision_rates = {
         "Current": calculation_summary.get("Current", {}).get("provision_rate", 0.01),
-        "OLEM": calculation_summary.get("OLEM", {}).get("provision_rate", 0.03),
-        "Substandard": calculation_summary.get("Substandard", {}).get("provision_rate", 0.2),
-        "Doubtful": calculation_summary.get("Doubtful", {}).get("provision_rate", 0.5),
+        "OLEM": calculation_summary.get("OLEM", {}).get("provision_rate", 0.05),  # Updated from 0.03 to 0.05
+        "Substandard": calculation_summary.get("Substandard", {}).get("provision_rate", 0.25),  # Updated from 0.2 to 0.25
+        "Doubtful": calculation_summary.get("Doubtful", {}).get("provision_rate", 0.50),
         "Loss": calculation_summary.get("Loss", {}).get("provision_rate", 1.0)
     }
     
-    # Get the distribution of loans by category from calculation summary
-    categories = ["Current", "OLEM", "Substandard", "Doubtful", "Loss"]
+    # Get clients for these loans
+    employee_ids = [loan.employee_id for loan in loans if loan.employee_id]
     
-    # Sort loans by NDIA to assign them to categories in a reasonable way
-    sorted_loans = sorted(loans, key=lambda x: x.ndia if x.ndia is not None else 0)
+    # Fetch all clients in a single query
+    clients = db.query(Client).filter(
+        Client.portfolio_id == portfolio_id,
+        Client.employee_id.in_(employee_ids)
+    ).all()
     
-    # Track how many loans we've assigned to each category
-    assigned_counts = {cat: 0 for cat in categories}
-    target_counts = {cat: calculation_summary.get(cat, {}).get("num_loans", 0) for cat in categories}
+    # Map employee IDs to client names
+    client_map = {client.employee_id: f"{client.last_name or ''} {client.other_names or ''}".strip() for client in clients}
     
-    # Prepare loan data for the report
+    # Create a map of loan_id to impairment category
+    loan_category_map = {}
+    for stage_info in staging_data:
+        loan_id = stage_info.get("loan_id")
+        category = stage_info.get("impairment_category")
+        
+        if not loan_id or not category:
+            continue
+            
+        loan_category_map[loan_id] = category
+    
+    # Process loans in batches
+    batch_size = 100
+    loan_batches = [loans[i:i + batch_size] for i in range(0, len(loans), batch_size)]
+    
     loan_data = []
     
-    # Assign loans to categories
-    for loan in sorted_loans:
-        # Find the next category that needs more loans
-        assigned_category = None
-        for cat in categories:
-            if assigned_counts[cat] < target_counts[cat]:
-                assigned_category = cat
-                assigned_counts[cat] += 1
-                break
+    # Track totals
+    totals = {
+        "Current": {"count": 0, "balance": 0, "provision": 0},
+        "OLEM": {"count": 0, "balance": 0, "provision": 0},
+        "Substandard": {"count": 0, "balance": 0, "provision": 0},
+        "Doubtful": {"count": 0, "balance": 0, "provision": 0},
+        "Loss": {"count": 0, "balance": 0, "provision": 0}
+    }
+    
+    for batch in loan_batches:
+        batch_loan_data = []
         
-        if not assigned_category:
-            # If all categories are filled, put in Loss by default
-            assigned_category = "Loss"
+        for loan in batch:
+            # Get the impairment category for this loan
+            category = loan_category_map.get(loan.id, "Current")  # Default to Current if not found
+            
+            # Get loan details
+            outstanding_balance = float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance else 0
+            provision_rate = provision_rates.get(category, 0.01)  # Default to 1% if category not found
+            provision_amount = outstanding_balance * provision_rate
+            
+            # Update totals
+            if category in totals:
+                totals[category]["count"] += 1
+                totals[category]["balance"] += outstanding_balance
+                totals[category]["provision"] += provision_amount
+            
+            # Create loan entry
+            loan_entry = {
+                "loan_id": loan.id,
+                "employee_id": loan.employee_id,
+                "employee_name": client_map.get(loan.employee_id, "Unknown"),
+                "loan_value": loan.loan_amount,
+                "outstanding_balance": loan.outstanding_loan_balance,
+                "accumulated_arrears": loan.accumulated_arrears or Decimal(0),
+                "ndia": loan.ndia or Decimal(0),
+                "impairment_category": category,
+                "provision_rate": provision_rate,
+                "provision_amount": provision_amount
+            }
+            
+            batch_loan_data.append(loan_entry)
         
-        # Get client information
-        client = db.query(Client).filter(
-            Client.portfolio_id == portfolio_id,
-            Client.employee_id == loan.employee_id
-        ).first()
-        
-        # Get client name properly
-        client_name = "Unknown"
-        if client:
-            client_name = f"{client.last_name or ''} {client.other_names or ''}".strip()
-        
-        # Calculate provision
-        provision_rate = provision_rates.get(assigned_category, 0)
-        provision_amount = float(loan.outstanding_loan_balance or 0) * provision_rate
-        
-        loan_data.append({
-            "loan_id": loan.id,
-            "employee_id": loan.employee_id,
-            "employee_name": client_name,
-            "loan_value": float(loan.loan_amount or 0),
-            "outstanding_loan_balance": float(loan.outstanding_loan_balance or 0),
-            "accumulated_arrears": float(loan.accumulated_arrears or 0),
-            "ndia": float(loan.ndia or 0),
-            "stage": assigned_category,
-            "provision_rate": provision_rate,
-            "provision": provision_amount
-        })
+        # Add batch results to overall results
+        loan_data.extend(batch_loan_data)
     
     # Calculate total provision
-    total_provision = sum(loan["provision"] for loan in loan_data)
+    total_provision = sum(loan["provision_amount"] for loan in loan_data)
     
     return {
         "portfolio_name": portfolio.name,
@@ -1452,6 +1494,11 @@ def generate_journal_report(
     """
     portfolios_data = []
     
+    # Tracking totals for summary
+    total_ecl = 0
+    total_local_impairment = 0
+    total_risk_reserve = 0
+    
     # Get all portfolios
     all_portfolios = db.query(Portfolio).all()
     
@@ -1493,21 +1540,26 @@ def generate_journal_report(
             
             # Extract total ECL from ECL calculation
             ecl_summary = ecl_calculation.result_summary
-            total_ecl = 0
+            portfolio_ecl = 0
             for stage_key in ["Stage 1", "Stage 2", "Stage 3"]:
                 stage_data = ecl_summary.get(stage_key, {})
-                total_ecl += stage_data.get("provision_amount", 0)
+                portfolio_ecl += stage_data.get("provision_amount", 0)
             
             # Extract total local impairment from local impairment calculation
             local_summary = local_calculation.result_summary
-            total_local_impairment = 0
+            portfolio_local_impairment = 0
             for category in ["Current", "OLEM", "Substandard", "Doubtful", "Loss"]:
                 category_data = local_summary.get(category, {})
-                total_local_impairment += category_data.get("provision_amount", 0)
+                portfolio_local_impairment += category_data.get("provision_amount", 0)
             
             # Calculate risk reserve (difference between local impairment and ECL)
             # If local impairment is greater than ECL, we need a risk reserve
-            risk_reserve = max(0, total_local_impairment - total_ecl)
+            portfolio_risk_reserve = max(0, portfolio_local_impairment - portfolio_ecl)
+            
+            # Update totals for summary
+            total_ecl += portfolio_ecl
+            total_local_impairment += portfolio_local_impairment
+            total_risk_reserve += portfolio_risk_reserve
             
             # Add portfolio data to the list
             portfolios_data.append({
@@ -1516,18 +1568,42 @@ def generate_journal_report(
                 "ecl_impairment_account": portfolio.ecl_impairment_account,
                 "loan_assets": portfolio.loan_assets,
                 "credit_risk_reserve": portfolio.credit_risk_reserve,
-                "total_ecl": total_ecl,
-                "total_local_impairment": total_local_impairment,
-                "risk_reserve": risk_reserve
+                "total_ecl": portfolio_ecl,
+                "total_local_impairment": portfolio_local_impairment,
+                "risk_reserve": portfolio_risk_reserve
             })
         except Exception as e:
             # Skip portfolios with errors
             print(f"Error processing portfolio {portfolio_id}: {str(e)}")
             continue
     
+    # Add summary entry if we have at least one portfolio
+    if portfolios_data:
+        # Get the most common account numbers to use in the summary
+        ecl_impairment_accounts = [p["ecl_impairment_account"] for p in portfolios_data]
+        loan_assets_accounts = [p["loan_assets"] for p in portfolios_data]
+        credit_risk_reserve_accounts = [p["credit_risk_reserve"] for p in portfolios_data]
+        
+        # Use the most common account numbers for the summary
+        most_common_ecl_account = max(set(ecl_impairment_accounts), key=ecl_impairment_accounts.count)
+        most_common_loan_assets = max(set(loan_assets_accounts), key=loan_assets_accounts.count)
+        most_common_credit_risk = max(set(credit_risk_reserve_accounts), key=credit_risk_reserve_accounts.count)
+        
+        # Add summary entry
+        portfolios_data.append({
+            "portfolio_id": None,  # No specific portfolio ID for summary
+            "portfolio_name": "Summary",  # Use "Summary" instead of a specific portfolio name
+            "ecl_impairment_account": most_common_ecl_account,
+            "loan_assets": most_common_loan_assets,
+            "credit_risk_reserve": most_common_credit_risk,
+            "total_ecl": total_ecl,
+            "total_local_impairment": total_local_impairment,
+            "risk_reserve": total_risk_reserve
+        })
+    
     # Create the report data structure
     return {
-        "description": f"Journal Report for All Portfolios ({len(portfolios_data)} portfolios)",
+        "description": f"Journal Report for All Portfolios ({len(portfolios_data) - (1 if portfolios_data else 0)} portfolios)",
         "report_date": report_date,
         "report_run_date": datetime.now().date(),
         "portfolios": portfolios_data

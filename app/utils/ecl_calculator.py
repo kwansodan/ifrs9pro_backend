@@ -150,7 +150,7 @@ def calculate_loss_given_default(
 
 def calculate_exposure_at_default_percentage(loan, reporting_date):
     """
-    Calculate Exposure at Default as a percentage
+    Calculate Exposure at Default as a value (theoretical balance)
 
     Formula:
     Bt = P * ((1+r)^n - (1+r)^t)/((1+r)^n - 1)
@@ -162,10 +162,10 @@ def calculate_exposure_at_default_percentage(loan, reporting_date):
     n = Total number of months in the loan term
     t = number of months from loan start to specified date
 
-    EAD% = (Bt + Accumulated Arrears) / P * 100
+    EAD = Bt + Accumulated Arrears
     """
     if not loan.loan_amount or loan.loan_amount <= 0:
-        return 100  # If no original amount, assume 100% exposure
+        return Decimal(0)  # If no original amount, assume 0 exposure
 
     original_amount = loan.loan_amount
 
@@ -206,13 +206,12 @@ def calculate_exposure_at_default_percentage(loan, reporting_date):
     if hasattr(loan, "accumulated_arrears") and loan.accumulated_arrears:
         theoretical_balance += loan.accumulated_arrears
 
-    ead_percentage = (theoretical_balance / original_amount) * 100
+    ead = theoretical_balance
 
-    # Ensure EAD% is between 0 and 100
-    return max(0, min(100, ead_percentage))
+    return ead
 
 
-def calculate_marginal_ecl(loan, ead_percentage, pd, lgd):
+def calculate_marginal_ecl(loan, ead_value, pd, lgd):
     """
     Calculate the marginal Expected Credit Loss (ECL) for a loan.
 
@@ -220,21 +219,19 @@ def calculate_marginal_ecl(loan, ead_percentage, pd, lgd):
 
     Args:
         loan: The loan object
+        ead_value: Exposure at Default as a value (theoretical balance)
         pd: Probability of Default as a percentage (0-100)
         lgd: Loss Given Default as a percentage (0-100)
 
     Returns:
         Decimal: The calculated marginal ECL amount
     """
-
-    ead_value = Decimal(loan.outstanding_loan_balance) * Decimal(ead_percentage / 100)
-
     # Convert percentage values to decimals
     pd_decimal = Decimal(str(pd / 100.0))
     lgd_decimal = Decimal(str(lgd / 100.0))
 
     # Calculate marginal ECL
-    mecl = ead_value * pd_decimal * lgd_decimal
+    mecl = Decimal(str(ead_value)) * pd_decimal * lgd_decimal
 
     return mecl
 
