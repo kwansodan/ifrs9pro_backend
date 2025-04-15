@@ -194,7 +194,7 @@ async def process_ecl_calculation(
         # Summary metrics
         total_lgd = 0
         total_pd = 0
-        total_ead_percentage = 0
+        total_ead_value = 0
         total_loans = 0
 
         get_task_manager().update_progress(
@@ -266,7 +266,7 @@ async def process_ecl_calculation(
             # Calculate ECL components for the loan
             lgd = calculate_loss_given_default(loan, client_securities_list)
             pd = calculate_probability_of_default(loan, db)
-            ead_percentage = calculate_exposure_at_default_percentage(loan, reporting_date)
+            ead_value = calculate_exposure_at_default_percentage(loan, reporting_date)
             
             # Convert stage string to numeric value for get_ecl_by_stage function
             stage_num = 1
@@ -327,9 +327,9 @@ async def process_ecl_calculation(
             except Exception as e:
                 logger.warning(f"Error calculating ECL using amortization schedule for loan {loan_id}: {str(e)}")
                 # Fall back to the original calculation method if the new method fails
-                ecl = calculate_marginal_ecl(loan, ead_percentage, pd, lgd)
+                ecl = calculate_marginal_ecl(loan, ead_value, pd, lgd)
             
-            logger.info(f"ECL calculation for loan {loan_id}: LGD={lgd}, PD={pd}, EAD={ead_percentage}, ECL={ecl}")
+            logger.info(f"ECL calculation for loan {loan_id}: LGD={lgd}, PD={pd}, EAD={ead_value}, ECL={ecl}")
             
             # Update stage totals based on the assigned stage
             if stage == "Stage 1":
@@ -354,7 +354,7 @@ async def process_ecl_calculation(
             # Update summary statistics
             total_lgd += lgd
             total_pd += pd
-            total_ead_percentage += ead_percentage
+            total_ead_value += ead_value
             total_loans += 1
 
         get_task_manager().update_progress(
@@ -367,7 +367,7 @@ async def process_ecl_calculation(
         # Calculate averages for summary metrics
         avg_lgd = total_lgd / total_loans if total_loans > 0 else 0
         avg_pd = total_pd / total_loans if total_loans > 0 else 0
-        avg_ead_percentage = total_ead_percentage / total_loans if total_loans > 0 else 0
+        avg_ead_value = total_ead_value / total_loans if total_loans > 0 else 0
 
         # Calculate total loan value and provision amount
         total_loan_value = stage_1_total + stage_2_total + stage_3_total

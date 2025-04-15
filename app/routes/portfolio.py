@@ -874,14 +874,13 @@ def ingest_portfolio_data(
     """
     Ingest Excel files containing portfolio data and automatically perform both types of staging.
     
-    Accepts up to three Excel files:
-    - loan_details: Primary loan information
-    - client_data: Customer information
-    - loan_guarantee_data: Information about loan guarantees
-    - loan_collateral_data: Information about loan collateral
+    Accepts up to four Excel files:
+    - loan_details: Primary loan information (required)
+    - client_data: Customer information (required)
+    - loan_guarantee_data: Information about loan guarantees (optional)
+    - loan_collateral_data: Information about loan collateral (optional)
     
-    The function starts a background task for processing and returns a task ID
-    that can be used to track progress via WebSocket.
+    The function processes the files synchronously and returns the processing result.
     """
     # Check if portfolio exists and belongs to user
     portfolio = db.query(Portfolio).filter(
@@ -894,18 +893,24 @@ def ingest_portfolio_data(
             detail=f"Portfolio with ID {portfolio_id} not found or does not belong to you",
         )
     
-    # Check if at least one file is provided
-    if not any([loan_details, client_data, loan_guarantee_data, loan_collateral_data]):
+    # Check if both required files are provided
+    if not loan_details or not client_data:
+        missing_files = []
+        if not loan_details:
+            missing_files.append("loan_details")
+        if not client_data:
+            missing_files.append("client_data")
+            
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="At least one file must be provided",
+            detail=f"Missing required files: {', '.join(missing_files)}. Both loan_details and client_data files are required for portfolio ingestion.",
         )
     
     # Process files synchronously
     result = process_portfolio_ingestion_sync(
         portfolio_id=portfolio_id,
-        loan_details_content=loan_details.file.read() if loan_details else None,
-        client_data_content=client_data.file.read() if client_data else None,
+        loan_details_content=loan_details.file.read(),
+        client_data_content=client_data.file.read(),
         loan_guarantee_data_content=loan_guarantee_data.file.read() if loan_guarantee_data else None,
         loan_collateral_data_content=loan_collateral_data.file.read() if loan_collateral_data else None,
         db=db
@@ -1470,7 +1475,7 @@ async def stage_loans_ecl_optimized(portfolio_id: int, config: ECLStagingConfig,
         # Execute a direct SQL query to count and sum by stage
         result = db.execute(text("""
         WITH staged_loans AS (
-            SELECT
+            SELECT 
                 CASE
                     WHEN ndia IS NULL THEN 'Stage 3'
                     WHEN ndia >= :stage_1_min AND ndia <= :stage_1_max THEN 'Stage 1'
