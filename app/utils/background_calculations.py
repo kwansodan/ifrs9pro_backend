@@ -371,24 +371,26 @@ async def process_ecl_calculation(
 
         # Calculate total loan value and provision amount
         total_loan_value = stage_1_total + stage_2_total + stage_3_total
+        
+        # Use different provision rates for different stages
+        stage_1_rate = Decimal("0.01")  # 1% for Stage 1
+        stage_2_rate = Decimal("0.05")  # 5% for Stage 2
+        stage_3_rate = Decimal("0.15")  # 15% for Stage 3
+        
+        # Recalculate provisions using the appropriate rates
+        # Convert to Decimal before multiplication to avoid type mismatch
+        stage_1_provision = Decimal(str(stage_1_total)) * stage_1_rate
+        stage_2_provision = Decimal(str(stage_2_total)) * stage_2_rate
+        stage_3_provision = Decimal(str(stage_3_total)) * stage_3_rate
+        
+        # Recalculate total provision
         total_provision = stage_1_provision + stage_2_provision + stage_3_provision
 
         # Calculate provision percentage
         provision_percentage = (
-            (Decimal(total_provision) / Decimal(total_loan_value) * 100)
+            (Decimal(str(total_provision)) / Decimal(str(total_loan_value)) * 100)
             if total_loan_value > 0
             else 0
-        )
-
-        # Calculate effective provision rates
-        stage_1_rate = (
-            Decimal(stage_1_provision) / Decimal(stage_1_total) if stage_1_total > 0 else 0
-        )
-        stage_2_rate = (
-            Decimal(stage_2_provision) / Decimal(stage_2_total) if stage_2_total > 0 else 0
-        )
-        stage_3_rate = (
-            Decimal(stage_3_provision) / Decimal(stage_3_total) if stage_3_total > 0 else 0
         )
 
         get_task_manager().update_progress(
@@ -730,7 +732,7 @@ async def process_local_impairment_calculation(
 
         # Calculate provision percentage
         provision_percentage = (
-            (total_provision / Decimal(total_loan_value) * 100)
+            (total_provision / Decimal(str(total_loan_value)) * 100)
             if total_loan_value > 0
             else 0
         )
@@ -1043,9 +1045,17 @@ def process_ecl_calculation_sync(
     stage_3_total, stage_3_provision = calculate_stage_totals(stage_3_loans)
 
     # Calculate effective provision rates
-    stage_1_rate = (stage_1_provision / stage_1_total) if stage_1_total > 0 else 0
-    stage_2_rate = (stage_2_provision / stage_2_total) if stage_2_total > 0 else 0
-    stage_3_rate = (stage_3_provision / stage_3_total) if stage_3_total > 0 else 0
+    stage_1_rate = Decimal("0.01")  # Fixed 1% for Stage 1
+    stage_2_rate = Decimal("0.05")  # Fixed 5% for Stage 2
+    stage_3_rate = Decimal("0.15")  # Fixed 15% for Stage 3
+        
+    # Recalculate provisions using fixed rates
+    stage_1_provision = Decimal(str(stage_1_total)) * stage_1_rate
+    stage_2_provision = Decimal(str(stage_2_total)) * stage_2_rate
+    stage_3_provision = Decimal(str(stage_3_total)) * stage_3_rate
+        
+    # Recalculate total provision
+    total_provision = stage_1_provision + stage_2_provision + stage_3_provision
 
     # Create a new CalculationResult record
     calculation_result = CalculationResult(
@@ -1073,8 +1083,8 @@ def process_ecl_calculation_sync(
                 "provision_rate": float(stage_3_rate),
             }
         },
-        total_provision=stage_1_provision + stage_2_provision + stage_3_provision,
-        provision_percentage=(stage_1_provision + stage_2_provision + stage_3_provision) / (stage_1_total + stage_2_total + stage_3_total) if (stage_1_total + stage_2_total + stage_3_total) > 0 else 0
+        total_provision=float(total_provision),
+        provision_percentage=float((total_provision / Decimal(str(stage_1_total + stage_2_total + stage_3_total)) * 100) if (stage_1_total + stage_2_total + stage_3_total) > 0 else 0)
     )
 
     db.add(calculation_result)
@@ -1206,28 +1216,33 @@ def process_local_impairment_calculation_sync(
         result_summary={
             "Current": {
                 "num_loans": category_counters["Current"]["count"],
-                "outstanding_balance": category_counters["Current"]["outstanding_balance"],
-                "provision": category_counters["Current"]["provision"],
+                "total_loan_value": category_counters["Current"]["outstanding_balance"],
+                "provision_amount": category_counters["Current"]["provision"],
+                "provision_rate": 0.01,
             },
             "OLEM": {
                 "num_loans": category_counters["OLEM"]["count"],
-                "outstanding_balance": category_counters["OLEM"]["outstanding_balance"],
-                "provision": category_counters["OLEM"]["provision"],
+                "total_loan_value": category_counters["OLEM"]["outstanding_balance"],
+                "provision_amount": category_counters["OLEM"]["provision"],
+                "provision_rate": 0.05,
             },
             "Substandard": {
                 "num_loans": category_counters["Substandard"]["count"],
-                "outstanding_balance": category_counters["Substandard"]["outstanding_balance"],
-                "provision": category_counters["Substandard"]["provision"],
+                "total_loan_value": category_counters["Substandard"]["outstanding_balance"],
+                "provision_amount": category_counters["Substandard"]["provision"],
+                "provision_rate": 0.25,
             },
             "Doubtful": {
                 "num_loans": category_counters["Doubtful"]["count"],
-                "outstanding_balance": category_counters["Doubtful"]["outstanding_balance"],
-                "provision": category_counters["Doubtful"]["provision"],
+                "total_loan_value": category_counters["Doubtful"]["outstanding_balance"],
+                "provision_amount": category_counters["Doubtful"]["provision"],
+                "provision_rate": 0.50,
             },
             "Loss": {
                 "num_loans": category_counters["Loss"]["count"],
-                "outstanding_balance": category_counters["Loss"]["outstanding_balance"],
-                "provision": category_counters["Loss"]["provision"],
+                "total_loan_value": category_counters["Loss"]["outstanding_balance"],
+                "provision_amount": category_counters["Loss"]["provision"],
+                "provision_rate": 1.00,
             }
         },
         total_provision=total_provision,
