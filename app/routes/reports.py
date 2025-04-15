@@ -164,16 +164,54 @@ async def generate_report(
         excel_base64 = base64.b64encode(excel_bytes).decode("utf-8")
 
         # Create a file name for the Excel file
-        report_name = f"{portfolio.name.replace(' ', '_')}_{report_request.report_type.value}_{report_request.report_date}.xlsx"
+        file_name = f"{portfolio.name.replace(' ', '_')}_{report_request.report_type.value}_{report_request.report_date}.xlsx"
+        
+        # Create a human-readable report name based on report type
+        human_readable_name = ""
+        if report_request.report_type == ReportTypeEnum.COLLATERAL_SUMMARY:
+            human_readable_name = f"Collateral Summary Report - {portfolio.name}"
+        elif report_request.report_type == ReportTypeEnum.GUARANTEE_SUMMARY:
+            human_readable_name = f"Guarantee Summary Report - {portfolio.name}"
+        elif report_request.report_type == ReportTypeEnum.INTEREST_RATE_SUMMARY:
+            human_readable_name = f"Interest Rate Summary Report - {portfolio.name}"
+        elif report_request.report_type == ReportTypeEnum.REPAYMENT_SUMMARY:
+            human_readable_name = f"Repayment Summary Report - {portfolio.name}"
+        elif report_request.report_type == ReportTypeEnum.ASSUMPTIONS_SUMMARY:
+            human_readable_name = f"Assumptions Summary Report - {portfolio.name}"
+        elif report_request.report_type == ReportTypeEnum.AMORTISED_LOAN_BALANCES:
+            human_readable_name = f"Amortised Loan Balances Report - {portfolio.name}"
+        elif report_request.report_type == ReportTypeEnum.PROBABILITY_DEFAULT:
+            human_readable_name = f"Probability of Default Report - {portfolio.name}"
+        elif report_request.report_type == ReportTypeEnum.EXPOSURE_DEFAULT:
+            human_readable_name = f"Exposure at Default Report - {portfolio.name}"
+        elif report_request.report_type == ReportTypeEnum.LOSS_GIVEN_DEFAULT:
+            human_readable_name = f"Loss Given Default Report - {portfolio.name}"
+        elif report_request.report_type == ReportTypeEnum.ECL_DETAILED_REPORT:
+            human_readable_name = f"ECL Detailed Report - {portfolio.name}"
+        elif report_request.report_type == ReportTypeEnum.ECL_REPORT_SUMMARISED:
+            human_readable_name = f"ECL Summarised Report - {portfolio.name}"
+        elif report_request.report_type == ReportTypeEnum.LOCAL_IMPAIRMENT_DETAILS_REPORT:
+            human_readable_name = f"Local Impairment Detailed Report - {portfolio.name}"
+        elif report_request.report_type == ReportTypeEnum.LOCAL_IMPAIRMENT_REPORT_SUMMARISED:
+            human_readable_name = f"Local Impairment Summarised Report - {portfolio.name}"
+        elif report_request.report_type == ReportTypeEnum.JOURNALS_REPORT:
+            human_readable_name = f"IFRS9 and Local Impairment Journal Entries - {report_request.report_date.strftime('%B %d, %Y')}"
+        else:
+            human_readable_name = f"{report_request.report_type.value.replace('_', ' ').title()} - {portfolio.name}"
+        
+        # Add the date to the report name if not already included
+        if report_request.report_type != ReportTypeEnum.JOURNALS_REPORT and report_request.report_date:
+            human_readable_name += f" - {report_request.report_date.strftime('%B %d, %Y')}"
 
         # Return both the data and Excel in the response
         return {
             "portfolio_id": portfolio_id,
             "report_type": report_request.report_type,
             "report_date": report_request.report_date,
+            "report_name": human_readable_name,  # Add the human-readable name
             "data": report_data,
             "file": {
-                "filename": report_name,
+                "filename": file_name,
                 "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 "content": excel_base64,
             },

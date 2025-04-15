@@ -601,8 +601,8 @@ def populate_journal_report(
     # Process each portfolio
     for index, portfolio in enumerate(portfolios, 1):
         # Portfolio header
-        ws[f'A{current_row}'] = f"Portfolio {index}"
-        # ws[f'A{current_row}'].font = bold_font
+        ws[f'A{current_row}'] = f"Portfolio {index}" if portfolio.get('portfolio_name') != "Summary" else "Summary"
+        ws[f'A{current_row}'].font = bold_font
         current_row += 1
         
         # Column headers
