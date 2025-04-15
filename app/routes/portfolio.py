@@ -462,41 +462,41 @@ def get_portfolio(
                 if "Current" in local_result and isinstance(local_result["Current"], dict):
                     current_data = {
                         "num_loans": int(local_result["Current"].get("num_loans", 0)),
-                        "outstanding_loan_balance": float(local_result["Current"].get("outstanding_loan_balance", 0)),
-                        "total_loan_value": float(local_result["Current"].get("outstanding_loan_balance", 0)),
-                        "provision_amount": float(local_result["Current"].get("provision_amount", 0)),
+                        "outstanding_loan_balance": float(local_result["Current"].get("total_loan_value", local_result["Current"].get("outstanding_balance", 0))),
+                        "total_loan_value": float(local_result["Current"].get("total_loan_value", local_result["Current"].get("outstanding_balance", 0))),
+                        "provision_amount": float(local_result["Current"].get("provision_amount", local_result["Current"].get("provision", 0))),
                         "provision_rate": 1
                     }
                     
                     olem_data = {
                         "num_loans": int(local_result["OLEM"].get("num_loans", 0)),
-                        "outstanding_loan_balance": float(local_result["OLEM"].get("outstanding_loan_balance", 0)),
-                        "total_loan_value": float(local_result["OLEM"].get("outstanding_loan_balance", 0)),
-                        "provision_amount": float(local_result["OLEM"].get("provision_amount", 0)),
+                        "outstanding_loan_balance": float(local_result["OLEM"].get("total_loan_value", local_result["OLEM"].get("outstanding_balance", 0))),
+                        "total_loan_value": float(local_result["OLEM"].get("total_loan_value", local_result["OLEM"].get("outstanding_balance", 0))),
+                        "provision_amount": float(local_result["OLEM"].get("provision_amount", local_result["OLEM"].get("provision", 0))),
                         "provision_rate": 5
                     }
                     
                     substandard_data = {
                         "num_loans": int(local_result["Substandard"].get("num_loans", 0)),
-                        "outstanding_loan_balance": float(local_result["Substandard"].get("outstanding_loan_balance", 0)),
-                        "total_loan_value": float(local_result["Substandard"].get("outstanding_loan_balance", 0)),
-                        "provision_amount": float(local_result["Substandard"].get("provision_amount", 0)),
+                        "outstanding_loan_balance": float(local_result["Substandard"].get("total_loan_value", local_result["Substandard"].get("outstanding_balance", 0))),
+                        "total_loan_value": float(local_result["Substandard"].get("total_loan_value", local_result["Substandard"].get("outstanding_balance", 0))),
+                        "provision_amount": float(local_result["Substandard"].get("provision_amount", local_result["Substandard"].get("provision", 0))),
                         "provision_rate": 25
                     }
                     
                     doubtful_data = {
                         "num_loans": int(local_result["Doubtful"].get("num_loans", 0)),
-                        "outstanding_loan_balance": float(local_result["Doubtful"].get("outstanding_loan_balance", 0)),
-                        "total_loan_value": float(local_result["Doubtful"].get("outstanding_loan_balance", 0)),
-                        "provision_amount": float(local_result["Doubtful"].get("provision_amount", 0)),
+                        "outstanding_loan_balance": float(local_result["Doubtful"].get("total_loan_value", local_result["Doubtful"].get("outstanding_balance", 0))),
+                        "total_loan_value": float(local_result["Doubtful"].get("total_loan_value", local_result["Doubtful"].get("outstanding_balance", 0))),
+                        "provision_amount": float(local_result["Doubtful"].get("provision_amount", local_result["Doubtful"].get("provision", 0))),
                         "provision_rate": 50
                     }
                     
                     loss_data = {
                         "num_loans": int(local_result["Loss"].get("num_loans", 0)),
-                        "outstanding_loan_balance": float(local_result["Loss"].get("outstanding_loan_balance", 0)),
-                        "total_loan_value": float(local_result["Loss"].get("outstanding_loan_balance", 0)),
-                        "provision_amount": float(local_result["Loss"].get("provision_amount", 0)),
+                        "outstanding_loan_balance": float(local_result["Loss"].get("total_loan_value", local_result["Loss"].get("outstanding_balance", 0))),
+                        "total_loan_value": float(local_result["Loss"].get("total_loan_value", local_result["Loss"].get("outstanding_balance", 0))),
+                        "provision_amount": float(local_result["Loss"].get("provision_amount", local_result["Loss"].get("provision", 0))),
                         "provision_rate": 100
                     }
                 else:
@@ -565,27 +565,27 @@ def get_portfolio(
                 
                 # First try to get values from the nested format, then fall back to flattened format
                 stage_1_data = {
-                    "num_loans": int(ecl_summary.get("Stage 1", {}).get("num_loans", 0)),
-                    "outstanding_loan_balance": float(ecl_summary.get("Stage 1", {}).get("outstanding_loan_balance", 0)),
-                    "total_loan_value": float(ecl_summary.get("Stage 1", {}).get("outstanding_loan_balance", 0)),
-                    "provision_amount": float(ecl_summary.get("Stage 1", {}).get("provision_amount", 0)),
-                    "provision_rate": float(ecl_summary.get("Stage 1", {}).get("provision_rate", 0.01))
+                    "num_loans": int(ecl_summary.get("Stage 1", {}).get("num_loans", ecl_summary.get("stage1_count", 0))),
+                    "outstanding_loan_balance": float(ecl_summary.get("Stage 1", {}).get("outstanding_loan_balance", ecl_summary.get("stage1_total", 0))),
+                    "total_loan_value": float(ecl_summary.get("Stage 1", {}).get("outstanding_loan_balance", ecl_summary.get("stage1_total", 0))),
+                    "provision_amount": float(ecl_summary.get("Stage 1", {}).get("provision_amount", ecl_summary.get("stage1_provision", 0))),
+                    "provision_rate": float(ecl_summary.get("Stage 1", {}).get("provision_rate", ecl_summary.get("stage1_provision_rate", 0.01)))
                 }
                 
                 stage_2_data = {
-                    "num_loans": int(ecl_summary.get("Stage 2", {}).get("num_loans", 0)),
-                    "outstanding_loan_balance": float(ecl_summary.get("Stage 2", {}).get("outstanding_loan_balance", 0)),
-                    "total_loan_value": float(ecl_summary.get("Stage 2", {}).get("outstanding_loan_balance", 0)),
-                    "provision_amount": float(ecl_summary.get("Stage 2", {}).get("provision_amount", 0)),
-                    "provision_rate": float(ecl_summary.get("Stage 2", {}).get("provision_rate", 0.05))
+                    "num_loans": int(ecl_summary.get("Stage 2", {}).get("num_loans", ecl_summary.get("stage2_count", 0))),
+                    "outstanding_loan_balance": float(ecl_summary.get("Stage 2", {}).get("outstanding_loan_balance", ecl_summary.get("stage2_total", 0))),
+                    "total_loan_value": float(ecl_summary.get("Stage 2", {}).get("outstanding_loan_balance", ecl_summary.get("stage2_total", 0))),
+                    "provision_amount": float(ecl_summary.get("Stage 2", {}).get("provision_amount", ecl_summary.get("stage2_provision", 0))),
+                    "provision_rate": float(ecl_summary.get("Stage 2", {}).get("provision_rate", ecl_summary.get("stage2_provision_rate", 0.05)))
                 }
                 
                 stage_3_data = {
-                    "num_loans": int(ecl_summary.get("Stage 3", {}).get("num_loans", 0)),
-                    "outstanding_loan_balance": float(ecl_summary.get("Stage 3", {}).get("outstanding_loan_balance", 0)),
-                    "total_loan_value": float(ecl_summary.get("Stage 3", {}).get("outstanding_loan_balance", 0)),
-                    "provision_amount": float(ecl_summary.get("Stage 3", {}).get("provision_amount", 0)),
-                    "provision_rate": float(ecl_summary.get("Stage 3", {}).get("provision_rate", 0.15))
+                    "num_loans": int(ecl_summary.get("Stage 3", {}).get("num_loans", ecl_summary.get("stage3_count", 0))),
+                    "outstanding_loan_balance": float(ecl_summary.get("Stage 3", {}).get("outstanding_loan_balance", ecl_summary.get("stage3_total", 0))),
+                    "total_loan_value": float(ecl_summary.get("Stage 3", {}).get("outstanding_loan_balance", ecl_summary.get("stage3_total", 0))),
+                    "provision_amount": float(ecl_summary.get("Stage 3", {}).get("provision_amount", ecl_summary.get("stage3_provision", 0))),
+                    "provision_rate": float(ecl_summary.get("Stage 3", {}).get("provision_rate", ecl_summary.get("stage3_provision_rate", 0.15)))
                 }
                 
                 calculation_summary["ecl"] = {
@@ -606,41 +606,41 @@ def get_portfolio(
                 # First try to get values from the nested format, then fall back to flattened format
                 current_data = {
                     "num_loans": int(local_summary.get("Current", {}).get("num_loans", local_summary.get("current_count", 0))),
-                    "outstanding_loan_balance": float(local_summary.get("Current", {}).get("outstanding_loan_balance", local_summary.get("current_balance", 0))),
-                    "total_loan_value": float(local_summary.get("Current", {}).get("outstanding_loan_balance", local_summary.get("current_balance", 0))),
-                    "provision_amount": float(local_summary.get("Current", {}).get("provision_amount", local_summary.get("current_provision", 0))),
+                    "outstanding_loan_balance": float(local_summary.get("Current", {}).get("total_loan_value", local_summary.get("Current", {}).get("outstanding_balance", local_summary.get("current_balance", 0)))),
+                    "total_loan_value": float(local_summary.get("Current", {}).get("total_loan_value", local_summary.get("Current", {}).get("outstanding_balance", local_summary.get("current_balance", 0)))),
+                    "provision_amount": float(local_summary.get("Current", {}).get("provision_amount", local_summary.get("Current", {}).get("provision", local_summary.get("current_provision", 0)))),
                     "provision_rate": 1
                 }
                 
                 olem_data = {
                     "num_loans": int(local_summary.get("OLEM", {}).get("num_loans", local_summary.get("olem_count", 0))),
-                    "outstanding_loan_balance": float(local_summary.get("OLEM", {}).get("outstanding_loan_balance", local_summary.get("olem_balance", 0))),
-                    "total_loan_value": float(local_summary.get("OLEM", {}).get("outstanding_loan_balance", local_summary.get("olem_balance", 0))),
-                    "provision_amount": float(local_summary.get("OLEM", {}).get("provision_amount", local_summary.get("olem_provision", 0))),
+                    "outstanding_loan_balance": float(local_summary.get("OLEM", {}).get("total_loan_value", local_summary.get("OLEM", {}).get("outstanding_balance", local_summary.get("olem_balance", 0)))),
+                    "total_loan_value": float(local_summary.get("OLEM", {}).get("total_loan_value", local_summary.get("OLEM", {}).get("outstanding_balance", local_summary.get("olem_balance", 0)))),
+                    "provision_amount": float(local_summary.get("OLEM", {}).get("provision_amount", local_summary.get("OLEM", {}).get("provision", local_summary.get("olem_provision", 0)))),
                     "provision_rate": 5
                 }
                 
                 substandard_data = {
                     "num_loans": int(local_summary.get("Substandard", {}).get("num_loans", local_summary.get("substandard_count", 0))),
-                    "outstanding_loan_balance": float(local_summary.get("Substandard", {}).get("outstanding_loan_balance", local_summary.get("substandard_balance", 0))),
-                    "total_loan_value": float(local_summary.get("Substandard", {}).get("outstanding_loan_balance", local_summary.get("substandard_balance", 0))),
-                    "provision_amount": float(local_summary.get("Substandard", {}).get("provision_amount", local_summary.get("substandard_provision", 0))),
+                    "outstanding_loan_balance": float(local_summary.get("Substandard", {}).get("total_loan_value", local_summary.get("Substandard", {}).get("outstanding_balance", local_summary.get("substandard_balance", 0)))),
+                    "total_loan_value": float(local_summary.get("Substandard", {}).get("total_loan_value", local_summary.get("Substandard", {}).get("outstanding_balance", local_summary.get("substandard_balance", 0)))),
+                    "provision_amount": float(local_summary.get("Substandard", {}).get("provision_amount", local_summary.get("Substandard", {}).get("provision", local_summary.get("substandard_provision", 0)))),
                     "provision_rate": 25
                 }
                 
                 doubtful_data = {
                     "num_loans": int(local_summary.get("Doubtful", {}).get("num_loans", local_summary.get("doubtful_count", 0))),
-                    "outstanding_loan_balance": float(local_summary.get("Doubtful", {}).get("outstanding_loan_balance", local_summary.get("doubtful_balance", 0))),
-                    "total_loan_value": float(local_summary.get("Doubtful", {}).get("outstanding_loan_balance", local_summary.get("doubtful_balance", 0))),
-                    "provision_amount": float(local_summary.get("Doubtful", {}).get("provision_amount", local_summary.get("doubtful_provision", 0))),
+                    "outstanding_loan_balance": float(local_summary.get("Doubtful", {}).get("total_loan_value", local_summary.get("Doubtful", {}).get("outstanding_balance", local_summary.get("doubtful_balance", 0)))),
+                    "total_loan_value": float(local_summary.get("Doubtful", {}).get("total_loan_value", local_summary.get("Doubtful", {}).get("outstanding_balance", local_summary.get("doubtful_balance", 0)))),
+                    "provision_amount": float(local_summary.get("Doubtful", {}).get("provision_amount", local_summary.get("Doubtful", {}).get("provision", local_summary.get("doubtful_provision", 0)))),
                     "provision_rate": 50
                 }
                 
                 loss_data = {
                     "num_loans": int(local_summary.get("Loss", {}).get("num_loans", local_summary.get("loss_count", 0))),
-                    "outstanding_loan_balance": float(local_summary.get("Loss", {}).get("outstanding_loan_balance", local_summary.get("loss_balance", 0))),
-                    "total_loan_value": float(local_summary.get("Loss", {}).get("outstanding_loan_balance", local_summary.get("loss_balance", 0))),
-                    "provision_amount": float(local_summary.get("Loss", {}).get("provision_amount", local_summary.get("loss_provision", 0))),
+                    "outstanding_loan_balance": float(local_summary.get("Loss", {}).get("total_loan_value", local_summary.get("Loss", {}).get("outstanding_balance", local_summary.get("loss_balance", 0)))),
+                    "total_loan_value": float(local_summary.get("Loss", {}).get("total_loan_value", local_summary.get("Loss", {}).get("outstanding_balance", local_summary.get("loss_balance", 0)))),
+                    "provision_amount": float(local_summary.get("Loss", {}).get("provision_amount", local_summary.get("Loss", {}).get("provision", local_summary.get("loss_provision", 0)))),
                     "provision_rate": 100
                 }
                 
@@ -1102,17 +1102,23 @@ def stage_loans_ecl(
         "Stage 1": {
             "num_loans": stage1_count,
             "outstanding_loan_balance": stage1_total,
-            "total_loan_value": stage1_total
+            "total_loan_value": stage1_total,
+            "provision_amount": float(stage1_total) * 0.01,
+            "provision_rate": 0.01
         },
         "Stage 2": {
             "num_loans": stage2_count,
             "outstanding_loan_balance": stage2_total,
-            "total_loan_value": stage2_total
+            "total_loan_value": stage2_total,
+            "provision_amount": float(stage2_total) * 0.05,
+            "provision_rate": 0.05
         },
         "Stage 3": {
             "num_loans": stage3_count,
             "outstanding_loan_balance": stage3_total,
-            "total_loan_value": stage3_total
+            "total_loan_value": stage3_total,
+            "provision_amount": float(stage3_total) * 0.15,
+            "provision_rate": 0.15
         },
         "staged_at": staged_at.isoformat(),
         # OPTIMIZATION 5: Only store a sample of loan data, up to 1000 records
@@ -1338,27 +1344,37 @@ def stage_loans_local_impairment(
         "Current": {
             "num_loans": current_count,
             "outstanding_loan_balance": current_total,
-            "total_loan_value": current_total
+            "total_loan_value": current_total,
+            "provision_amount": float(current_total) * 0.01,
+            "provision_rate": 0.01
         },
         "OLEM": {
             "num_loans": olem_count,
             "outstanding_loan_balance": olem_total,
-            "total_loan_value": olem_total
+            "total_loan_value": olem_total,
+            "provision_amount": float(olem_total) * 0.05,
+            "provision_rate": 0.05
         },
         "Substandard": {
             "num_loans": substandard_count,
             "outstanding_loan_balance": substandard_total,
-            "total_loan_value": substandard_total
+            "total_loan_value": substandard_total,
+            "provision_amount": float(substandard_total) * 0.25,
+            "provision_rate": 0.25
         },
         "Doubtful": {
             "num_loans": doubtful_count,
             "outstanding_loan_balance": doubtful_total,
-            "total_loan_value": doubtful_total
+            "total_loan_value": doubtful_total,
+            "provision_amount": float(doubtful_total) * 0.50,
+            "provision_rate": 0.50
         },
         "Loss": {
             "num_loans": loss_count,
             "outstanding_loan_balance": loss_total,
-            "total_loan_value": loss_total
+            "total_loan_value": loss_total,
+            "provision_amount": float(loss_total) * 1.0,
+            "provision_rate": 1.0
         },
         "staged_at": staged_at.isoformat(),
         "loans_sample": serialized_loans[:1000] if serialized_loans else []
@@ -1522,17 +1538,23 @@ async def stage_loans_ecl_optimized(portfolio_id: int, config: ECLStagingConfig,
                 "Stage 1": {
                     "num_loans": stage1_count,
                     "outstanding_loan_balance": stage1_total,
-                    "total_loan_value": stage1_total
+                    "total_loan_value": stage1_total,
+                    "provision_amount": float(stage1_total) * 0.01,
+                    "provision_rate": 0.01
                 },
                 "Stage 2": {
                     "num_loans": stage2_count,
                     "outstanding_loan_balance": stage2_total,
-                    "total_loan_value": stage2_total
+                    "total_loan_value": stage2_total,
+                    "provision_amount": float(stage2_total) * 0.05,
+                    "provision_rate": 0.05
                 },
                 "Stage 3": {
                     "num_loans": stage3_count,
                     "outstanding_loan_balance": stage3_total,
-                    "total_loan_value": stage3_total
+                    "total_loan_value": stage3_total,
+                    "provision_amount": float(stage3_total) * 0.15,
+                    "provision_rate": 0.15
                 }
             }
             db.commit()
@@ -1543,17 +1565,23 @@ async def stage_loans_ecl_optimized(portfolio_id: int, config: ECLStagingConfig,
             "Stage 1": {
                 "num_loans": stage1_count,
                 "outstanding_loan_balance": stage1_total,
-                "total_loan_value": stage1_total
+                "total_loan_value": stage1_total,
+                "provision_amount": float(stage1_total) * 0.01,
+                "provision_rate": 0.01
             },
             "Stage 2": {
                 "num_loans": stage2_count,
                 "outstanding_loan_balance": stage2_total,
-                "total_loan_value": stage2_total
+                "total_loan_value": stage2_total,
+                "provision_amount": float(stage2_total) * 0.05,
+                "provision_rate": 0.05
             },
             "Stage 3": {
                 "num_loans": stage3_count,
                 "outstanding_loan_balance": stage3_total,
-                "total_loan_value": stage3_total
+                "total_loan_value": stage3_total,
+                "provision_amount": float(stage3_total) * 0.15,
+                "provision_rate": 0.15
             }
         }
     except Exception as e:
@@ -1668,27 +1696,37 @@ async def stage_loans_local_impairment_optimized(portfolio_id: int, config: Loca
                 "Current": {
                     "num_loans": int(result.current_count or 0),
                     "outstanding_loan_balance": float(result.current_total or 0),
-                    "total_loan_value": float(result.current_total or 0)
+                    "total_loan_value": float(result.current_total or 0),
+                    "provision_amount": float(result.current_total or 0) * 0.01,
+                    "provision_rate": 0.01
                 },
                 "OLEM": {
                     "num_loans": int(result.olem_count or 0),
                     "outstanding_loan_balance": float(result.olem_total or 0),
-                    "total_loan_value": float(result.olem_total or 0)
+                    "total_loan_value": float(result.olem_total or 0),
+                    "provision_amount": float(result.olem_total or 0) * 0.05,
+                    "provision_rate": 0.05
                 },
                 "Substandard": {
                     "num_loans": int(result.substandard_count or 0),
                     "outstanding_loan_balance": float(result.substandard_total or 0),
-                    "total_loan_value": float(result.substandard_total or 0)
+                    "total_loan_value": float(result.substandard_total or 0),
+                    "provision_amount": float(result.substandard_total or 0) * 0.25,
+                    "provision_rate": 0.25
                 },
                 "Doubtful": {
                     "num_loans": int(result.doubtful_count or 0),
                     "outstanding_loan_balance": float(result.doubtful_total or 0),
-                    "total_loan_value": float(result.doubtful_total or 0)
+                    "total_loan_value": float(result.doubtful_total or 0),
+                    "provision_amount": float(result.doubtful_total or 0) * 0.50,
+                    "provision_rate": 0.50
                 },
                 "Loss": {
                     "num_loans": int(result.loss_count or 0),
                     "outstanding_loan_balance": float(result.loss_total or 0),
-                    "total_loan_value": float(result.loss_total or 0)
+                    "total_loan_value": float(result.loss_total or 0),
+                    "provision_amount": float(result.loss_total or 0) * 1.0,
+                    "provision_rate": 1.0
                 }
             }
             db.commit()
@@ -1699,27 +1737,37 @@ async def stage_loans_local_impairment_optimized(portfolio_id: int, config: Loca
             "Current": {
                 "num_loans": int(result.current_count or 0),
                 "outstanding_loan_balance": float(result.current_total or 0),
-                "total_loan_value": float(result.current_total or 0)
+                "total_loan_value": float(result.current_total or 0),
+                "provision_amount": float(result.current_total or 0) * 0.01,
+                "provision_rate": 0.01
             },
             "OLEM": {
                 "num_loans": int(result.olem_count or 0),
                 "outstanding_loan_balance": float(result.olem_total or 0),
-                "total_loan_value": float(result.olem_total or 0)
+                "total_loan_value": float(result.olem_total or 0),
+                "provision_amount": float(result.olem_total or 0) * 0.05,
+                "provision_rate": 0.05
             },
             "Substandard": {
                 "num_loans": int(result.substandard_count or 0),
                 "outstanding_loan_balance": float(result.substandard_total or 0),
-                "total_loan_value": float(result.substandard_total or 0)
+                "total_loan_value": float(result.substandard_total or 0),
+                "provision_amount": float(result.substandard_total or 0) * 0.25,
+                "provision_rate": 0.25
             },
             "Doubtful": {
                 "num_loans": int(result.doubtful_count or 0),
                 "outstanding_loan_balance": float(result.doubtful_total or 0),
-                "total_loan_value": float(result.doubtful_total or 0)
+                "total_loan_value": float(result.doubtful_total or 0),
+                "provision_amount": float(result.doubtful_total or 0) * 0.50,
+                "provision_rate": 0.50
             },
             "Loss": {
                 "num_loans": int(result.loss_count or 0),
                 "outstanding_loan_balance": float(result.loss_total or 0),
-                "total_loan_value": float(result.loss_total or 0)
+                "total_loan_value": float(result.loss_total or 0),
+                "provision_amount": float(result.loss_total or 0) * 1.0,
+                "provision_rate": 1.0
             }
         }
     except Exception as e:
