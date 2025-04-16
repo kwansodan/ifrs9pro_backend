@@ -916,6 +916,64 @@ def ingest_portfolio_data(
         db=db
     )
     
+    # Check for errors in any component of the result
+    if "details" in result:
+        # Check loan details
+        if "loan_details" in result["details"] and "error" in result["details"]["loan_details"]:
+            error_message = result["details"]["loan_details"]["error"]
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error_message
+            )
+        
+        # Check client data
+        if "client_data" in result["details"] and "error" in result["details"]["client_data"]:
+            error_message = result["details"]["client_data"]["error"]
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error_message
+            )
+        
+        # Check loan guarantee data
+        if "loan_guarantee_data" in result["details"] and "error" in result["details"]["loan_guarantee_data"]:
+            error_message = result["details"]["loan_guarantee_data"]["error"]
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error_message
+            )
+        
+        # Check loan collateral data
+        if "loan_collateral_data" in result["details"] and "error" in result["details"]["loan_collateral_data"]:
+            error_message = result["details"]["loan_collateral_data"]["error"]
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error_message
+            )
+    
+    # Check for errors in quality checks
+    if "quality_checks" in result and "error" in result["quality_checks"]:
+        error_message = result["quality_checks"]["error"]
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error in quality checks: {error_message}"
+        )
+    
+    # Check for errors in staging
+    if "staging" in result and "error" in result["staging"]:
+        error_message = result["staging"]["error"]
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error in staging: {error_message}"
+        )
+    
+    # Check for general errors
+    if "error" in result:
+        error_message = result["error"]
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_message
+        )
+    
     return result
 
 @router.get("/{portfolio_id}/calculate-ecl")
