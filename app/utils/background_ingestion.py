@@ -26,7 +26,12 @@ from app.utils.background_processors import (
 from app.utils.sync_processors import (
     process_loan_details_sync,
     process_client_data_sync,
-    run_quality_checks_sync
+    run_quality_checks_sync,
+    
+)
+from app.utils.background_calculations import (
+    process_ecl_calculation_sync,
+    process_local_impairment_calculation_sync
 )
 from app.database import SessionLocal
 from app.schemas import ECLStagingConfig, LocalImpairmentConfig, DaysRangeConfig
@@ -814,6 +819,72 @@ def process_portfolio_ingestion_sync(
             }
             
             logger.info(f"Successfully completed staging for portfolio {portfolio_id}")
+            
+            # Perform calculations after staging
+            try:
+                logger.info(f"Performing ECL calculation for portfolio {portfolio_id}")
+                
+                # Get the latest ECL staging result
+                latest_ecl_staging = (
+                    db.query(StagingResult)
+                    .filter(
+                        StagingResult.portfolio_id == portfolio_id,
+                        StagingResult.staging_type == "ecl"
+                    )
+                    .order_by(StagingResult.created_at.desc())
+                    .first()
+                )
+                
+                if latest_ecl_staging:
+                    # Perform ECL calculation
+                    ecl_result = process_ecl_calculation_sync(
+                        portfolio_id=portfolio_id,
+                        reporting_date=reporting_date,
+                        staging_result=latest_ecl_staging,
+                        db=db
+                    )
+                    
+                    # Add ECL calculation results to the overall results
+                    results["calculations"] = results.get("calculations", {})
+                    results["calculations"]["ecl"] = ecl_result
+                    
+                    logger.info(f"Successfully completed ECL calculation for portfolio {portfolio_id}")
+                else:
+                    logger.warning(f"No ECL staging result found for portfolio {portfolio_id}, skipping ECL calculation")
+                
+                # Get the latest local impairment staging result
+                latest_local_staging = (
+                    db.query(StagingResult)
+                    .filter(
+                        StagingResult.portfolio_id == portfolio_id,
+                        StagingResult.staging_type == "local_impairment"
+                    )
+                    .order_by(StagingResult.created_at.desc())
+                    .first()
+                )
+                
+                if latest_local_staging:
+                    # Perform local impairment calculation
+                    logger.info(f"Performing local impairment calculation for portfolio {portfolio_id}")
+                    local_result = process_local_impairment_calculation_sync(
+                        portfolio_id=portfolio_id,
+                        reporting_date=reporting_date,
+                        staging_result=latest_local_staging,
+                        db=db
+                    )
+                    
+                    # Add local impairment calculation results to the overall results
+                    results["calculations"] = results.get("calculations", {})
+                    results["calculations"]["local_impairment"] = local_result
+                    
+                    logger.info(f"Successfully completed local impairment calculation for portfolio {portfolio_id}")
+                else:
+                    logger.warning(f"No local impairment staging result found for portfolio {portfolio_id}, skipping local impairment calculation")
+                
+            except Exception as e:
+                logger.error(f"Error during calculations: {str(e)}")
+                results["calculations"] = {"error": str(e)}
+                results["errors"] = results.get("errors", []) + [f"Error during calculations: {str(e)}"]
             
         except Exception as e:
             logger.error(f"Error during loan staging: {str(e)}")
