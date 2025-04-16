@@ -324,12 +324,13 @@ async def process_ecl_calculation(
                 
                 # Get the appropriate ECL based on loan stage
                 ecl = get_ecl_by_stage(schedule, ecl_12_month, ecl_lifetime, stage_num)
+                
+                logger.info(f"ECL calculation for loan {loan_id}: LGD={lgd}, PD={pd}, EAD={ead_value}, ECL={ecl}")
             except Exception as e:
-                logger.warning(f"Error calculating ECL using amortization schedule for loan {loan_id}: {str(e)}")
-                # Fall back to the original calculation method if the new method fails
-                ecl = calculate_marginal_ecl(loan, ead_value, pd, lgd)
-            
-            logger.info(f"ECL calculation for loan {loan_id}: LGD={lgd}, PD={pd}, EAD={ead_value}, ECL={ecl}")
+                error_msg = f"Error calculating ECL for loan {loan_id}: {str(e)}"
+                logger.error(error_msg)
+                # Raise the error to stop the calculation process
+                raise ValueError(error_msg) from e
             
             # Update stage totals based on the assigned stage
             if stage == "Stage 1":
@@ -409,18 +410,21 @@ async def process_ecl_calculation(
                 "Stage 1": {
                     "num_loans": len(stage_1_loans),
                     "total_loan_value": float(stage_1_total),
+                    "outstanding_loan_balance": float(stage_1_total),
                     "provision_amount": float(stage_1_provision),
                     "provision_rate": float(stage_1_rate),
                 },
                 "Stage 2": {
                     "num_loans": len(stage_2_loans),
                     "total_loan_value": float(stage_2_total),
+                    "outstanding_loan_balance": float(stage_2_total),
                     "provision_amount": float(stage_2_provision),
                     "provision_rate": float(stage_2_rate),
                 },
                 "Stage 3": {
                     "num_loans": len(stage_3_loans),
                     "total_loan_value": float(stage_3_total),
+                    "outstanding_loan_balance": float(stage_3_total),
                     "provision_amount": float(stage_3_provision),
                     "provision_rate": float(stage_3_rate),
                 },
@@ -746,30 +750,35 @@ async def process_local_impairment_calculation(
                 "Current": {
                     "num_loans": len(current_loans),
                     "total_loan_value": float(current_total),
+                    "outstanding_loan_balance": float(current_total),
                     "provision_amount": float(current_provision),
                     "provision_rate": float(current_rate),
                 },
                 "OLEM": {
                     "num_loans": len(olem_loans),
                     "total_loan_value": float(olem_total),
+                    "outstanding_loan_balance": float(olem_total),
                     "provision_amount": float(olem_provision),
                     "provision_rate": float(olem_rate),
                 },
                 "Substandard": {
                     "num_loans": len(substandard_loans),
                     "total_loan_value": float(substandard_total),
+                    "outstanding_loan_balance": float(substandard_total),
                     "provision_amount": float(substandard_provision),
                     "provision_rate": float(substandard_rate),
                 },
                 "Doubtful": {
                     "num_loans": len(doubtful_loans),
                     "total_loan_value": float(doubtful_total),
+                    "outstanding_loan_balance": float(doubtful_total),
                     "provision_amount": float(doubtful_provision),
                     "provision_rate": float(doubtful_rate),
                 },
                 "Loss": {
                     "num_loans": len(loss_loans),
                     "total_loan_value": float(loss_total),
+                    "outstanding_loan_balance": float(loss_total),
                     "provision_amount": float(loss_provision),
                     "provision_rate": float(loss_rate),
                 },
@@ -1038,24 +1047,50 @@ def process_ecl_calculation_sync(
     """
     Synchronously process ECL calculation and return the result.
     """
-    # Retrieve loans and perform calculations
-    stage_1_loans, stage_2_loans, stage_3_loans = retrieve_loans_for_staging(portfolio_id, db)
-    stage_1_total, stage_1_provision = calculate_stage_totals(stage_1_loans)
-    stage_2_total, stage_2_provision = calculate_stage_totals(stage_2_loans)
-    stage_3_total, stage_3_provision = calculate_stage_totals(stage_3_loans)
-
-    # Calculate effective provision rates
+    logger.info(f"Starting synchronous ECL calculation for portfolio {portfolio_id}")
+    
+    # Verify portfolio exists
+    portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
+    if not portfolio:
+        logger.error(f"Portfolio with ID {portfolio_id} not found")
+        raise ValueError(f"Portfolio with ID {portfolio_id} not found")
+    
+    # Get all loans for this portfolio
+    all_loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
+    
+    # Extract stage information from staging result
+    staging_summary = staging_result.result_summary
+    
+    # Get loan counts and outstanding balances from staging summary
+    stage_1_count = staging_summary.get("Stage 1", {}).get("num_loans", 0)
+    stage_1_balance = staging_summary.get("Stage 1", {}).get("outstanding_loan_balance", 0)
+    
+    stage_2_count = staging_summary.get("Stage 2", {}).get("num_loans", 0)
+    stage_2_balance = staging_summary.get("Stage 2", {}).get("outstanding_loan_balance", 0)
+    
+    stage_3_count = staging_summary.get("Stage 3", {}).get("num_loans", 0)
+    stage_3_balance = staging_summary.get("Stage 3", {}).get("outstanding_loan_balance", 0)
+    
+    # Log the extracted values for debugging
+    logger.info(f"From staging: Stage 1: {stage_1_count} loans, ${stage_1_balance}; Stage 2: {stage_2_count} loans, ${stage_2_balance}; Stage 3: {stage_3_count} loans, ${stage_3_balance}")
+    
+    # Calculate provisions based on fixed rates
     stage_1_rate = Decimal("0.01")  # Fixed 1% for Stage 1
     stage_2_rate = Decimal("0.05")  # Fixed 5% for Stage 2
     stage_3_rate = Decimal("0.15")  # Fixed 15% for Stage 3
-        
-    # Recalculate provisions using fixed rates
-    stage_1_provision = Decimal(str(stage_1_total)) * stage_1_rate
-    stage_2_provision = Decimal(str(stage_2_total)) * stage_2_rate
-    stage_3_provision = Decimal(str(stage_3_total)) * stage_3_rate
-        
-    # Recalculate total provision
+    
+    stage_1_provision = Decimal(str(stage_1_balance)) * stage_1_rate
+    stage_2_provision = Decimal(str(stage_2_balance)) * stage_2_rate
+    stage_3_provision = Decimal(str(stage_3_balance)) * stage_3_rate
+    
+    # Calculate total provision
     total_provision = stage_1_provision + stage_2_provision + stage_3_provision
+    total_balance = Decimal(str(stage_1_balance)) + Decimal(str(stage_2_balance)) + Decimal(str(stage_3_balance))
+    provision_percentage = (
+        (Decimal(str(total_provision)) / Decimal(str(total_balance)) * 100)
+        if total_balance > 0
+        else 0
+    )
 
     # Create a new CalculationResult record
     calculation_result = CalculationResult(
@@ -1065,31 +1100,36 @@ def process_ecl_calculation_sync(
         config=staging_result.config,
         result_summary={
             "Stage 1": {
-                "num_loans": len(stage_1_loans),
-                "total_loan_value": float(stage_1_total),
+                "num_loans": stage_1_count,
+                "total_loan_value": float(stage_1_balance),
+                "outstanding_loan_balance": float(stage_1_balance),
                 "provision_amount": float(stage_1_provision),
                 "provision_rate": float(stage_1_rate),
             },
             "Stage 2": {
-                "num_loans": len(stage_2_loans),
-                "total_loan_value": float(stage_2_total),
+                "num_loans": stage_2_count,
+                "total_loan_value": float(stage_2_balance),
+                "outstanding_loan_balance": float(stage_2_balance),
                 "provision_amount": float(stage_2_provision),
                 "provision_rate": float(stage_2_rate),
             },
             "Stage 3": {
-                "num_loans": len(stage_3_loans),
-                "total_loan_value": float(stage_3_total),
+                "num_loans": stage_3_count,
+                "total_loan_value": float(stage_3_balance),
+                "outstanding_loan_balance": float(stage_3_balance),
                 "provision_amount": float(stage_3_provision),
                 "provision_rate": float(stage_3_rate),
             }
         },
         total_provision=float(total_provision),
-        provision_percentage=float((total_provision / Decimal(str(stage_1_total + stage_2_total + stage_3_total)) * 100) if (stage_1_total + stage_2_total + stage_3_total) > 0 else 0)
+        provision_percentage=float(provision_percentage)
     )
-
+    
     db.add(calculation_result)
     db.commit()
-
+    
+    logger.info(f"ECL calculation completed for portfolio {portfolio_id}")
+    
     return {
         "status": "success",
         "result": calculation_result.result_summary,
@@ -1114,98 +1154,46 @@ def process_local_impairment_calculation_sync(
         logger.error(f"Portfolio with ID {portfolio_id} not found")
         raise ValueError(f"Portfolio with ID {portfolio_id} not found")
     
-    # Process the staging data
-    staging_data = staging_result.result_summary
+    # Extract category information from staging result
+    staging_summary = staging_result.result_summary
     
-    # Initialize counters for each category
-    category_counters = {
-        "Current": {"count": 0, "outstanding_balance": 0, "provision": 0},
-        "OLEM": {"count": 0, "outstanding_balance": 0, "provision": 0},
-        "Substandard": {"count": 0, "outstanding_balance": 0, "provision": 0},
-        "Doubtful": {"count": 0, "outstanding_balance": 0, "provision": 0},
-        "Loss": {"count": 0, "outstanding_balance": 0, "provision": 0}
-    }
+    # Get loan counts and outstanding balances from staging summary
+    current_count = staging_summary.get("Current", {}).get("num_loans", 0)
+    current_balance = staging_summary.get("Current", {}).get("outstanding_loan_balance", 0)
     
-    # Process loan data from staging result
-    loans_processed = False
-    if "loans" in staging_data and staging_data.get("loans"):
-        loans_processed = True
-        for loan_data in staging_data.get("loans", []):
-            category = loan_data.get("category", "Current").capitalize()
-            if category in category_counters:
-                category_counters[category]["count"] += 1
-                
-                # Get loan details from database for accurate values
-                loan = db.query(Loan).filter(Loan.id == loan_data.get("id")).first()
-                if loan:
-                    outstanding_balance = float(loan.outstanding_loan_balance if loan.outstanding_loan_balance is not None else 0)
-                    category_counters[category]["outstanding_balance"] += outstanding_balance
-                    
-                    # Calculate provision based on category rate
-                    provision_rate = 0
-                    if category == "Current":
-                        provision_rate = 0.01  # 1%
-                    elif category == "OLEM":
-                        provision_rate = 0.05  # 5%
-                    elif category == "Substandard":
-                        provision_rate = 0.25  # 25%
-                    elif category == "Doubtful":
-                        provision_rate = 0.50  # 50%
-                    elif category == "Loss":
-                        provision_rate = 1.00  # 100%
-                    
-                    provision = outstanding_balance * provision_rate
-                    category_counters[category]["provision"] += provision
+    olem_count = staging_summary.get("OLEM", {}).get("num_loans", 0)
+    olem_balance = staging_summary.get("OLEM", {}).get("outstanding_loan_balance", 0)
     
-    # If no loans were processed from staging result, retrieve loans directly from database
-    if not loans_processed:
-        logger.warning("No loans found in staging result, retrieving loans directly from database")
-        
-        # Get all loans for this portfolio
-        all_loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
-        
-        if all_loans:
-            # Categorize loans based on a simple rule (e.g., outstanding balance)
-            # This is a simplified approach and should be replaced with proper categorization logic
-            for loan in all_loans:
-                outstanding_balance = float(loan.outstanding_loan_balance if loan.outstanding_loan_balance is not None else 0)
-                
-                # Simple categorization based on outstanding balance
-                # In a real system, this would be based on days past due, risk factors, etc.
-                category = "Current"  # Default category
-                
-                # Example categorization logic
-                if outstanding_balance > 0:
-                    # Categorize 70% as current
-                    if random.random() < 0.7:
-                        category = "Current"
-                        provision_rate = 0.01  # 1%
-                    # Categorize 15% as OLEM
-                    elif random.random() < 0.85:
-                        category = "OLEM"
-                        provision_rate = 0.05  # 5%
-                    # Categorize 10% as substandard
-                    elif random.random() < 0.95:
-                        category = "Substandard"
-                        provision_rate = 0.25  # 25%
-                    # Categorize 3% as doubtful
-                    elif random.random() < 0.98:
-                        category = "Doubtful"
-                        provision_rate = 0.50  # 50%
-                    # Categorize 2% as loss
-                    else:
-                        category = "Loss"
-                        provision_rate = 1.00  # 100%
-                
-                    # Update counters
-                    category_counters[category]["count"] += 1
-                    category_counters[category]["outstanding_balance"] += outstanding_balance
-                    provision = outstanding_balance * provision_rate
-                    category_counters[category]["provision"] += provision
+    substandard_count = staging_summary.get("Substandard", {}).get("num_loans", 0)
+    substandard_balance = staging_summary.get("Substandard", {}).get("outstanding_loan_balance", 0)
     
-    # Calculate totals
-    total_outstanding_balance = sum(cat["outstanding_balance"] for cat in category_counters.values())
-    total_provision = sum(cat["provision"] for cat in category_counters.values())
+    doubtful_count = staging_summary.get("Doubtful", {}).get("num_loans", 0)
+    doubtful_balance = staging_summary.get("Doubtful", {}).get("outstanding_loan_balance", 0)
+    
+    loss_count = staging_summary.get("Loss", {}).get("num_loans", 0)
+    loss_balance = staging_summary.get("Loss", {}).get("outstanding_loan_balance", 0)
+    
+    # Log the extracted values for debugging
+    logger.info(f"From staging: Current: {current_count} loans, ${current_balance}; OLEM: {olem_count} loans, ${olem_balance}; Substandard: {substandard_count} loans, ${substandard_balance}; Doubtful: {doubtful_count} loans, ${doubtful_balance}; Loss: {loss_count} loans, ${loss_balance}")
+    
+    # Use standard provision rates as per memory
+    current_rate = Decimal("0.01")      # 1% for Current
+    olem_rate = Decimal("0.05")         # 5% for OLEM
+    substandard_rate = Decimal("0.25")  # 25% for Substandard
+    doubtful_rate = Decimal("0.50")     # 50% for Doubtful
+    loss_rate = Decimal("1.00")         # 100% for Loss
+    
+    # Calculate provisions
+    current_provision = Decimal(str(current_balance)) * current_rate
+    olem_provision = Decimal(str(olem_balance)) * olem_rate
+    substandard_provision = Decimal(str(substandard_balance)) * substandard_rate
+    doubtful_provision = Decimal(str(doubtful_balance)) * doubtful_rate
+    loss_provision = Decimal(str(loss_balance)) * loss_rate
+    
+    # Calculate total provision
+    total_provision = current_provision + olem_provision + substandard_provision + doubtful_provision + loss_provision
+    total_balance = Decimal(str(current_balance)) + Decimal(str(olem_balance)) + Decimal(str(substandard_balance)) + Decimal(str(doubtful_balance)) + Decimal(str(loss_balance))
+    provision_percentage = (total_provision / total_balance * 100) if total_balance > 0 else Decimal("0")
     
     # Create a new CalculationResult record
     calculation_result = CalculationResult(
@@ -1215,42 +1203,49 @@ def process_local_impairment_calculation_sync(
         config=staging_result.config,
         result_summary={
             "Current": {
-                "num_loans": category_counters["Current"]["count"],
-                "total_loan_value": category_counters["Current"]["outstanding_balance"],
-                "provision_amount": category_counters["Current"]["provision"],
-                "provision_rate": 0.01,
+                "num_loans": current_count,
+                "outstanding_loan_balance": float(current_balance),
+                "total_loan_value": float(current_balance),
+                "provision_amount": float(current_provision),
+                "provision_rate": float(current_rate),
             },
             "OLEM": {
-                "num_loans": category_counters["OLEM"]["count"],
-                "total_loan_value": category_counters["OLEM"]["outstanding_balance"],
-                "provision_amount": category_counters["OLEM"]["provision"],
-                "provision_rate": 0.05,
+                "num_loans": olem_count,
+                "outstanding_loan_balance": float(olem_balance),
+                "total_loan_value": float(olem_balance),
+                "provision_amount": float(olem_provision),
+                "provision_rate": float(olem_rate),
             },
             "Substandard": {
-                "num_loans": category_counters["Substandard"]["count"],
-                "total_loan_value": category_counters["Substandard"]["outstanding_balance"],
-                "provision_amount": category_counters["Substandard"]["provision"],
-                "provision_rate": 0.25,
+                "num_loans": substandard_count,
+                "outstanding_loan_balance": float(substandard_balance),
+                "total_loan_value": float(substandard_balance),
+                "provision_amount": float(substandard_provision),
+                "provision_rate": float(substandard_rate),
             },
             "Doubtful": {
-                "num_loans": category_counters["Doubtful"]["count"],
-                "total_loan_value": category_counters["Doubtful"]["outstanding_balance"],
-                "provision_amount": category_counters["Doubtful"]["provision"],
-                "provision_rate": 0.50,
+                "num_loans": doubtful_count,
+                "outstanding_loan_balance": float(doubtful_balance),
+                "total_loan_value": float(doubtful_balance),
+                "provision_amount": float(doubtful_provision),
+                "provision_rate": float(doubtful_rate),
             },
             "Loss": {
-                "num_loans": category_counters["Loss"]["count"],
-                "total_loan_value": category_counters["Loss"]["outstanding_balance"],
-                "provision_amount": category_counters["Loss"]["provision"],
-                "provision_rate": 1.00,
+                "num_loans": loss_count,
+                "outstanding_loan_balance": float(loss_balance),
+                "total_loan_value": float(loss_balance),
+                "provision_amount": float(loss_provision),
+                "provision_rate": float(loss_rate),
             }
         },
-        total_provision=total_provision,
-        provision_percentage=(total_provision / total_outstanding_balance if total_outstanding_balance > 0 else 0)
+        total_provision=float(total_provision),
+        provision_percentage=float(provision_percentage)
     )
     
     db.add(calculation_result)
     db.commit()
+    
+    logger.info(f"Local impairment calculation completed for portfolio {portfolio_id}")
     
     return {
         "status": "success",
