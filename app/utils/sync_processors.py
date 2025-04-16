@@ -96,11 +96,19 @@ def process_loan_details_sync(file_content, portfolio_id, db):
         
         # Check if required columns are present
         required_columns = ["loan_no", "employee_id", "loan_amount", "outstanding_loan_balance"]
+        column_display_names = {
+            "loan_no": "Loan No.",
+            "employee_id": "Employee Id",
+            "loan_amount": "Loan Amount",
+            "outstanding_loan_balance": "Outstanding Loan Balance"
+        }
         missing_columns = [col for col in required_columns if col not in df.columns]
         
         if missing_columns:
-            logger.error(f"Missing required columns: {missing_columns}")
-            return {"error": f"Missing required columns: {missing_columns}"}
+            # Convert to user-friendly column names
+            readable_missing_columns = [column_display_names.get(col, col) for col in missing_columns]
+            logger.error(f"Missing required columns: {readable_missing_columns}")
+            return {"error": f"Missing required columns: {readable_missing_columns}"}
         
         # Convert date columns to proper format
         date_columns = ["loan_issue_date", "deduction_start_period", "submission_period", "maturity_period", "date_of_birth"]
