@@ -33,11 +33,11 @@ def create_report_excel(
     # Handle specialized report types
     if report_type.lower() == "ecl_detailed_report":
         return populate_ecl_detailed_report(wb, portfolio_name, report_date, report_data)
-    elif report_type.lower() == "local_impairment_details_report":
+    elif report_type.lower() == "local_impairment_detailed_report":
         return populate_local_impairment_details_report(wb, portfolio_name, report_date, report_data)
-    elif report_type.lower() == "ecl_report_summarised":
+    elif report_type.lower() == "ecl_report_summarised_by_stages":
         return populate_ecl_report_summarised(wb, portfolio_name, report_date, report_data)
-    elif report_type.lower() == "local_impairment_report_summarised":
+    elif report_type.lower() == "local_impairment_report_summarised_by_stages":
         return populate_local_impairment_report_summarised(wb, portfolio_name, report_date, report_data)
     elif report_type.lower() == "journals_report":
         return populate_journal_report(wb, portfolio_name, report_date, report_data)
