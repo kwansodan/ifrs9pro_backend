@@ -465,7 +465,7 @@ def get_portfolio(
                         "outstanding_loan_balance": float(local_result["Current"].get("total_loan_value", local_result["Current"].get("outstanding_balance", 0))),
                         "total_loan_value": float(local_result["Current"].get("total_loan_value", local_result["Current"].get("outstanding_balance", 0))),
                         "provision_amount": float(local_result["Current"].get("provision_amount", local_result["Current"].get("provision", 0))),
-                        "provision_rate": 1
+                        "provision_rate": float(local_result["Current"].get("provision_rate", 0.01))
                     }
                     
                     olem_data = {
@@ -473,7 +473,7 @@ def get_portfolio(
                         "outstanding_loan_balance": float(local_result["OLEM"].get("total_loan_value", local_result["OLEM"].get("outstanding_balance", 0))),
                         "total_loan_value": float(local_result["OLEM"].get("total_loan_value", local_result["OLEM"].get("outstanding_balance", 0))),
                         "provision_amount": float(local_result["OLEM"].get("provision_amount", local_result["OLEM"].get("provision", 0))),
-                        "provision_rate": 5
+                        "provision_rate": float(local_result["OLEM"].get("provision_rate", 0.05))
                     }
                     
                     substandard_data = {
@@ -481,7 +481,7 @@ def get_portfolio(
                         "outstanding_loan_balance": float(local_result["Substandard"].get("total_loan_value", local_result["Substandard"].get("outstanding_balance", 0))),
                         "total_loan_value": float(local_result["Substandard"].get("total_loan_value", local_result["Substandard"].get("outstanding_balance", 0))),
                         "provision_amount": float(local_result["Substandard"].get("provision_amount", local_result["Substandard"].get("provision", 0))),
-                        "provision_rate": 25
+                        "provision_rate": float(local_result["Substandard"].get("provision_rate", 0.25))
                     }
                     
                     doubtful_data = {
@@ -489,7 +489,7 @@ def get_portfolio(
                         "outstanding_loan_balance": float(local_result["Doubtful"].get("total_loan_value", local_result["Doubtful"].get("outstanding_balance", 0))),
                         "total_loan_value": float(local_result["Doubtful"].get("total_loan_value", local_result["Doubtful"].get("outstanding_balance", 0))),
                         "provision_amount": float(local_result["Doubtful"].get("provision_amount", local_result["Doubtful"].get("provision", 0))),
-                        "provision_rate": 50
+                        "provision_rate": float(local_result["Doubtful"].get("provision_rate", 0.50))
                     }
                     
                     loss_data = {
@@ -497,7 +497,7 @@ def get_portfolio(
                         "outstanding_loan_balance": float(local_result["Loss"].get("total_loan_value", local_result["Loss"].get("outstanding_balance", 0))),
                         "total_loan_value": float(local_result["Loss"].get("total_loan_value", local_result["Loss"].get("outstanding_balance", 0))),
                         "provision_amount": float(local_result["Loss"].get("provision_amount", local_result["Loss"].get("provision", 0))),
-                        "provision_rate": 100
+                        "provision_rate": float(local_result["Loss"].get("provision_rate", 1.00))
                     }
                 else:
                     # Extract aggregated data from the summary
@@ -506,7 +506,7 @@ def get_portfolio(
                         "outstanding_loan_balance": float(local_result.get("current_balance", 0)),
                         "total_loan_value": float(local_result.get("current_balance", 0)),
                         "provision_amount": float(local_result.get("current_provision", 0)),
-                        "provision_rate": 1
+                        "provision_rate": float(local_result.get("current_provision_rate", 0.01))
                     }
                     
                     olem_data = {
@@ -514,7 +514,7 @@ def get_portfolio(
                         "outstanding_loan_balance": float(local_result.get("olem_balance", 0)),
                         "total_loan_value": float(local_result.get("olem_balance", 0)),
                         "provision_amount": float(local_result.get("olem_provision", 0)),
-                        "provision_rate": 5
+                        "provision_rate": float(local_result.get("olem_provision_rate", 0.05))
                     }
                     
                     substandard_data = {
@@ -522,7 +522,7 @@ def get_portfolio(
                         "outstanding_loan_balance": float(local_result.get("substandard_balance", 0)),
                         "total_loan_value": float(local_result.get("substandard_balance", 0)),
                         "provision_amount": float(local_result.get("substandard_provision", 0)),
-                        "provision_rate": 25
+                        "provision_rate": float(local_result.get("substandard_provision_rate", 0.25))
                     }
                     
                     doubtful_data = {
@@ -530,7 +530,7 @@ def get_portfolio(
                         "outstanding_loan_balance": float(local_result.get("doubtful_balance", 0)),
                         "total_loan_value": float(local_result.get("doubtful_balance", 0)),
                         "provision_amount": float(local_result.get("doubtful_provision", 0)),
-                        "provision_rate": 50
+                        "provision_rate": float(local_result.get("doubtful_provision_rate", 0.50))
                     }
                     
                     loss_data = {
@@ -538,7 +538,7 @@ def get_portfolio(
                         "outstanding_loan_balance": float(local_result.get("loss_balance", 0)),
                         "total_loan_value": float(local_result.get("loss_balance", 0)),
                         "provision_amount": float(local_result.get("loss_provision", 0)),
-                        "provision_rate": 100
+                        "provision_rate": float(local_result.get("loss_provision_rate", 1.00))
                     }
                 
                 staging_summary["local_impairment"] = {
@@ -609,7 +609,7 @@ def get_portfolio(
                     "outstanding_loan_balance": float(local_summary.get("Current", {}).get("total_loan_value", local_summary.get("Current", {}).get("outstanding_balance", local_summary.get("current_balance", 0)))),
                     "total_loan_value": float(local_summary.get("Current", {}).get("total_loan_value", local_summary.get("Current", {}).get("outstanding_balance", local_summary.get("current_balance", 0)))),
                     "provision_amount": float(local_summary.get("Current", {}).get("provision_amount", local_summary.get("Current", {}).get("provision", local_summary.get("current_provision", 0)))),
-                    "provision_rate": 1
+                    "provision_rate": float(local_summary.get("Current", {}).get("provision_rate", local_summary.get("current_provision_rate", 0.01)))
                 }
                 
                 olem_data = {
@@ -617,7 +617,7 @@ def get_portfolio(
                     "outstanding_loan_balance": float(local_summary.get("OLEM", {}).get("total_loan_value", local_summary.get("OLEM", {}).get("outstanding_balance", local_summary.get("olem_balance", 0)))),
                     "total_loan_value": float(local_summary.get("OLEM", {}).get("total_loan_value", local_summary.get("OLEM", {}).get("outstanding_balance", local_summary.get("olem_balance", 0)))),
                     "provision_amount": float(local_summary.get("OLEM", {}).get("provision_amount", local_summary.get("OLEM", {}).get("provision", local_summary.get("olem_provision", 0)))),
-                    "provision_rate": 5
+                    "provision_rate": float(local_summary.get("OLEM", {}).get("provision_rate", local_summary.get("olem_provision_rate", 0.05)))
                 }
                 
                 substandard_data = {
@@ -625,7 +625,7 @@ def get_portfolio(
                     "outstanding_loan_balance": float(local_summary.get("Substandard", {}).get("total_loan_value", local_summary.get("Substandard", {}).get("outstanding_balance", local_summary.get("substandard_balance", 0)))),
                     "total_loan_value": float(local_summary.get("Substandard", {}).get("total_loan_value", local_summary.get("Substandard", {}).get("outstanding_balance", local_summary.get("substandard_balance", 0)))),
                     "provision_amount": float(local_summary.get("Substandard", {}).get("provision_amount", local_summary.get("Substandard", {}).get("provision", local_summary.get("substandard_provision", 0)))),
-                    "provision_rate": 25
+                    "provision_rate": float(local_summary.get("Substandard", {}).get("provision_rate", local_summary.get("substandard_provision_rate", 0.25)))
                 }
                 
                 doubtful_data = {
@@ -633,7 +633,7 @@ def get_portfolio(
                     "outstanding_loan_balance": float(local_summary.get("Doubtful", {}).get("total_loan_value", local_summary.get("Doubtful", {}).get("outstanding_balance", local_summary.get("doubtful_balance", 0)))),
                     "total_loan_value": float(local_summary.get("Doubtful", {}).get("total_loan_value", local_summary.get("Doubtful", {}).get("outstanding_balance", local_summary.get("doubtful_balance", 0)))),
                     "provision_amount": float(local_summary.get("Doubtful", {}).get("provision_amount", local_summary.get("Doubtful", {}).get("provision", local_summary.get("doubtful_provision", 0)))),
-                    "provision_rate": 50
+                    "provision_rate": float(local_summary.get("Doubtful", {}).get("provision_rate", local_summary.get("doubtful_provision_rate", 0.50)))
                 }
                 
                 loss_data = {
@@ -641,7 +641,7 @@ def get_portfolio(
                     "outstanding_loan_balance": float(local_summary.get("Loss", {}).get("total_loan_value", local_summary.get("Loss", {}).get("outstanding_balance", local_summary.get("loss_balance", 0)))),
                     "total_loan_value": float(local_summary.get("Loss", {}).get("total_loan_value", local_summary.get("Loss", {}).get("outstanding_balance", local_summary.get("loss_balance", 0)))),
                     "provision_amount": float(local_summary.get("Loss", {}).get("provision_amount", local_summary.get("Loss", {}).get("provision", local_summary.get("loss_provision", 0)))),
-                    "provision_rate": 100
+                    "provision_rate": float(local_summary.get("Loss", {}).get("provision_rate", local_summary.get("loss_provision_rate", 1.00)))
                 }
                 
                 calculation_summary["local_impairment"] = {
