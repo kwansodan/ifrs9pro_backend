@@ -1,8 +1,10 @@
 import io
-import polars as pl
+import json
 import logging
-from typing import Dict, Any
+import decimal
+from datetime import datetime
 from sqlalchemy import text
+import polars as pl
 
 from app.models import (
     Loan,
@@ -10,7 +12,8 @@ from app.models import (
     Client,
     Security,
     Portfolio,
-    QualityIssue
+    QualityIssue,
+    DeductionStatus
 )
 from app.utils.quality_checks import create_and_save_quality_issues
 
@@ -71,12 +74,12 @@ def process_loan_details_sync(file_content, portfolio_id, db):
         try:
             # Read Excel file
             if isinstance(file_content, io.BytesIO):
-                content = file_content.read()
+                content = file_content
             else:
                 content = file_content
                 
             df = pl.read_excel(content)
-            logger.info("Successfully read Excel file")
+            logger.info(f"Successfully read Excel file with {df.height} rows")
         except Exception as excel_error:
             logger.error(f"Failed to read Excel file: {str(excel_error)}")
             raise ValueError(f"Unable to read Excel file: {str(excel_error)}")
@@ -110,31 +113,72 @@ def process_loan_details_sync(file_content, portfolio_id, db):
             logger.error(f"Missing required columns: {readable_missing_columns}")
             return {"error": f"Missing required columns: {readable_missing_columns}"}
         
-        # Convert date columns to proper format
+        # Convert date columns - process all at once for better performance
         date_columns = ["loan_issue_date", "deduction_start_period", "submission_period", "maturity_period", "date_of_birth"]
-        for col in date_columns:
-            if col in df.columns:
-                try:
-                    df = df.with_columns(pl.col(col).cast(pl.Date, strict=False))
-                except Exception as e:
-                    logger.warning(f"Failed to convert {col} to date: {str(e)}")
+        date_cols_in_df = [col for col in date_columns if col in df.columns]
         
-        # Convert numeric columns
+        if date_cols_in_df:
+            try:
+                # Process all date columns at once - fixed string operations
+                df = df.with_columns([
+                    pl.col(col).cast(pl.Date, strict=False) for col in date_cols_in_df
+                ])
+            except Exception as e:
+                logger.warning(f"Failed to convert date columns: {str(e)}")
+                # Fall back to individual column processing
+                for col in date_cols_in_df:
+                    try:
+                        df = df.with_columns(pl.col(col).cast(pl.Date, strict=False))
+                    except Exception as e:
+                        logger.warning(f"Failed to convert {col} to date: {str(e)}")
+        
+        # Convert numeric columns - process all at once for better performance
         numeric_columns = [
             "loan_amount", "loan_term", "administrative_fees", "total_interest", 
             "total_collectible", "net_loan_amount", "monthly_installment", 
             "principal_due", "interest_due", "total_due", "principal_paid", 
             "interest_paid", "total_paid", "principal_paid2", "interest_paid2", 
             "total_paid2", "outstanding_principal", "outstanding_interest", 
-            "outstanding_loan_balance", "days_in_arrears", "ndia"
+            "outstanding_loan_balance", "days_in_arrears", "ndia", "recovery_rate",
+            "accumulated_arrears", "prevailing_posted_repayment", 
+            "prevailing_due_payment", "current_missed_deduction", "admin_charge"
         ]
         
-        for col in numeric_columns:
-            if col in df.columns:
-                try:
-                    df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False))
-                except Exception as e:
-                    logger.warning(f"Failed to convert {col} to numeric: {str(e)}")
+        numeric_cols_in_df = [col for col in numeric_columns if col in df.columns]
+        if numeric_cols_in_df:
+            try:
+                # Process all numeric columns at once - fixed string operations
+                df = df.with_columns([
+                    pl.col(col).cast(pl.Float64, strict=False).fill_null(0.0) for col in numeric_cols_in_df
+                ])
+            except Exception as e:
+                logger.warning(f"Failed to convert numeric columns: {str(e)}")
+                # Fall back to individual column processing
+                for col in numeric_cols_in_df:
+                    try:
+                        df = df.with_columns(
+                            pl.col(col).cast(pl.Float64, strict=False).fill_null(0.0)
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to convert {col} to numeric: {str(e)}")
+        
+        # Convert boolean columns - process all at once
+        bool_columns = ["paid", "cancelled"]
+        bool_cols_in_df = [col for col in bool_columns if col in df.columns]
+        bool_values = ["Yes", "TRUE", "True", "true", "1", "Y", "y"]
+        
+        if bool_cols_in_df:
+            try:
+                # Fixed boolean conversion
+                for col in bool_cols_in_df:
+                    df = df.with_columns(
+                        pl.col(col).cast(pl.Utf8).is_in(bool_values).fill_null(False).alias(col)
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to convert boolean columns: {str(e)}")
+        
+        # Add portfolio_id to all records
+        df = df.with_columns(pl.lit(portfolio_id).alias("portfolio_id"))
         
         # Clear existing loans for this portfolio
         try:
@@ -142,35 +186,145 @@ def process_loan_details_sync(file_content, portfolio_id, db):
             db.commit()
             logger.info(f"Cleared existing loans for portfolio {portfolio_id}")
         except Exception as e:
+            db.rollback()  # Explicitly rollback on error
             logger.error(f"Error clearing existing loans: {str(e)}")
             return {"error": str(e)}
         
-        # Convert to records for bulk insert
-        records = df.to_dicts()
-        
-        # Prepare loan objects
-        loans = []
-        for record in records:
-            # Add portfolio_id to each record
-            record["portfolio_id"] = portfolio_id
+        # Use PostgreSQL's COPY command for bulk insert (much faster than ORM)
+        try:
+            # Get raw connection
+            connection = db.connection().connection
+            cursor = connection.cursor()
             
-            # Create Loan object
-            loan = Loan(**{k: v for k, v in record.items() if k in Loan.__table__.columns.keys()})
-            loans.append(loan)
-        
-        # Bulk insert loans
-        db.bulk_save_objects(loans)
-        db.commit()
-        
-        return {
-            "processed": len(loans),
-            "success": True,
-            "message": f"Successfully processed {len(loans)} loan records"
-        }
+            # Create a CSV-like string buffer
+            csv_buffer = io.StringIO()
+            
+            # Define the columns we want to insert
+            loan_columns = [
+                "portfolio_id", "loan_no", "employee_id", "employee_name", 
+                "employer", "loan_issue_date", "deduction_start_period", 
+                "submission_period", "maturity_period", "location_code", 
+                "dalex_paddy", "team_leader", "loan_type", "loan_amount", 
+                "loan_term", "administrative_fees", "total_interest", 
+                "total_collectible", "net_loan_amount", "monthly_installment", 
+                "principal_due", "interest_due", "total_due", "principal_paid", 
+                "interest_paid", "total_paid", "principal_paid2", "interest_paid2", 
+                "total_paid2", "paid", "cancelled", "outstanding_loan_balance", 
+                "accumulated_arrears", "ndia", "prevailing_posted_repayment", 
+                "prevailing_due_payment", "current_missed_deduction", 
+                "admin_charge", "recovery_rate", "deduction_status"
+            ]
+            
+            # Get integer columns from the Loan model
+            integer_columns = [c.name for c in Loan.__table__.columns if c.type.python_type == int]
+            
+            # Write data to buffer in CSV format
+            for row in df.rows(named=True):
+                values = []
+                for col in loan_columns:
+                    val = row.get(col, None)
+                    if val is None:
+                        values.append("")  # NULL in COPY format
+                    elif isinstance(val, (str, pl.Utf8)):
+                        # Escape special characters for COPY
+                        val_str = str(val).replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")
+                        values.append(val_str)
+                    elif isinstance(val, bool):
+                        values.append(str(val).lower())
+                    elif col in integer_columns:
+                        # Convert to integer for integer columns
+                        try:
+                            values.append(str(int(float(val))))
+                        except (ValueError, TypeError):
+                            values.append("0")  # Default to 0 for invalid values
+                    else:
+                        values.append(str(val))
+                
+                csv_buffer.write("\t".join(values) + "\n")
+            
+            # Reset buffer position to start
+            csv_buffer.seek(0)
+            
+            # Execute COPY command
+            cursor.copy_from(
+                csv_buffer,
+                "loans",
+                columns=loan_columns,
+                sep="\t",
+                null=""
+            )
+            
+            # Commit the transaction
+            connection.commit()  # Commit at the connection level
+            
+            processed_count = df.height
+            logger.info(f"Bulk inserted {processed_count} loans using COPY command")
+            
+            return {
+                "processed": processed_count,
+                "success": True,
+                "message": f"Successfully processed {processed_count} loan records"
+            }
+            
+        except Exception as copy_error:
+            # Explicitly rollback the connection on error
+            try:
+                connection.rollback()
+            except Exception as rollback_error:
+                logger.error(f"Error during connection rollback: {str(rollback_error)}")
+            
+            logger.error(f"Error during COPY bulk insert: {str(copy_error)}")
+            logger.info("Falling back to bulk_save_objects method")
+            
+            # Fallback to bulk_save_objects if COPY fails
+            try:
+                # Convert to records for bulk insert
+                records = df.to_dicts()
+                
+                # Create loan objects
+                loans = []
+                for record in records:
+                    # Create a loan object with only valid columns
+                    try:
+                        # Ensure numeric values are properly formatted
+                        for col in numeric_cols_in_df:
+                            if col in record and record[col] is not None:
+                                # Convert to Decimal for precision
+                                record[col] = decimal.Decimal(str(record[col]))
+                        
+                        loan = Loan(**{k: v for k, v in record.items() 
+                                      if k in Loan.__table__.columns.keys()})
+                        loans.append(loan)
+                    except Exception as record_error:
+                        logger.warning(f"Error creating loan object: {str(record_error)}, skipping record")
+                
+                # Bulk insert all loans at once
+                db.bulk_save_objects(loans)
+                db.commit()
+                
+                processed_count = len(loans)
+                logger.info(f"Bulk inserted {processed_count} loans using bulk_save_objects")
+                
+                return {
+                    "processed": processed_count,
+                    "success": True,
+                    "message": f"Successfully processed {processed_count} loan records"
+                }
+            except Exception as bulk_error:
+                db.rollback()  # Explicitly rollback on error
+                logger.error(f"Error during bulk_save_objects: {str(bulk_error)}")
+                raise bulk_error
         
     except Exception as e:
+        # Ensure transaction is rolled back
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        
         logger.error(f"Error processing loan details: {str(e)}")
         return {"error": str(e)}
+
 
 def process_client_data_sync(file_content, portfolio_id, db):
     """Synchronous function to process client data with high-performance optimizations for large datasets using Polars."""
@@ -208,7 +362,7 @@ def process_client_data_sync(file_content, portfolio_id, db):
                 
             # Read with polars
             df = pl.read_excel(content)
-            logger.info("Successfully read Excel file with polars")
+            logger.info(f"Successfully read Excel file with polars, found {df.height} rows")
         except Exception as excel_error:
             logger.error(f"Failed to read Excel file: {str(excel_error)}")
             raise ValueError(f"Unable to read Excel file: {str(excel_error)}")
@@ -225,15 +379,24 @@ def process_client_data_sync(file_content, portfolio_id, db):
         if rename_map:
             df = df.rename(rename_map)
         
-        # Convert date columns
+        # Convert date columns - process all at once for better performance
         date_columns = ["date_of_birth", "employment_date"]
-        for col in date_columns:
-            if col in df.columns:
-                try:
-                    # Use the correct method for polars DataFrame (with_columns, not with_column)
-                    df = df.with_columns(pl.col(col).cast(pl.Date, strict=False))
-                except Exception as e:
-                    logger.warning(f"Failed to convert {col} to date: {str(e)}")
+        date_cols_in_df = [col for col in date_columns if col in df.columns]
+        
+        if date_cols_in_df:
+            try:
+                # Process all date columns at once - fixed string operations
+                df = df.with_columns([
+                    pl.col(col).cast(pl.Date, strict=False) for col in date_cols_in_df
+                ])
+            except Exception as e:
+                logger.warning(f"Failed to convert date columns: {str(e)}")
+                # Fall back to individual column processing
+                for col in date_cols_in_df:
+                    try:
+                        df = df.with_columns(pl.col(col).cast(pl.Date, strict=False))
+                    except Exception as e:
+                        logger.warning(f"Failed to convert {col} to date: {str(e)}")
         
         # Create search name column
         if "last_name" in df.columns and "other_names" in df.columns:
@@ -254,67 +417,144 @@ def process_client_data_sync(file_content, portfolio_id, db):
             db.commit()
             logger.info(f"Cleared existing clients for portfolio {portfolio_id}")
         except Exception as e:
+            db.rollback()  # Explicitly rollback on error
             logger.error(f"Error clearing existing clients: {str(e)}")
             return {"error": str(e)}
         
-        # Convert to records for bulk insert
-        records = df.to_dicts()
+        # Add portfolio_id to all records
+        df = df.with_columns(pl.lit(portfolio_id).alias("portfolio_id"))
         
-        # Process each client
-        processed_count = 0
-        errors = []
+        # Set default client_type if not present
+        if "client_type" not in df.columns:
+            df = df.with_columns(pl.lit("individual").alias("client_type"))
+        else:
+            # Ensure client_type has a default value
+            df = df.with_columns(pl.col("client_type").fill_null("individual"))
         
-        for client_data in records:
+        # Use PostgreSQL's COPY command for bulk insert (much faster than ORM)
+        try:
+            # Get raw connection
+            connection = db.connection().connection
+            cursor = connection.cursor()
+            
+            # Create a CSV-like string buffer
+            csv_buffer = io.StringIO()
+            
+            # Define the columns we want to insert
+            client_columns = [
+                "portfolio_id", "employee_id", "last_name", "other_names", 
+                "residential_address", "postal_address", "phone_number", 
+                "title", "marital_status", "gender", "date_of_birth", 
+                "employer", "previous_employee_no", "social_security_no", 
+                "voters_id_no", "employment_date", "next_of_kin", 
+                "next_of_kin_contact", "next_of_kin_address", 
+                "search_name", "client_type"
+            ]
+            
+            # Get integer columns from the Client model
+            integer_columns = [c.name for c in Client.__table__.columns if c.type.python_type == int]
+            
+            # Write data to buffer in CSV format
+            for row in df.rows(named=True):
+                values = []
+                for col in client_columns:
+                    val = row.get(col, None)
+                    if val is None:
+                        values.append("")  # NULL in COPY format
+                    elif isinstance(val, (str, pl.Utf8)):
+                        # Escape special characters for COPY
+                        val_str = str(val).replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")
+                        values.append(val_str)
+                    elif isinstance(val, bool):
+                        values.append(str(val).lower())
+                    elif col in integer_columns:
+                        # Convert to integer for integer columns
+                        try:
+                            values.append(str(int(float(val))))
+                        except (ValueError, TypeError):
+                            values.append("0")  # Default to 0 for invalid values
+                    else:
+                        values.append(str(val))
+                
+                csv_buffer.write("\t".join(values) + "\n")
+            
+            # Reset buffer position to start
+            csv_buffer.seek(0)
+            
+            # Execute COPY command
+            cursor.copy_from(
+                csv_buffer,
+                "clients",
+                columns=client_columns,
+                sep="\t",
+                null=""
+            )
+            
+            # Commit the transaction
+            connection.commit()  # Commit at the connection level
+            
+            processed_count = df.height
+            logger.info(f"Bulk inserted {processed_count} clients using COPY command")
+            
+            return {
+                "processed": processed_count,
+                "errors": [],
+                "success": True
+            }
+            
+        except Exception as copy_error:
+            # Explicitly rollback the connection on error
             try:
-                # Create a new client record
-                client = Client(
-                    portfolio_id=portfolio_id,
-                    employee_id=client_data.get("employee_id"),
-                    last_name=client_data.get("last_name"),
-                    other_names=client_data.get("other_names"),
-                    residential_address=client_data.get("residential_address"),
-                    postal_address=client_data.get("postal_address"),
-                    phone_number=client_data.get("phone_number"),
-                    title=client_data.get("title"),
-                    marital_status=client_data.get("marital_status"),
-                    gender=client_data.get("gender"),
-                    date_of_birth=client_data.get("date_of_birth"),
-                    employer=client_data.get("employer"),
-                    previous_employee_no=client_data.get("previous_employee_no"),
-                    social_security_no=client_data.get("social_security_no"),
-                    voters_id_no=client_data.get("voters_id_no"),
-                    employment_date=client_data.get("employment_date"),
-                    next_of_kin=client_data.get("next_of_kin"),
-                    next_of_kin_contact=client_data.get("next_of_kin_contact"),
-                    next_of_kin_address=client_data.get("next_of_kin_address"),
-                    search_name=client_data.get("search_name"),
-                    client_type=client_data.get("client_type", "individual")
-                )
+                connection.rollback()
+            except Exception as rollback_error:
+                logger.error(f"Error during connection rollback: {str(rollback_error)}")
                 
-                # Add the client to the database
-                db.add(client)
-                processed_count += 1
+            logger.error(f"Error during COPY bulk insert: {str(copy_error)}")
+            logger.info("Falling back to bulk_save_objects method")
+            
+            # Fallback to bulk_save_objects if COPY fails
+            try:
+                # Convert to records for bulk insert
+                records = df.to_dicts()
                 
-                # Commit in batches to improve performance
-                if processed_count % 100 == 0:
-                    db.commit()
-                    
-            except Exception as e:
-                logger.error(f"Error processing client: {str(e)}")
-                errors.append(str(e))
-        
-        # Final commit for any remaining records
-        db.commit()
-        
-        return {
-            "processed": processed_count,
-            "errors": errors,
-            "success": len(errors) == 0
-        }
+                # Create Client objects
+                clients = []
+                for record in records:
+                    # Create a client object with only valid columns
+                    try:
+                        client = Client(**{k: v for k, v in record.items() 
+                                        if k in Client.__table__.columns.keys()})
+                        clients.append(client)
+                    except Exception as record_error:
+                        logger.warning(f"Error creating client object: {str(record_error)}, skipping record")
+                
+                # Bulk insert all clients at once
+                db.bulk_save_objects(clients)
+                db.commit()
+                
+                processed_count = len(clients)
+                logger.info(f"Bulk inserted {processed_count} clients using bulk_save_objects")
+                
+                return {
+                    "processed": processed_count,
+                    "errors": [],
+                    "success": True
+                }
+            except Exception as bulk_error:
+                db.rollback()  # Explicitly rollback on error
+                logger.error(f"Error during bulk_save_objects: {str(bulk_error)}")
+                raise bulk_error
         
     except Exception as e:
+        # Ensure transaction is rolled back
+        try:
+            db.rollback()
+        except Exception:
+            pass
+            
         logger.error(f"Error processing client data: {str(e)}")
         return {"error": str(e)}
+
 
 def run_quality_checks_sync(portfolio_id, db):
     """Synchronous function to run quality checks on portfolio data."""
