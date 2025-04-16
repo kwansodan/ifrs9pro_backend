@@ -75,52 +75,8 @@ async def generate_report(
     try:
         report_data = None
 
-        if report_request.report_type == ReportTypeEnum.COLLATERAL_SUMMARY:
-            report_data = generate_collateral_summary(
-                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
-            )
 
-        elif report_request.report_type == ReportTypeEnum.GUARANTEE_SUMMARY:
-            report_data = generate_guarantee_summary(
-                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
-            )
-
-        elif report_request.report_type == ReportTypeEnum.INTEREST_RATE_SUMMARY:
-            report_data = generate_interest_rate_summary(
-                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
-            )
-
-        elif report_request.report_type == ReportTypeEnum.REPAYMENT_SUMMARY:
-            report_data = generate_repayment_summary(
-                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
-            )
-
-        elif report_request.report_type == ReportTypeEnum.ASSUMPTIONS_SUMMARY:
-            report_data = generate_assumptions_summary(
-                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
-            )
-
-        elif report_request.report_type == ReportTypeEnum.AMORTISED_LOAN_BALANCES:
-            report_data = generate_amortised_loan_balances(
-                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
-            )
-
-        elif report_request.report_type == ReportTypeEnum.PROBABILITY_DEFAULT:
-            report_data = generate_probability_default_report(
-                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
-            )
-
-        elif report_request.report_type == ReportTypeEnum.EXPOSURE_DEFAULT:
-            report_data = generate_exposure_default_report(
-                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
-            )
-
-        elif report_request.report_type == ReportTypeEnum.LOSS_GIVEN_DEFAULT:
-            report_data = generate_loss_given_default_report(
-                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
-            )
-
-        elif report_request.report_type == ReportTypeEnum.ECL_DETAILED_REPORT:
+        if report_request.report_type == ReportTypeEnum.ECL_DETAILED_REPORT:
             report_data = generate_ecl_detailed_report(
                 db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
             )
@@ -168,41 +124,21 @@ async def generate_report(
         
         # Create a human-readable report name based on report type
         human_readable_name = ""
-        if report_request.report_type == ReportTypeEnum.COLLATERAL_SUMMARY:
-            human_readable_name = f"Collateral Summary Report - {portfolio.name}"
-        elif report_request.report_type == ReportTypeEnum.GUARANTEE_SUMMARY:
-            human_readable_name = f"Guarantee Summary Report - {portfolio.name}"
-        elif report_request.report_type == ReportTypeEnum.INTEREST_RATE_SUMMARY:
-            human_readable_name = f"Interest Rate Summary Report - {portfolio.name}"
-        elif report_request.report_type == ReportTypeEnum.REPAYMENT_SUMMARY:
-            human_readable_name = f"Repayment Summary Report - {portfolio.name}"
-        elif report_request.report_type == ReportTypeEnum.ASSUMPTIONS_SUMMARY:
-            human_readable_name = f"Assumptions Summary Report - {portfolio.name}"
-        elif report_request.report_type == ReportTypeEnum.AMORTISED_LOAN_BALANCES:
-            human_readable_name = f"Amortised Loan Balances Report - {portfolio.name}"
-        elif report_request.report_type == ReportTypeEnum.PROBABILITY_DEFAULT:
-            human_readable_name = f"Probability of Default Report - {portfolio.name}"
-        elif report_request.report_type == ReportTypeEnum.EXPOSURE_DEFAULT:
-            human_readable_name = f"Exposure at Default Report - {portfolio.name}"
-        elif report_request.report_type == ReportTypeEnum.LOSS_GIVEN_DEFAULT:
-            human_readable_name = f"Loss Given Default Report - {portfolio.name}"
-        elif report_request.report_type == ReportTypeEnum.ECL_DETAILED_REPORT:
+        if report_request.report_type == ReportTypeEnum.ECL_DETAILED_REPORT:
             human_readable_name = f"ECL Detailed Report - {portfolio.name}"
         elif report_request.report_type == ReportTypeEnum.ECL_REPORT_SUMMARISED:
-            human_readable_name = f"ECL Summarised Report - {portfolio.name}"
+            human_readable_name = f"ECL Summarised By Stages Report - {portfolio.name}"
         elif report_request.report_type == ReportTypeEnum.LOCAL_IMPAIRMENT_DETAILS_REPORT:
             human_readable_name = f"Local Impairment Detailed Report - {portfolio.name}"
         elif report_request.report_type == ReportTypeEnum.LOCAL_IMPAIRMENT_REPORT_SUMMARISED:
-            human_readable_name = f"Local Impairment Summarised Report - {portfolio.name}"
+            human_readable_name = f"Local Impairment Summarised By Stages Report - {portfolio.name}"
         elif report_request.report_type == ReportTypeEnum.JOURNALS_REPORT:
-            human_readable_name = f"IFRS9 and Local Impairment Journal Entries - {report_request.report_date.strftime('%B %d, %Y')}"
+            human_readable_name = f"Journals Report - {portfolio.name}"
         else:
             human_readable_name = f"{report_request.report_type.value.replace('_', ' ').title()} - {portfolio.name}"
         
-        # Add the date to the report name if not already included
-        if report_request.report_type != ReportTypeEnum.JOURNALS_REPORT and report_request.report_date:
-            human_readable_name += f" - {report_request.report_date.strftime('%B %d, %Y')}"
-
+    
+    
         # Return both the data and Excel in the response
         return {
             "portfolio_id": portfolio_id,

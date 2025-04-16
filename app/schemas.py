@@ -43,19 +43,10 @@ class DataSource(str, Enum):
 
 
 class ReportTypeEnum(str, Enum):
-    COLLATERAL_SUMMARY = "collateral_summary"
-    GUARANTEE_SUMMARY = "guarantee_summary"
-    INTEREST_RATE_SUMMARY = "interest_rate_summary"
-    REPAYMENT_SUMMARY = "repayment_summary"
-    ASSUMPTIONS_SUMMARY = "assumptions_summary"
-    AMORTISED_LOAN_BALANCES = "amortised_loan_balances"
-    PROBABILITY_DEFAULT = "probability_default"
-    EXPOSURE_DEFAULT = "exposure_default"
-    LOSS_GIVEN_DEFAULT = "loss_given_default"
     ECL_DETAILED_REPORT = "ecl_detailed_report"
-    ECL_REPORT_SUMMARISED = "ecl_report_summarised"
-    LOCAL_IMPAIRMENT_DETAILS_REPORT = "local_impairment_details_report"
-    LOCAL_IMPAIRMENT_REPORT_SUMMARISED = "local_impairment_report_summarised"
+    ECL_REPORT_SUMMARISED = "ecl_report_summarised_by_stages"
+    LOCAL_IMPAIRMENT_DETAILS_REPORT = "local_impairment_detailed_report"
+    LOCAL_IMPAIRMENT_REPORT_SUMMARISED = "local_impairment_report_summarised_by_stages"
     JOURNALS_REPORT = "journals_report"
 
 
