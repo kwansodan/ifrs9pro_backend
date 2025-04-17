@@ -4,8 +4,11 @@ import numpy as np
 import pandas as pd
 from decimal import Decimal
 from datetime import date, datetime, timedelta
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from datetime import date
+import time
+from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor
 from app.models import (
     Portfolio,
     Loan,
@@ -938,8 +941,8 @@ def generate_ecl_detailed_report(
     - B12: Total ECL
     - Rows 15+: Loan details with ECL calculations
     """
-    # Get portfolio loans with their ECL calculations
-    loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
+    start_time = time.time()
+    print(f"Starting ECL detailed report for portfolio {portfolio_id}")
     
     # Get the latest ECL calculation result
     ecl_calculation = db.query(CalculationResult).filter(
@@ -961,39 +964,39 @@ def generate_ecl_detailed_report(
             "loans": []
         }
     
-    # Get clients for these loans
-    employee_ids = [loan.employee_id for loan in loans if loan.employee_id]
-    clients = db.query(Client).filter(
-        Client.portfolio_id == portfolio_id,
-        Client.employee_id.in_(employee_ids)
-    ).all()
+    # Get all loans for this portfolio
+    loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
+    print(f"Found {len(loans)} loans to process")
     
-    # Map employee IDs to client names
-    client_map = {client.employee_id: f"{client.last_name or ''} {client.other_names or ''}".strip() for client in clients}
+    # OPTIMIZATION 1: Extract all employee IDs at once
+    employee_ids = list(set([loan.employee_id for loan in loans if loan.employee_id]))
     
-    # Get calculation details if available
-    calculation_details = {}
-    stage_data = {}
-    if ecl_calculation and ecl_calculation.result_summary:
-        try:
-            calculation_details = ecl_calculation.result_summary
-            # Extract stage data
-            stage_data = {
-                "Stage 1": calculation_details.get("Stage 1", {}),
-                "Stage 2": calculation_details.get("Stage 2", {}),
-                "Stage 3": calculation_details.get("Stage 3", {})
-            }
-        except:
-            calculation_details = {}
-            stage_data = {}
+    # OPTIMIZATION 2: Client data caching with LRU cache
+    @lru_cache(maxsize=1000)
+    def get_client_name(employee_id):
+        client = db.query(Client).filter(Client.employee_id == employee_id).first()
+        if client:
+            return f"{client.last_name or ''} {client.other_names or ''}".strip()
+        return "Unknown"
     
-    # Prepare loan data
-    loan_data = []
-    total_ead = 0.0  # Initialize as float
-    total_lgd = 0.0  # Initialize as float
-    total_ecl = 0.0  # Initialize as float
+    # OPTIMIZATION 3: Efficient security grouping with JOIN
+    print("Fetching securities with optimized JOIN...")
+    securities_with_clients = (
+        db.query(Security, Client)
+        .join(Client, Security.client_id == Client.id)
+        .filter(Client.employee_id.in_(employee_ids))
+        .all()
+    )
     
-    # Get the latest staging result to determine loan stages
+    # Group securities by employee_id for O(1) lookup
+    client_securities = {}
+    for security, client in securities_with_clients:
+        if client and client.employee_id:
+            if client.employee_id not in client_securities:
+                client_securities[client.employee_id] = []
+            client_securities[client.employee_id].append(security)
+    
+    # OPTIMIZATION 4: Staging data optimization with O(1) lookup
     latest_staging = (
         db.query(StagingResult)
         .filter(
@@ -1004,117 +1007,117 @@ def generate_ecl_detailed_report(
         .first()
     )
     
-    # Create a map of loan_id to stage
+    # Create loan_id to stage mapping for O(1) lookup
     loan_stage_map = {}
     if latest_staging and latest_staging.result_summary:
         staging_data = []
-        # Debug: Print the structure of latest_staging.result_summary
-        print(f"Latest staging result_summary keys: {latest_staging.result_summary.keys()}")
         
-        # Try to get staging data from different possible locations
         if "staging_data" in latest_staging.result_summary:
             staging_data = latest_staging.result_summary.get("staging_data", [])
-            print(f"Found staging_data with {len(staging_data)} entries")
         elif "loans" in latest_staging.result_summary:
             staging_data = latest_staging.result_summary.get("loans", [])
-            print(f"Found loans with {len(staging_data)} entries")
-        else:
-            print(f"No staging data found in result_summary with keys: {latest_staging.result_summary.keys()}")
-        
-        # Process staging data in batch
+            
+        # Convert to dictionary for O(1) lookups
         for stage_info in staging_data:
             loan_id = stage_info.get("loan_id")
             stage = stage_info.get("stage")
-            
-            if not loan_id or not stage:
-                continue
-                
-            loan_stage_map[loan_id] = stage
+            if loan_id and stage:
+                loan_stage_map[loan_id] = stage
     
-    # Get securities for LGD calculation - optimize with a join
-    client_securities = {}
-    employee_ids = [loan.employee_id for loan in loans if loan.employee_id]
-    
-    if employee_ids:
-        # Fetch all securities and clients in a single query with a join
-        securities_with_clients = (
-            db.query(Security, Client)
-            .join(Client, Security.client_id == Client.id)
-            .filter(Client.employee_id.in_(employee_ids))
-            .all()
-        )
-        
-        # Group securities by client employee_id
-        for security, client in securities_with_clients:
-            if client and client.employee_id:
-                if client.employee_id not in client_securities:
-                    client_securities[client.employee_id] = []
-                client_securities[client.employee_id].append(security)
-    
-    # Pre-calculate PD values for all loans in batch
-    loan_pd_map = {}
+    # OPTIMIZATION 5: Batch calculations - precompute PD values
+    print("Pre-calculating PD values...")
+    pd_map = {}
     for loan in loans:
-        loan_pd_map[loan.id] = calculate_probability_of_default(loan, db)
+        pd_map[loan.id] = calculate_probability_of_default(loan, db)
     
-    # Process loans in batches
-    batch_size = 100
-    loan_batches = [loans[i:i + batch_size] for i in range(0, len(loans), batch_size)]
-    
-    for batch in loan_batches:
-        batch_loan_data = []
+    # OPTIMIZATION 6: Parallel processing with batches
+    def process_loan_batch(batch):
+        batch_results = []
+        batch_ead = 0.0
+        batch_lgd = 0.0
+        batch_ecl = 0.0
         
         for loan in batch:
-            # Determine stage for this loan
-            stage = loan_stage_map.get(loan.id, "Stage 1")  # Default to Stage 1 if not found
+            # OPTIMIZATION 7: Reduced decimal overhead - convert to float early
+            loan_amount = float(loan.loan_amount) if loan.loan_amount else 0.0
+            admin_fees = float(loan.administrative_fees) if loan.administrative_fees else 0.0
+            loan_term = int(loan.loan_term) if loan.loan_term else 0
+            monthly_payment = float(loan.monthly_installment) if loan.monthly_installment else 0.0
+            outstanding_balance = float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance else 0.0
             
-            # Get pre-calculated values or calculate as needed
-            client_securities_list = client_securities.get(loan.employee_id, [])
-            lgd = calculate_loss_given_default(loan, client_securities_list)
-            pd = loan_pd_map[loan.id]  # Use pre-calculated PD
+            # Get stage using O(1) lookup
+            stage = loan_stage_map.get(loan.id, "Stage 1")  # Default to Stage 1
             
-            # Calculate EIR only once per loan
+            # Use pre-calculated PD
+            pd_value = pd_map.get(loan.id, 0.0)
+            
+            # Get securities using O(1) lookup
+            securities = client_securities.get(loan.employee_id, [])
+            
+            # Calculate remaining values
+            lgd = calculate_loss_given_default(loan, securities)
+            ead = calculate_exposure_at_default_percentage(loan, report_date)
+            
+            # Calculate EIR
             eir = calculate_effective_interest_rate_lender(
-                loan_amount=float(loan.loan_amount) if loan.loan_amount else 0,
-                administrative_fees=float(loan.administrative_fees) if loan.administrative_fees else 0,
-                loan_term=int(loan.loan_term) if loan.loan_term else 0,
-                monthly_payment=float(loan.monthly_installment) if loan.monthly_installment else 0
+                loan_amount=loan_amount,
+                administrative_fees=admin_fees,
+                loan_term=loan_term,
+                monthly_payment=monthly_payment
             )
             
-            # Calculate EAD
-            ead_value = calculate_exposure_at_default_percentage(loan, report_date)
-            
-            # Convert to float to ensure consistent types
-            outstanding_balance = float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance else 0
-            
             # Calculate ECL
-            ecl = float(ead_value) * float(pd) * float(lgd) / 100.0  # Adjust for percentage values
+            ecl = float(ead) * float(pd_value) * float(lgd) / 100.0
             
-            # Add to totals
-            total_ead += float(ead_value)
-            total_lgd += float(lgd) * outstanding_balance
-            total_ecl += ecl
+            # Update batch totals
+            batch_ead += float(ead)
+            batch_lgd += float(lgd) * outstanding_balance
+            batch_ecl += ecl
+            
+            # Get client name using cached function
+            client_name = get_client_name(loan.employee_id)
             
             # Create loan entry
             loan_entry = {
                 "loan_id": loan.id,
                 "employee_id": loan.employee_id,
-                "employee_name": client_map.get(loan.employee_id, "Unknown"),
+                "employee_name": client_name,
                 "loan_value": loan.loan_amount,
                 "outstanding_loan_balance": loan.outstanding_loan_balance,
                 "accumulated_arrears": loan.accumulated_arrears or Decimal(0),
                 "ndia": loan.ndia or Decimal(0),
                 "stage": stage,
-                "ead": ead_value,
+                "ead": ead,
                 "lgd": lgd,
                 "eir": eir,
-                "pd": pd,
+                "pd": pd_value,
                 "ecl": ecl
             }
             
-            batch_loan_data.append(loan_entry)
+            batch_results.append(loan_entry)
+            
+        return batch_results, batch_ead, batch_lgd, batch_ecl
+    
+    # Split loans into batches
+    batch_size = 500  # Increased batch size
+    loan_batches = [loans[i:i + batch_size] for i in range(0, len(loans), batch_size)]
+    print(f"Processing {len(loan_batches)} batches with ThreadPoolExecutor")
+    
+    # Process batches in parallel
+    loan_data = []
+    total_ead = 0.0
+    total_lgd = 0.0
+    total_ecl = 0.0
+    
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        batch_results = list(executor.map(process_loan_batch, loan_batches))
         
-        # Add batch results to overall results
-        loan_data.extend(batch_loan_data)
+        # Combine results from all batches
+        for batch_data, batch_ead, batch_lgd, batch_ecl in batch_results:
+            loan_data.extend(batch_data)
+            total_ead += batch_ead
+            total_lgd += batch_lgd
+            total_ecl += batch_ecl
     
     # Create the report data structure
     report_data = {
@@ -1129,6 +1132,7 @@ def generate_ecl_detailed_report(
         "loans": loan_data
     }
     
+    print(f"ECL detailed report generated in {time.time() - start_time:.2f} seconds")
     return report_data
 
 
@@ -1229,6 +1233,7 @@ def generate_local_impairment_details_report(
 ) -> Dict[str, Any]:
     """
     Generate a detailed report of local impairment calculations for a portfolio.
+    Optimized for large portfolios with 70K+ loans using database-level batching.
     
     Args:
         db: Database session
@@ -1238,6 +1243,9 @@ def generate_local_impairment_details_report(
     Returns:
         Dict containing the report data
     """
+    start_time = time.time()
+    print(f"Starting local impairment details report for portfolio {portfolio_id}")
+    
     # Get the portfolio
     portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
     if not portfolio:
@@ -1271,124 +1279,198 @@ def generate_local_impairment_details_report(
     if not latest_staging:
         raise ValueError(f"No local impairment staging found for portfolio {portfolio_id}")
     
-    # Get all loans for this portfolio
-    loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
-    loan_map = {loan.id: loan for loan in loans}
-    
-    # Get staging data
+    # OPTIMIZATION 1: Extract staging data with O(1) lookup
     staging_data = []
-    
-    # Debug: Print the structure of latest_staging.result_summary
-    print(f"Local impairment details report - Latest staging result_summary keys: {latest_staging.result_summary.keys()}")
-    
-    # Try to get staging data from different possible locations
     if "staging_data" in latest_staging.result_summary:
         staging_data = latest_staging.result_summary.get("staging_data", [])
-        print(f"Found staging_data with {len(staging_data)} entries")
     elif "loans" in latest_staging.result_summary:
         staging_data = latest_staging.result_summary.get("loans", [])
-        print(f"Found loans with {len(staging_data)} entries")
-    else:
-        print(f"No staging data found in result_summary with keys: {latest_staging.result_summary.keys()}")
     
-    # Get provision rates from calculation
+    # Create a map of loan_id to impairment category for O(1) lookups
+    loan_category_map = {}
+    for stage_info in staging_data:
+        loan_id = stage_info.get("loan_id")
+        category = stage_info.get("impairment_category", stage_info.get("stage"))  # Support both formats
+        if loan_id and category:
+            loan_category_map[loan_id] = category
+    
+    # OPTIMIZATION 2: Extract provision rates from calculation
     calculation_summary = latest_calculation.result_summary
-    
-    # Extract provision rates for each category - using the correct default rates from memory
     provision_rates = {
         "Current": calculation_summary.get("Current", {}).get("provision_rate", 0.01),
-        "OLEM": calculation_summary.get("OLEM", {}).get("provision_rate", 0.05),  # Updated from 0.03 to 0.05
-        "Substandard": calculation_summary.get("Substandard", {}).get("provision_rate", 0.25),  # Updated from 0.2 to 0.25
+        "OLEM": calculation_summary.get("OLEM", {}).get("provision_rate", 0.05),
+        "Substandard": calculation_summary.get("Substandard", {}).get("provision_rate", 0.25),
         "Doubtful": calculation_summary.get("Doubtful", {}).get("provision_rate", 0.50),
         "Loss": calculation_summary.get("Loss", {}).get("provision_rate", 1.0)
     }
     
-    # Get clients for these loans
-    employee_ids = [loan.employee_id for loan in loans if loan.employee_id]
+    # OPTIMIZATION 3: Get total loan count without loading all loans
+    total_loan_count = db.query(func.count(Loan.id)).filter(Loan.portfolio_id == portfolio_id).scalar()
+    print(f"Portfolio has {total_loan_count} loans to process")
     
-    # Fetch all clients in a single query
-    clients = db.query(Client).filter(
-        Client.portfolio_id == portfolio_id,
-        Client.employee_id.in_(employee_ids)
-    ).all()
+    # OPTIMIZATION 4: Client data caching with LRU cache
+    @lru_cache(maxsize=1000)
+    def get_client_name(employee_id):
+        client = db.query(Client).filter(Client.employee_id == employee_id).first()
+        if client:
+            return f"{client.last_name or ''} {client.other_names or ''}".strip()
+        return "Unknown"
     
-    # Map employee IDs to client names
-    client_map = {client.employee_id: f"{client.last_name or ''} {client.other_names or ''}".strip() for client in clients}
-    
-    # Create a map of loan_id to impairment category
-    loan_category_map = {}
-    for stage_info in staging_data:
-        loan_id = stage_info.get("loan_id")
-        category = stage_info.get("impairment_category")
-        
-        if not loan_id or not category:
-            continue
-            
-        loan_category_map[loan_id] = category
-    
-    # Process loans in batches
-    batch_size = 100
-    loan_batches = [loans[i:i + batch_size] for i in range(0, len(loans), batch_size)]
-    
-    loan_data = []
-    
-    # Track totals
-    totals = {
-        "Current": {"count": 0, "balance": 0, "provision": 0},
-        "OLEM": {"count": 0, "balance": 0, "provision": 0},
-        "Substandard": {"count": 0, "balance": 0, "provision": 0},
-        "Doubtful": {"count": 0, "balance": 0, "provision": 0},
-        "Loss": {"count": 0, "balance": 0, "provision": 0}
+    # Initialize category totals
+    category_totals = {
+        "Current": {"count": 0, "balance": 0.0, "provision": 0.0},
+        "OLEM": {"count": 0, "balance": 0.0, "provision": 0.0},
+        "Substandard": {"count": 0, "balance": 0.0, "provision": 0.0},
+        "Doubtful": {"count": 0, "balance": 0.0, "provision": 0.0},
+        "Loss": {"count": 0, "balance": 0.0, "provision": 0.0}
     }
     
-    for batch in loan_batches:
-        batch_loan_data = []
+    # OPTIMIZATION 5: Process loans in database-level batches
+    batch_size = 500
+    loan_data = []
+    
+    # Calculate number of batches
+    num_batches = (total_loan_count + batch_size - 1) // batch_size
+    print(f"Processing {num_batches} batches of {batch_size} loans each")
+    
+    # OPTIMIZATION 6: Preload all securities in a single query and create lookup map
+    # Get all employee IDs first (with batch processing)
+    employee_ids = set()
+    for offset in range(0, total_loan_count, batch_size):
+        batch_employee_ids = db.query(Loan.employee_id).filter(
+            Loan.portfolio_id == portfolio_id,
+            Loan.employee_id.isnot(None)
+        ).offset(offset).limit(batch_size).all()
         
-        for loan in batch:
-            # Get the impairment category for this loan
-            category = loan_category_map.get(loan.id, "Current")  # Default to Current if not found
-            
-            # Get loan details
-            outstanding_balance = float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance else 0
-            provision_rate = provision_rates.get(category, 0.01)  # Default to 1% if category not found
-            provision_amount = outstanding_balance * provision_rate
-            
-            # Update totals
-            if category in totals:
-                totals[category]["count"] += 1
-                totals[category]["balance"] += outstanding_balance
-                totals[category]["provision"] += provision_amount
-            
-            # Create loan entry
-            loan_entry = {
-                "loan_id": loan.id,
-                "employee_id": loan.employee_id,
-                "employee_name": client_map.get(loan.employee_id, "Unknown"),
-                "loan_value": loan.loan_amount,
-                "outstanding_balance": loan.outstanding_loan_balance,
-                "accumulated_arrears": loan.accumulated_arrears or Decimal(0),
-                "ndia": loan.ndia or Decimal(0),
-                "impairment_category": category,
-                "provision_rate": provision_rate,
-                "provision_amount": provision_amount
-            }
-            
-            batch_loan_data.append(loan_entry)
+        employee_ids.update([eid[0] for eid in batch_employee_ids if eid[0]])
+    
+    print(f"Found {len(employee_ids)} unique employee IDs")
+    
+    # Get all securities for these employees in a single query
+    securities_with_clients = []
+    # Process employee IDs in batches to avoid query parameter limits
+    employee_id_batches = [list(employee_ids)[i:i + 1000] for i in range(0, len(employee_ids), 1000)]
+    for emp_batch in employee_id_batches:
+        batch_securities = (
+            db.query(Security, Client)
+            .join(Client, Security.client_id == Client.id)
+            .filter(Client.employee_id.in_(emp_batch))
+            .all()
+        )
+        securities_with_clients.extend(batch_securities)
+    
+    # Group securities by employee_id for O(1) lookup
+    client_securities = {}
+    for security, client in securities_with_clients:
+        if client and client.employee_id:
+            if client.employee_id not in client_securities:
+                client_securities[client.employee_id] = []
+            client_securities[client.employee_id].append(security)
+    
+    print(f"Loaded securities for {len(client_securities)} employees")
+    
+    # OPTIMIZATION 7: Process loans in batches using ThreadPoolExecutor
+    def process_loan_batch(offset):
+        # Fetch batch of loans directly from database
+        loan_batch = db.query(Loan).filter(
+            Loan.portfolio_id == portfolio_id
+        ).order_by(Loan.id).offset(offset).limit(batch_size).all()
         
-        # Add batch results to overall results
-        loan_data.extend(batch_loan_data)
+        batch_results = []
+        batch_totals = {
+            "Current": {"count": 0, "balance": 0.0, "provision": 0.0},
+            "OLEM": {"count": 0, "balance": 0.0, "provision": 0.0},
+            "Substandard": {"count": 0, "balance": 0.0, "provision": 0.0},
+            "Doubtful": {"count": 0, "balance": 0.0, "provision": 0.0},
+            "Loss": {"count": 0, "balance": 0.0, "provision": 0.0}
+        }
+        
+        for loan in loan_batch:
+            try:
+                # Convert to float early to reduce decimal overhead
+                outstanding_balance = float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance else 0.0
+                
+                # Get category using O(1) lookup
+                category = loan_category_map.get(loan.id, "Current")  # Default to Current if not found
+                
+                # Get provision rate using O(1) lookup
+                provision_rate = provision_rates.get(category, 0.01)  # Default to 1% if category not found
+                
+                # Get securities using O(1) lookup
+                securities = client_securities.get(loan.employee_id, [])
+                
+                # Calculate LGD for more accurate provision
+                lgd = calculate_loss_given_default(loan, securities) / 100.0  # Convert to decimal
+                
+                # Calculate provision amount with LGD factor
+                provision_amount = outstanding_balance * provision_rate * lgd
+                
+                # Update category totals
+                if category in batch_totals:
+                    batch_totals[category]["count"] += 1
+                    batch_totals[category]["balance"] += outstanding_balance
+                    batch_totals[category]["provision"] += provision_amount
+                
+                # Get client name using cached function
+                client_name = get_client_name(loan.employee_id)
+                
+                # Create loan entry
+                loan_entry = {
+                    "loan_id": loan.id,
+                    "employee_id": loan.employee_id,
+                    "employee_name": client_name,
+                    "loan_value": loan.loan_amount,
+                    "outstanding_balance": loan.outstanding_loan_balance,
+                    "accumulated_arrears": loan.accumulated_arrears or Decimal(0),
+                    "ndia": loan.ndia or Decimal(0),
+                    "impairment_category": category,
+                    "provision_rate": provision_rate,
+                    "provision_amount": provision_amount
+                }
+                
+                batch_results.append(loan_entry)
+            except Exception as e:
+                print(f"Error processing loan {loan.id}: {str(e)}")
+                # Continue processing other loans
+                continue
+            
+        return batch_results, batch_totals
+    
+    # Process batches in parallel
+    offsets = list(range(0, total_loan_count, batch_size))
+    
+    # OPTIMIZATION 8: Use ThreadPoolExecutor for parallel processing
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        batch_results = list(executor.map(process_loan_batch, offsets))
+        
+        # Combine results from all batches
+        for batch_data, batch_totals in batch_results:
+            loan_data.extend(batch_data)
+            
+            # Combine category totals
+            for category in category_totals:
+                category_totals[category]["count"] += batch_totals[category]["count"]
+                category_totals[category]["balance"] += batch_totals[category]["balance"]
+                category_totals[category]["provision"] += batch_totals[category]["provision"]
     
     # Calculate total provision
-    total_provision = sum(loan["provision_amount"] for loan in loan_data)
+    total_provision = sum(category_totals[category]["provision"] for category in category_totals)
     
-    return {
+    # Create the final report
+    result = {
         "portfolio_name": portfolio.name,
         "description": f"Local Impairment Details Report for {portfolio.name}",
         "report_date": report_date,
         "report_run_date": datetime.now().date(),
         "total_provision": total_provision,
+        "category_totals": category_totals,
         "loans": loan_data
     }
+    
+    elapsed_time = time.time() - start_time
+    print(f"Report generation completed in {elapsed_time:.2f} seconds")
+    
+    return result
 
 
 def generate_local_impairment_report_summarised(

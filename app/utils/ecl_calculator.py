@@ -264,6 +264,13 @@ def calculate_probability_of_default(loan, db):
         import pandas as pd
         import warnings
         
+        # Import Client model inside the function to avoid circular imports
+        try:
+            from app.models import Client
+        except ImportError:
+            logger.error("Failed to import Client model, using default PD value")
+            return 5.0
+        
         # Suppress specific warnings
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=UserWarning, 
@@ -276,16 +283,26 @@ def calculate_probability_of_default(loan, db):
                 with open("app/ml_models/logistic_model.pkl", "rb") as file:
                     model = pickle.load(file)
             except FileNotFoundError:
-                # Return a default value if model file is not found
+                logger.warning("ML model file not found, using default PD value")
+                return 5.0
+                
+            # Check if employee_id exists
+            if not loan or not loan.employee_id:
+                logger.warning(f"Loan has no employee_id, using default PD value")
                 return 5.0
                 
             # Get client associated with this loan's employee_id
-            client = db.query(Client).filter(
-                Client.employee_id == loan.employee_id
-            ).first()
+            try:
+                client = db.query(Client).filter(
+                    Client.employee_id == loan.employee_id
+                ).first()
+            except Exception as e:
+                logger.error(f"Error querying client: {str(e)}")
+                return 5.0
             
             if not client or not client.date_of_birth:
-                return 5.0  # Default 5% probability if client or DOB not found
+                logger.warning(f"Client or DOB not found for employee_id {loan.employee_id}, using default PD value")
+                return 5.0
             
             # Get year of birth from date of birth
             year_of_birth = client.date_of_birth.year
@@ -299,19 +316,19 @@ def calculate_probability_of_default(loan, db):
             # Create DataFrame with proper feature name
             X_new = pd.DataFrame({feature_name: [year_of_birth]})
             
-            # Get prediction and probability from model
-            prediction = model.predict(X_new)[0]
-            probability = model.predict_proba(X_new)[0][1]  # Probability of default
-            
-            # Convert to percentage
-            percentage = probability * 100
-            
-            return percentage
+            # Predict probability of default
+            try:
+                # Get the probability of the positive class (default)
+                proba = model.predict_proba(X_new)[0][1]
+                # Convert to percentage
+                pd_value = proba * 100
+                return pd_value
+            except Exception as e:
+                logger.error(f"Error predicting PD: {str(e)}")
+                return 5.0
     except Exception as e:
-        # Handle exceptions but maintain return type as float
-        print(f"Error calculating probability of default: {str(e)}")
+        logger.error(f"Error calculating probability of default: {str(e)}")
         return 5.0  # Default 5% probability on error
-
 
 
 def get_amortization_schedule(

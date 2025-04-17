@@ -675,9 +675,9 @@ def load_excel_template(report_type: str) -> Workbook:
     # Map report types to template files
     template_map = {
         "ecl_detailed_report": "ecl_detailed_report.xlsx",
-        "ecl_report_summarised": "ecl_report_summarised.xlsx",
-        "local_impairment_details_report": "local_impairment_details_report.xlsx",
-        "local_impairment_report_summarised": "local_impairment_report_summarised.xlsx",
+        "ecl_report_summarised_by_stages": "ecl_report_summarised.xlsx",
+        "local_impairment_detailed_report": "local_impairment_details_report.xlsx",
+        "local_impairment_report_summarised_by_stages": "local_impairment_report_summarised.xlsx",
         "journals_report": "journals_report.xlsx",
     }
     
