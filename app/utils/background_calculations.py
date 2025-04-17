@@ -18,6 +18,7 @@ from app.utils.ecl_calculator import (
     get_amortization_schedule, get_ecl_by_stage, calculate_effective_interest_rate_lender
 )
 from app.utils.staging import parse_days_range
+from sqlalchemy import func
 
 logger = logging.getLogger(__name__)
 
@@ -264,9 +265,29 @@ async def process_ecl_calculation(
             client_securities_list = client_securities.get(loan.employee_id, [])
 
             # Calculate ECL components for the loan
-            lgd = calculate_loss_given_default(loan, client_securities_list)
-            pd = calculate_probability_of_default(loan, db)
-            ead_value = calculate_exposure_at_default_percentage(loan, reporting_date)
+            try:
+                lgd = calculate_loss_given_default(loan, client_securities_list)
+            except Exception as e:
+                logger.warning(f"LGD calculation failed for loan {loan.id}: {str(e)}")
+                lgd = 0.65  # Default to 65% if calculation fails
+            
+            try:
+                pd = calculate_probability_of_default(loan, db)
+            except Exception as e:
+                logger.warning(f"PD calculation failed for loan {loan.id}: {str(e)}")
+                pd = 0.05  # Default to 5% if calculation fails
+            
+            try:
+                if loan.loan_issue_date is None:
+                    raise ValueError("Loan issue date is None")
+                if reporting_date is None:
+                    raise ValueError("Reporting date is None")
+                ead_percentage = calculate_exposure_at_default_percentage(loan, reporting_date)
+                ead_value = float(loan.outstanding_loan_balance) * (ead_percentage / 100.0)
+            except (TypeError, ValueError, AttributeError) as e:
+                logger.warning(f"EAD calculation failed for loan {loan.id}: {str(e)}")
+                # Default to outstanding balance if calculation fails
+                ead_value = float(loan.outstanding_loan_balance)
             
             # Convert stage string to numeric value for get_ecl_by_stage function
             stage_num = 1
@@ -285,7 +306,7 @@ async def process_ecl_calculation(
             # Get monthly installment
             monthly_installment = float(loan.monthly_installment) if loan.monthly_installment else 0
             
-            # Get effective interest rate
+            # Calculate effective interest rate
             admin_fees = float(loan.administrative_fees) if loan.administrative_fees else 0
             effective_interest_rate = calculate_effective_interest_rate_lender(
                 loan_amount, admin_fees, loan_term, monthly_installment
@@ -991,7 +1012,7 @@ def retrieve_loans_for_staging(portfolio_id: int, db: Session):
         stage_3_count = summary.get("Stage 3", {}).get("num_loans", 0)
         
         # Sort loans by outstanding loan balance for a simple approximation
-        sorted_loans = sorted(all_loans, key=lambda x: float(x.outstanding_loan_balance if x.outstanding_loan_balance is not None else 0), reverse=True)
+        sorted_loans = sorted(all_loans, key=lambda x: float(x.outstanding_loan_balance) if x.outstanding_loan_balance is not None else 0, reverse=True)
         
         # Distribute loans based on counts
         stage_1_loans = []
@@ -1020,15 +1041,15 @@ def calculate_stage_totals(loans):
     """
     Calculate total outstanding balance and provision amount for a set of loans.
     """
-    total_outstanding = sum(float(loan.outstanding_loan_balance if loan.outstanding_loan_balance is not None else 0) for loan in loans)
+    total_outstanding = sum(float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance is not None else 0 for loan in loans)
     
     # Since the Loan model doesn't have PD, LGD, and EAD attributes,
     # we'll use simplified calculations based on available attributes
     total_provision = 0
     for loan in loans:
         # Use loan_amount as a base for calculations
-        loan_amount = float(loan.loan_amount if loan.loan_amount is not None else 0)
-        outstanding_balance = float(loan.outstanding_loan_balance if loan.outstanding_loan_balance is not None else 0)
+        loan_amount = float(loan.loan_amount) if loan.loan_amount is not None else 0
+        outstanding_balance = float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance is not None else 0
         
         # Simple default calculation: 5% of outstanding balance
         # This is a placeholder - in a real system, these would be calculated based on 
@@ -1046,17 +1067,19 @@ def process_ecl_calculation_sync(
 ) -> Dict[str, Any]:
     """
     Synchronously process ECL calculation and return the result.
+    Performs detailed ECL calculations including PD, EAD, LGD and amortization schedules
+    for more accurate IFRS 9 compliance.
+    
+    Optimized for large portfolios with 70K+ loans using database-level batching.
     """
     logger.info(f"Starting synchronous ECL calculation for portfolio {portfolio_id}")
+    start_time = datetime.now()
     
     # Verify portfolio exists
     portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
     if not portfolio:
         logger.error(f"Portfolio with ID {portfolio_id} not found")
         raise ValueError(f"Portfolio with ID {portfolio_id} not found")
-    
-    # Get all loans for this portfolio
-    all_loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
     
     # Extract stage information from staging result
     staging_summary = staging_result.result_summary
@@ -1074,24 +1097,229 @@ def process_ecl_calculation_sync(
     # Log the extracted values for debugging
     logger.info(f"From staging: Stage 1: {stage_1_count} loans, ${stage_1_balance}; Stage 2: {stage_2_count} loans, ${stage_2_balance}; Stage 3: {stage_3_count} loans, ${stage_3_balance}")
     
-    # Calculate provisions based on fixed rates
-    stage_1_rate = Decimal("0.01")  # Fixed 1% for Stage 1
-    stage_2_rate = Decimal("0.05")  # Fixed 5% for Stage 2
-    stage_3_rate = Decimal("0.15")  # Fixed 15% for Stage 3
+    # OPTIMIZATION 1: Get total loan count without loading all loans
+    total_loan_count = db.query(func.count(Loan.id)).filter(Loan.portfolio_id == portfolio_id).scalar()
+    logger.info(f"Portfolio has {total_loan_count} loans to process")
     
-    stage_1_provision = Decimal(str(stage_1_balance)) * stage_1_rate
-    stage_2_provision = Decimal(str(stage_2_balance)) * stage_2_rate
-    stage_3_provision = Decimal(str(stage_3_balance)) * stage_3_rate
+    # OPTIMIZATION 2: Create a map of loan_id to stage for O(1) lookups
+    loan_stage_map = {}
+    if "loans" in staging_summary:
+        for loan_info in staging_summary["loans"]:
+            loan_id = loan_info.get("loan_id")
+            stage = loan_info.get("stage")
+            if loan_id and stage:
+                loan_stage_map[loan_id] = stage
+    
+    # OPTIMIZATION 3: Get all employee IDs with batch processing
+    batch_size = 500
+    employee_ids = set()
+    
+    # Calculate number of batches
+    num_batches = (total_loan_count + batch_size - 1) // batch_size
+    logger.info(f"Processing {num_batches} batches of {batch_size} loans each")
+    
+    for offset in range(0, total_loan_count, batch_size):
+        batch_employee_ids = db.query(Loan.employee_id).filter(
+            Loan.portfolio_id == portfolio_id,
+            Loan.employee_id.isnot(None)
+        ).offset(offset).limit(batch_size).all()
+        
+        employee_ids.update([eid[0] for eid in batch_employee_ids if eid[0]])
+    
+    logger.info(f"Found {len(employee_ids)} unique employee IDs")
+    
+    # OPTIMIZATION 4: Get all client securities in batches
+    client_securities = {}
+    if employee_ids:
+        try:
+            # Process employee IDs in batches to avoid query parameter limits
+            employee_id_batches = [list(employee_ids)[i:i + 1000] for i in range(0, len(employee_ids), 1000)]
+            
+            for emp_batch in employee_id_batches:
+                securities_with_clients = (
+                    db.query(Security, Client)
+                    .join(Client, Security.client_id == Client.id)
+                    .filter(Client.employee_id.in_(emp_batch))
+                    .all()
+                )
+                
+                # Group securities by employee_id for O(1) lookup
+                for security, client in securities_with_clients:
+                    if client and client.employee_id:
+                        if client.employee_id not in client_securities:
+                            client_securities[client.employee_id] = []
+                        client_securities[client.employee_id].append(security)
+            
+            logger.info(f"Loaded securities for {len(client_securities)} employees")
+        except Exception as e:
+            logger.error(f"Error fetching securities: {str(e)}")
+            # Continue without securities if there's an error
+    
+    # Initialize stage totals
+    stage_1_provision = Decimal("0")
+    stage_2_provision = Decimal("0")
+    stage_3_provision = Decimal("0")
+    
+    # Initialize metrics for summary
+    total_lgd = 0
+    total_pd = 0
+    total_ead_value = 0
+    total_loans_processed = 0
+    
+    # OPTIMIZATION 5: Process loans in database-level batches
+    for offset in range(0, total_loan_count, batch_size):
+        # Fetch batch of loans directly from database
+        loan_batch = db.query(Loan).filter(
+            Loan.portfolio_id == portfolio_id
+        ).order_by(Loan.id).offset(offset).limit(batch_size).all()
+        
+        logger.info(f"Processing batch {offset//batch_size + 1}/{num_batches} with {len(loan_batch)} loans")
+        
+        for loan in loan_batch:
+            try:
+                # Skip loans with no outstanding balance
+                if not loan.outstanding_loan_balance or float(loan.outstanding_loan_balance) <= 0:
+                    continue
+                    
+                # Get loan stage from map or default to Stage 1
+                stage = loan_stage_map.get(loan.id, "Stage 1")
+                
+                # OPTIMIZATION 6: Skip detailed calculation for Stage 3 loans (use fixed rate)
+                if stage == "Stage 3":
+                    # For Stage 3, use a simplified approach with fixed rate
+                    provision_amount = float(loan.outstanding_loan_balance) * 0.15
+                    stage_3_provision += Decimal(str(provision_amount))
+                    continue
+                
+                # Calculate Loss Given Default (LGD)
+                try:
+                    securities = client_securities.get(loan.employee_id, [])
+                    lgd_percentage = calculate_loss_given_default(loan, securities)
+                    lgd = lgd_percentage / 100.0  # Convert to decimal
+                except Exception as e:
+                    logger.warning(f"LGD calculation failed for loan {loan.id}: {str(e)}")
+                    lgd = 0.65  # Default to 65% if calculation fails
+                    lgd_percentage = 65.0
+                
+                # Calculate Probability of Default (PD)
+                try:
+                    pd_percentage = calculate_probability_of_default(loan, db)
+                    pd = pd_percentage / 100.0  # Convert to decimal
+                except Exception as e:
+                    logger.warning(f"PD calculation failed for loan {loan.id}: {str(e)}")
+                    pd = 0.05  # Default to 5% if calculation fails
+                    pd_percentage = 5.0
+                
+                # Calculate Exposure at Default (EAD)
+                try:
+                    # Ensure dates are valid before calculation
+                    if loan.loan_issue_date is None:
+                        raise ValueError("Loan issue date is None")
+                    if reporting_date is None:
+                        raise ValueError("Reporting date is None")
+                        
+                    ead_percentage = calculate_exposure_at_default_percentage(loan, reporting_date)
+                    ead_value = float(loan.outstanding_loan_balance) * (ead_percentage / 100.0)
+                except Exception as e:
+                    logger.warning(f"EAD calculation failed for loan {loan.id}: {str(e)}")
+                    # Default to outstanding balance if calculation fails
+                    ead_value = float(loan.outstanding_loan_balance)
+                    ead_percentage = 100.0
+                
+                # For loans with complete data, calculate ECL using amortization schedule
+                provision_amount = Decimal("0")
+                
+                if (loan.loan_amount and loan.loan_term and 
+                    loan.monthly_installment and loan.loan_issue_date):
+                    try:
+                        # Format dates for amortization schedule - add null checks
+                        if loan.loan_issue_date is None:
+                            raise ValueError("Loan issue date is None")
+                            
+                        start_date = loan.loan_issue_date.strftime("%d/%m/%Y")
+                        
+                        if reporting_date is None:
+                            raise ValueError("Reporting date is None")
+                            
+                        report_date = reporting_date.strftime("%d/%m/%Y")
+                        
+                        # Calculate effective interest rate
+                        effective_interest_rate = calculate_effective_interest_rate_lender(
+                            float(loan.loan_amount),
+                            float(loan.administrative_fees) if loan.administrative_fees else 0,
+                            loan.loan_term,
+                            float(loan.monthly_installment)
+                        )
+                        
+                        # Use default interest rate if calculation fails
+                        if effective_interest_rate is None:
+                            effective_interest_rate = 24.0  # Default to 24% annual rate
+                        
+                        # Get amortization schedule and ECL values
+                        schedule, ecl_12_month, ecl_lifetime = get_amortization_schedule(
+                            loan_amount=float(loan.loan_amount),
+                            loan_term=loan.loan_term,
+                            annual_interest_rate=effective_interest_rate,
+                            monthly_installment=float(loan.monthly_installment),
+                            start_date=start_date,
+                            reporting_date=report_date,
+                            pd=pd_percentage,
+                            loan=loan,
+                            db=db  # Pass the database session
+                        )
+                        
+                        # Get appropriate ECL based on loan stage
+                        stage_num = int(stage.split()[-1])  # Extract stage number
+                        ecl_value = get_ecl_by_stage(schedule, ecl_12_month, ecl_lifetime, stage_num)
+                        provision_amount = Decimal(str(ecl_value))
+                        
+                        # Update metrics
+                        total_lgd += lgd_percentage
+                        total_pd += pd_percentage
+                        total_ead_value += ead_value
+                        total_loans_processed += 1
+                        
+                    except Exception as e:
+                        logger.warning(f"Amortization calculation failed for loan {loan.id}: {str(e)}")
+                        # Fallback to simplified calculation if amortization fails
+                        provision_amount = calculate_marginal_ecl(loan, ead_value, pd_percentage, lgd_percentage)
+                else:
+                    # Fallback for loans with incomplete data
+                    provision_amount = calculate_marginal_ecl(loan, ead_value, pd_percentage, lgd_percentage)
+                
+                # Add to appropriate stage total
+                if stage == "Stage 1":
+                    stage_1_provision += provision_amount
+                elif stage == "Stage 2":
+                    stage_2_provision += provision_amount
+            except Exception as e:
+                logger.error(f"Error processing loan {loan.id}: {str(e)}")
+                # Continue processing other loans
+                continue
+        
+        # Log progress after each batch
+        elapsed_time = (datetime.now() - start_time).total_seconds()
+        logger.info(f"Processed batch {offset//batch_size + 1}/{num_batches} in {elapsed_time:.2f} seconds")
+    
+    # Calculate average metrics
+    avg_lgd = total_lgd / total_loans_processed if total_loans_processed > 0 else 0.0  
+    avg_pd = total_pd / total_loans_processed if total_loans_processed > 0 else 0.0     
+    avg_ead = total_ead_value / total_loans_processed if total_loans_processed > 0 else 0.0
     
     # Calculate total provision
     total_provision = stage_1_provision + stage_2_provision + stage_3_provision
     total_balance = Decimal(str(stage_1_balance)) + Decimal(str(stage_2_balance)) + Decimal(str(stage_3_balance))
     provision_percentage = (
-        (Decimal(str(total_provision)) / Decimal(str(total_balance)) * 100)
+        (total_provision / total_balance * 100)
         if total_balance > 0
-        else 0
+        else Decimal("0")
     )
-
+    
+    # Calculate effective rates based on provisions and balances
+    stage_1_rate = (stage_1_provision / Decimal(str(stage_1_balance)) * 100) if Decimal(str(stage_1_balance)) > 0 else Decimal("0")
+    stage_2_rate = (stage_2_provision / Decimal(str(stage_2_balance)) * 100) if Decimal(str(stage_2_balance)) > 0 else Decimal("0")
+    stage_3_rate = (stage_3_provision / Decimal(str(stage_3_balance)) * 100) if Decimal(str(stage_3_balance)) > 0 else Decimal("0")
+    
     # Create a new CalculationResult record
     calculation_result = CalculationResult(
         portfolio_id=portfolio_id,
@@ -1119,6 +1347,12 @@ def process_ecl_calculation_sync(
                 "outstanding_loan_balance": float(stage_3_balance),
                 "provision_amount": float(stage_3_provision),
                 "provision_rate": float(stage_3_rate),
+            },
+            "metrics": {
+                "avg_lgd": float(avg_lgd),
+                "avg_pd": float(avg_pd),
+                "avg_ead": float(avg_ead),
+                "calculation_time_seconds": (datetime.now() - start_time).total_seconds()
             }
         },
         total_provision=float(total_provision),
@@ -1128,7 +1362,7 @@ def process_ecl_calculation_sync(
     db.add(calculation_result)
     db.commit()
     
-    logger.info(f"ECL calculation completed for portfolio {portfolio_id}")
+    logger.info(f"ECL calculation completed for portfolio {portfolio_id} in {(datetime.now() - start_time).total_seconds()} seconds")
     
     return {
         "status": "success",

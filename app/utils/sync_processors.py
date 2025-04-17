@@ -119,16 +119,58 @@ def process_loan_details_sync(file_content, portfolio_id, db):
         
         if date_cols_in_df:
             try:
-                # Process all date columns at once - fixed string operations
-                df = df.with_columns([
-                    pl.col(col).cast(pl.Date, strict=False) for col in date_cols_in_df
-                ])
+                # First strip any leading/trailing quotes from date strings
+                for col in date_cols_in_df:
+                    if col in df.columns:
+                        # Strip quotes from string values
+                        df = df.with_columns(
+                            pl.col(col).cast(pl.Utf8).str.replace_all("^['\"]|['\"]$", "").alias(col)
+                        )
+                
+                # Try multiple date formats in sequence
+                date_formats = ["%m/%d/%Y", "%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%m-%d-%Y"]
+                
+                for date_format in date_formats:
+                    try:
+                        # Process all date columns with this format
+                        df = df.with_columns([
+                            pl.col(col).str.strptime(pl.Date, date_format, strict=False) for col in date_cols_in_df
+                        ])
+                        logger.info(f"Successfully parsed dates using format: {date_format}")
+                        break  # Stop if successful
+                    except Exception as e:
+                        logger.debug(f"Failed to parse dates with format {date_format}: {str(e)}")
+                        continue
+                
+                # If still not parsed, try the default Polars date parsing as fallback
+                for col in date_cols_in_df:
+                    if df[col].dtype != pl.Date:
+                        df = df.with_columns(pl.col(col).cast(pl.Date, strict=False))
+                        
             except Exception as e:
                 logger.warning(f"Failed to convert date columns: {str(e)}")
-                # Fall back to individual column processing
+                # Fall back to individual column processing with multiple formats
                 for col in date_cols_in_df:
                     try:
-                        df = df.with_columns(pl.col(col).cast(pl.Date, strict=False))
+                        # First strip quotes
+                        df = df.with_columns(
+                            pl.col(col).cast(pl.Utf8).str.replace_all("^['\"]|['\"]$", "").alias(col)
+                        )
+                        
+                        # Try each format
+                        for date_format in date_formats:
+                            try:
+                                df = df.with_columns(
+                                    pl.col(col).str.strptime(pl.Date, date_format, strict=False).alias(col)
+                                )
+                                break  # Stop if successful
+                            except:
+                                continue
+                                
+                        # If still not parsed, try the default as fallback
+                        if df[col].dtype != pl.Date:
+                            df = df.with_columns(pl.col(col).cast(pl.Date, strict=False))
+                            
                     except Exception as e:
                         logger.warning(f"Failed to convert {col} to date: {str(e)}")
         
@@ -385,16 +427,58 @@ def process_client_data_sync(file_content, portfolio_id, db):
         
         if date_cols_in_df:
             try:
-                # Process all date columns at once - fixed string operations
-                df = df.with_columns([
-                    pl.col(col).cast(pl.Date, strict=False) for col in date_cols_in_df
-                ])
+                # First strip any leading/trailing quotes from date strings
+                for col in date_cols_in_df:
+                    if col in df.columns:
+                        # Strip quotes from string values
+                        df = df.with_columns(
+                            pl.col(col).cast(pl.Utf8).str.replace_all("^['\"]|['\"]$", "").alias(col)
+                        )
+                
+                # Try multiple date formats in sequence
+                date_formats = ["%m/%d/%Y", "%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%m-%d-%Y"]
+                
+                for date_format in date_formats:
+                    try:
+                        # Process all date columns with this format
+                        df = df.with_columns([
+                            pl.col(col).str.strptime(pl.Date, date_format, strict=False) for col in date_cols_in_df
+                        ])
+                        logger.info(f"Successfully parsed dates using format: {date_format}")
+                        break  # Stop if successful
+                    except Exception as e:
+                        logger.debug(f"Failed to parse dates with format {date_format}: {str(e)}")
+                        continue
+                
+                # If still not parsed, try the default Polars date parsing as fallback
+                for col in date_cols_in_df:
+                    if df[col].dtype != pl.Date:
+                        df = df.with_columns(pl.col(col).cast(pl.Date, strict=False))
+                        
             except Exception as e:
                 logger.warning(f"Failed to convert date columns: {str(e)}")
-                # Fall back to individual column processing
+                # Fall back to individual column processing with multiple formats
                 for col in date_cols_in_df:
                     try:
-                        df = df.with_columns(pl.col(col).cast(pl.Date, strict=False))
+                        # First strip quotes
+                        df = df.with_columns(
+                            pl.col(col).cast(pl.Utf8).str.replace_all("^['\"]|['\"]$", "").alias(col)
+                        )
+                        
+                        # Try each format
+                        for date_format in date_formats:
+                            try:
+                                df = df.with_columns(
+                                    pl.col(col).str.strptime(pl.Date, date_format, strict=False).alias(col)
+                                )
+                                break  # Stop if successful
+                            except:
+                                continue
+                                
+                        # If still not parsed, try the default as fallback
+                        if df[col].dtype != pl.Date:
+                            df = df.with_columns(pl.col(col).cast(pl.Date, strict=False))
+                            
                     except Exception as e:
                         logger.warning(f"Failed to convert {col} to date: {str(e)}")
         
