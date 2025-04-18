@@ -22,7 +22,7 @@ def calculate_effective_interest_rate_lender(loan_amount, administrative_fees, l
         monthly_payment (float): The monthly payment amount.
 
     Returns:
-        float: The effective annual interest rate as a percentage, or None if calculation fails.
+        str: The effective annual interest rate as a percentage, or None if calculation fails.
     """
     try:
         total_income = loan_amount + administrative_fees #From the lender's perspective the admin fees are income.
@@ -54,7 +54,7 @@ def calculate_effective_interest_rate_lender(loan_amount, administrative_fees, l
             return None
 
         annual_rate = monthly_rate * 12
-        return annual_rate * 100  # Return as percentage
+        return str(annual_rate * 100)  # Return as percentage
 
     except (TypeError, ValueError, ZeroDivisionError):
         return None  # Handle potential errors
@@ -179,9 +179,9 @@ def calculate_exposure_at_default_percentage(loan, reporting_date):
     
     # Handle case when annual_rate is None
     if annual_rate is None:
-        annual_rate = 0  # Default to 0 if calculation fails
+        annual_rate = '0'  # Default to 0 if calculation fails
     
-    monthly_rate = annual_rate / 12
+    monthly_rate = Decimal(annual_rate) / Decimal('12')
 
     # Get loan term in months
     loan_term_months = loan.loan_term
@@ -195,16 +195,16 @@ def calculate_exposure_at_default_percentage(loan, reporting_date):
     # Ensure months_elapsed is not negative or greater than loan term
     months_elapsed = max(0, min(months_elapsed, loan_term_months))
 
-    theoretical_balance = 0
+    theoretical_balance = Decimal('0')
     if monthly_rate > 0:
-        numerator = (1 + monthly_rate) ** loan_term_months - (
-            1 + monthly_rate
-        ) ** months_elapsed
-        denominator = (1 + monthly_rate) ** loan_term_months - 1
-        theoretical_balance = original_amount * (numerator / denominator)
+        numerator = (Decimal('1') + monthly_rate) ** Decimal(str(loan_term_months)) - (
+            Decimal('1') + monthly_rate
+        ) ** Decimal(str(months_elapsed))
+        denominator = (Decimal('1') + monthly_rate) ** Decimal(str(loan_term_months)) - Decimal('1')
+        theoretical_balance = Decimal(str(original_amount)) * (numerator / denominator)
 
     if hasattr(loan, "accumulated_arrears") and loan.accumulated_arrears:
-        theoretical_balance += loan.accumulated_arrears
+        theoretical_balance += Decimal(str(loan.accumulated_arrears))
 
     ead = theoretical_balance
 
@@ -227,8 +227,8 @@ def calculate_marginal_ecl(loan, ead_value, pd, lgd):
         Decimal: The calculated marginal ECL amount
     """
     # Convert percentage values to decimals
-    pd_decimal = Decimal(str(pd / 100.0))
-    lgd_decimal = Decimal(str(lgd / 100.0))
+    pd_decimal = Decimal(str(pd)) / Decimal('100')
+    lgd_decimal = Decimal(str(lgd)) / Decimal('100')
 
     # Calculate marginal ECL
     mecl = Decimal(str(ead_value)) * pd_decimal * lgd_decimal
