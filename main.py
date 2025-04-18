@@ -140,7 +140,7 @@ def get_model():
 #     
 #     except Exception as e:
 #         raise HTTPException(status_code=500, detail=str(e))
-
+@app.on_event("startup")
 async def init_db_async():
     """Initialize database tables asynchronously"""
     try:
@@ -149,7 +149,8 @@ async def init_db_async():
         logger.info("Database initialized successfully")
     except Exception as e:
         logger.error(f"Error initializing database: {e}")
-
+        
+@app.on_event("startup")
 async def create_admin_user_async():
     """Create admin user asynchronously with better error handling"""
     try:

@@ -396,8 +396,9 @@ def generate_client_data(employee_ids, count, extra_ids=None):
 def generate_loan_data(employee_ids, client_data, count, extra_loan_ids=None):
     loans = []
     current_date = datetime(2025, 4, 7)  # April 7, 2025
-    start_loan_date = datetime(2016, 1, 1)
+    start_loan_date = datetime(2020, 1, 1)  # Changed from 2016 to 2020
     end_loan_date = datetime(2025, 3, 31)  # End of March 2025
+    end_of_2025 = datetime(2025, 12, 31)  # End of 2025
     
     # Start loan numbers from L100000
     loan_counter = 100000
@@ -438,7 +439,18 @@ def generate_loan_data(employee_ids, client_data, count, extra_loan_ids=None):
         
         # Loan details
         loan_type = random.choice(LOAN_TYPES)
-        loan_term = random.choice(LOAN_TERMS)
+        
+        # Calculate minimum term needed to reach end of 2025
+        months_to_end_of_2025 = (end_of_2025.year - loan_issue_date.year) * 12 + (end_of_2025.month - loan_issue_date.month) + 1
+        
+        # Choose a term that ensures the loan is active through the end of 2025
+        valid_terms = [term for term in LOAN_TERMS if term >= months_to_end_of_2025]
+        if valid_terms:
+            loan_term = random.choice(valid_terms)
+        else:
+            # If no standard term is long enough, use a custom term
+            loan_term = months_to_end_of_2025
+        
         loan_amount = random.randint(1000, 20000)
         
         # Calculate subsequent dates
@@ -528,7 +540,18 @@ def generate_loan_data(employee_ids, client_data, count, extra_loan_ids=None):
             
             # Loan details
             loan_type = random.choice(LOAN_TYPES)
-            loan_term = random.choice(LOAN_TERMS)
+            
+            # Calculate minimum term needed to reach end of 2025
+            months_to_end_of_2025 = (end_of_2025.year - loan_issue_date.year) * 12 + (end_of_2025.month - loan_issue_date.month) + 1
+            
+            # Choose a term that ensures the loan is active through the end of 2025
+            valid_terms = [term for term in LOAN_TERMS if term >= months_to_end_of_2025]
+            if valid_terms:
+                loan_term = random.choice(valid_terms)
+            else:
+                # If no standard term is long enough, use a custom term
+                loan_term = months_to_end_of_2025
+            
             loan_amount = random.randint(1000, 20000)
             
             # Calculate subsequent dates
