@@ -281,12 +281,37 @@ def populate_ecl_detailed_report(
     ws['B12'] = report_data.get('total_ecl', 0)
     ws['B12'].number_format = currency_format
     
+    # Check if there's a total loan count to display
+    if 'total_loan_count' in report_data:
+        ws['B14'] = f"Total Loans: {report_data['total_loan_count']}"
+    
     # Populate loan details starting from row 15
     loans = report_data.get('loans', [])
     start_row = 15
     
-    for i, loan in enumerate(loans, start=0):
+    # Track temporary file path if it exists
+    temp_file_path = None
+    if hasattr(loans, 'file_path'):
+        temp_file_path = loans.file_path
+    
+    # Add a counter to track progress for large datasets
+    total_loans = len(loans) if hasattr(loans, '__len__') else "unknown"
+    print(f"Processing {total_loans} loans for ECL detailed report")
+    
+    # Process loans in batches to reduce memory pressure
+    batch_size = 1000
+    loan_count = 0
+    
+    # Use a list comprehension to get all loans if it's an iterator
+    loan_list = list(loans) if hasattr(loans, '__iter__') else loans
+    
+    for i, loan in enumerate(loan_list):
         row = start_row + i
+        loan_count += 1
+        
+        # Print progress every 1000 loans
+        if loan_count % 1000 == 0:
+            print(f"Processed {loan_count} loans...")
         
         # Map loan data to columns
         ws.cell(row=row, column=1, value=loan.get('loan_id', ''))
@@ -294,48 +319,116 @@ def populate_ecl_detailed_report(
         ws.cell(row=row, column=3, value=loan.get('employee_name', ''))
         
         # Loan value with currency format
-        ws.cell(row=row, column=4, value=loan.get('loan_value', 0))
+        loan_value = loan.get('loan_value', 0)
+        # Handle string values (from our memory optimization)
+        if isinstance(loan_value, str):
+            try:
+                loan_value = float(loan_value)
+            except (ValueError, TypeError):
+                loan_value = 0
+        ws.cell(row=row, column=4, value=loan_value)
         ws.cell(row=row, column=4).number_format = currency_format
         
         # Outstanding loan balance with currency format
-        ws.cell(row=row, column=5, value=loan.get('outstanding_loan_balance', 0))
+        outstanding_balance = loan.get('outstanding_loan_balance', 0)
+        if isinstance(outstanding_balance, str):
+            try:
+                outstanding_balance = float(outstanding_balance)
+            except (ValueError, TypeError):
+                outstanding_balance = 0
+        ws.cell(row=row, column=5, value=outstanding_balance)
         ws.cell(row=row, column=5).number_format = currency_format
         
         # Accumulated arrears with currency format
-        ws.cell(row=row, column=6, value=loan.get('accumulated_arrears', 0))
+        accumulated_arrears = loan.get('accumulated_arrears', 0)
+        if isinstance(accumulated_arrears, str):
+            try:
+                accumulated_arrears = float(accumulated_arrears)
+            except (ValueError, TypeError):
+                accumulated_arrears = 0
+        ws.cell(row=row, column=6, value=accumulated_arrears)
         ws.cell(row=row, column=6).number_format = currency_format
         
         # NDIA with currency format
-        ws.cell(row=row, column=7, value=loan.get('ndia', 0))
+        ndia = loan.get('ndia', 0)
+        if isinstance(ndia, str):
+            try:
+                ndia = float(ndia)
+            except (ValueError, TypeError):
+                ndia = 0
+        ws.cell(row=row, column=7, value=ndia)
         ws.cell(row=row, column=7).number_format = currency_format
         
         # Stage
         ws.cell(row=row, column=8, value=loan.get('stage', ''))
         
         # EAD with currency format
-        ws.cell(row=row, column=9, value=loan.get('ead', 0))
+        ead = loan.get('ead', 0)
+        if isinstance(ead, str):
+            try:
+                ead = float(ead)
+            except (ValueError, TypeError):
+                ead = 0
+        ws.cell(row=row, column=9, value=ead)
         ws.cell(row=row, column=9).number_format = currency_format
         
         # LGD as percentage
-        ws.cell(row=row, column=10, value=loan.get('lgd', 0))
+        lgd = loan.get('lgd', 0)
+        if isinstance(lgd, str):
+            try:
+                lgd = float(lgd) / 100  # Convert to decimal for percentage format
+            except (ValueError, TypeError):
+                lgd = 0
+        else:
+            lgd = lgd / 100  # Convert to decimal for percentage format
+        ws.cell(row=row, column=10, value=lgd)
         ws.cell(row=row, column=10).number_format = percentage_format
         
         # EIR as percentage
-        ws.cell(row=row, column=11, value=loan.get('eir', 0))
+        eir = loan.get('eir', 0)
+        if isinstance(eir, str):
+            try:
+                eir = float(eir)
+            except (ValueError, TypeError):
+                eir = 0
+        ws.cell(row=row, column=11, value=eir)
         ws.cell(row=row, column=11).number_format = percentage_format
         
         # PD as percentage
-        ws.cell(row=row, column=12, value=loan.get('pd', 0))
+        pd_value = loan.get('pd', 0)
+        if isinstance(pd_value, str):
+            try:
+                pd_value = float(pd_value)
+            except (ValueError, TypeError):
+                pd_value = 0
+        ws.cell(row=row, column=12, value=pd_value)
         ws.cell(row=row, column=12).number_format = percentage_format
         
         # ECL with currency format
-        ws.cell(row=row, column=13, value=loan.get('ecl', 0))
+        ecl = loan.get('ecl', 0)
+        if isinstance(ecl, str):
+            try:
+                ecl = float(ecl)
+            except (ValueError, TypeError):
+                ecl = 0
+        ws.cell(row=row, column=13, value=ecl)
         ws.cell(row=row, column=13).number_format = currency_format
+    
+    print(f"Completed processing {loan_count} loans for ECL detailed report")
     
     # Save to BytesIO
     buffer = BytesIO()
     wb.save(buffer)
     buffer.seek(0)
+    
+    # Clean up temporary file if it exists
+    if temp_file_path and os.path.exists(temp_file_path):
+        try:
+            os.remove(temp_file_path)
+            print(f"Cleaned up temporary file: {temp_file_path}")
+        except Exception as e:
+            print(f"Error cleaning up temporary file: {e}")
+    
     return buffer
 
 
@@ -438,12 +531,36 @@ def populate_local_impairment_details_report(
     ws['B12'] = report_data.get('total_provision', 0)
     ws['B12'].number_format = currency_format
     
+    # Check if there's a total loan count to display
+    if 'total_loan_count' in report_data:
+        ws['B14'] = f"Total Loans: {report_data['total_loan_count']}"
+    
     # Populate loan details starting from row 15
     loans = report_data.get('loans', [])
     start_row = 15
     
-    for i, loan in enumerate(loans, start=0):
+    # Track temporary file path if it exists
+    temp_file_path = None
+    if hasattr(loans, 'file_path'):
+        temp_file_path = loans.file_path
+    
+    # Add a counter to track progress for large datasets
+    total_loans = len(loans) if hasattr(loans, '__len__') else "unknown"
+    print(f"Processing {total_loans} loans for local impairment detailed report")
+    
+    # Process loans in batches to reduce memory pressure
+    loan_count = 0
+    
+    # Use a list comprehension to get all loans if it's an iterator
+    loan_list = list(loans) if hasattr(loans, '__iter__') else loans
+    
+    for i, loan in enumerate(loan_list):
         row = start_row + i
+        loan_count += 1
+        
+        # Print progress every 1000 loans
+        if loan_count % 1000 == 0:
+            print(f"Processed {loan_count} loans...")
         
         # Map loan data to columns
         ws.cell(row=row, column=1, value=loan.get('loan_id', ''))
@@ -451,36 +568,84 @@ def populate_local_impairment_details_report(
         ws.cell(row=row, column=3, value=loan.get('employee_name', ''))
         
         # Loan value with currency format
-        ws.cell(row=row, column=4, value=loan.get('loan_value', 0))
+        loan_value = loan.get('loan_value', 0)
+        # Handle string values (from our memory optimization)
+        if isinstance(loan_value, str):
+            try:
+                loan_value = float(loan_value)
+            except (ValueError, TypeError):
+                loan_value = 0
+        ws.cell(row=row, column=4, value=loan_value)
         ws.cell(row=row, column=4).number_format = currency_format
         
         # Outstanding loan balance with currency format
-        ws.cell(row=row, column=5, value=loan.get('outstanding_loan_balance', 0))
+        outstanding_balance = loan.get('outstanding_balance', 0)
+        if isinstance(outstanding_balance, str):
+            try:
+                outstanding_balance = float(outstanding_balance)
+            except (ValueError, TypeError):
+                outstanding_balance = 0
+        ws.cell(row=row, column=5, value=outstanding_balance)
         ws.cell(row=row, column=5).number_format = currency_format
         
         # Accumulated arrears with currency format
-        ws.cell(row=row, column=6, value=loan.get('accumulated_arrears', 0))
+        accumulated_arrears = loan.get('accumulated_arrears', 0)
+        if isinstance(accumulated_arrears, str):
+            try:
+                accumulated_arrears = float(accumulated_arrears)
+            except (ValueError, TypeError):
+                accumulated_arrears = 0
+        ws.cell(row=row, column=6, value=accumulated_arrears)
         ws.cell(row=row, column=6).number_format = currency_format
         
         # NDIA with currency format
-        ws.cell(row=row, column=7, value=loan.get('ndia', 0))
+        ndia = loan.get('ndia', 0)
+        if isinstance(ndia, str):
+            try:
+                ndia = float(ndia)
+            except (ValueError, TypeError):
+                ndia = 0
+        ws.cell(row=row, column=7, value=ndia)
         ws.cell(row=row, column=7).number_format = currency_format
         
-        # Stage (local impairment category)
-        ws.cell(row=row, column=8, value=loan.get('stage', ''))
+        # Impairment category
+        ws.cell(row=row, column=8, value=loan.get('impairment_category', ''))
         
         # Provision rate as percentage
-        ws.cell(row=row, column=9, value=loan.get('provision_rate', 0))
+        provision_rate = loan.get('provision_rate', 0)
+        if isinstance(provision_rate, str):
+            try:
+                provision_rate = float(provision_rate)
+            except (ValueError, TypeError):
+                provision_rate = 0
+        ws.cell(row=row, column=9, value=provision_rate)
         ws.cell(row=row, column=9).number_format = percentage_format
         
         # Provision amount with currency format
-        ws.cell(row=row, column=10, value=loan.get('provision', 0))
+        provision_amount = loan.get('provision_amount', 0)
+        if isinstance(provision_amount, str):
+            try:
+                provision_amount = float(provision_amount)
+            except (ValueError, TypeError):
+                provision_amount = 0
+        ws.cell(row=row, column=10, value=provision_amount)
         ws.cell(row=row, column=10).number_format = currency_format
+    
+    print(f"Completed processing {loan_count} loans for local impairment detailed report")
     
     # Save to BytesIO
     buffer = BytesIO()
     wb.save(buffer)
     buffer.seek(0)
+    
+    # Clean up temporary file if it exists
+    if temp_file_path and os.path.exists(temp_file_path):
+        try:
+            os.remove(temp_file_path)
+            print(f"Cleaned up temporary file: {temp_file_path}")
+        except Exception as e:
+            print(f"Error cleaning up temporary file: {e}")
+    
     return buffer
 
 
