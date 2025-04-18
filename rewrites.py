@@ -186,7 +186,7 @@ def generate_ecl_detailed_report(
         # Add to total ECL
         total_ecl += Decimal(str(ecl_value))
         
-        # Store loan data
+        Store loan data
         loan_data.append({
             "loan_id": loan.id,
             "employee_id": loan.employee_id,

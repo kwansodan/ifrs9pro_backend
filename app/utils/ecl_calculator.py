@@ -261,7 +261,7 @@ def calculate_probability_of_default(loan, db):
     try:
         # Import here to avoid circular imports
         import numpy as np
-        import pandas as pd
+        import polars as pl
         import warnings
         
         # Import Client model inside the function to avoid circular imports
@@ -300,8 +300,11 @@ def calculate_probability_of_default(loan, db):
                 logger.error(f"Error querying client: {str(e)}")
                 return 5.0
             
-            if not client or not client.date_of_birth:
-                logger.warning(f"Client or DOB not found for employee_id {loan.employee_id}, using default PD value")
+            if not client:
+                logger.warning(f"Client not found for employee_id {loan.employee_id}, using default PD value")
+                return 5.0
+            if not client.date_of_birth:
+                logger.warning(f"DOB not found for employee_id {loan.employee_id}, using default PD value")
                 return 5.0
             
             # Get year of birth from date of birth
@@ -314,7 +317,7 @@ def calculate_probability_of_default(loan, db):
                 feature_name = 'year_of_birth'  # Default name if not found
                 
             # Create DataFrame with proper feature name
-            X_new = pd.DataFrame({feature_name: [year_of_birth]})
+            X_new = pl.DataFrame({feature_name: [year_of_birth]})
             
             # Predict probability of default
             try:
