@@ -1,3 +1,35 @@
+import logging
+import time
+from typing import Dict, List, Any, Optional, Tuple, Callable
+from datetime import date, datetime, timedelta
+from decimal import Decimal
+from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor
+
+from sqlalchemy.orm import Session
+from sqlalchemy import func, and_
+import numpy as np
+import pandas as pd
+
+from app.database import get_db, SessionLocal
+from app.models import (
+    Portfolio, Loan, Client, Security, Guarantee, Report,
+    CalculationResult, StagingResult
+)
+from app.calculators.ecl import (
+    calculate_effective_interest_rate_lender,
+    calculate_exposure_at_default_percentage,
+    calculate_probability_of_default,
+    calculate_loss_given_default,
+    calculate_marginal_ecl,
+    get_amortization_schedule,
+    get_ecl_by_stage,
+    is_in_range
+)
+
+# Set up logging
+logger = logging.getLogger(__name__)
+
 def generate_ecl_detailed_report(
     db: Session, portfolio_id: int, report_date: date
 ) -> Dict[str, Any]:
