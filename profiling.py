@@ -914,3 +914,159 @@ def process_local_impairment_calculation_sync(
         "total_provision": float(calculation_result.total_provision),
         "provision_percentage": float(calculation_result.provision_percentage)
     }
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+    
+    parser = argparse.ArgumentParser(description="IFRS9Pro Backend Profiling Tool")
+    parser.add_argument("function", choices=["ecl_report", "local_report", "ecl_calc", "local_calc"],
+                        help="Function to run: ecl_report (ECL detailed report), local_report (local impairment report), "
+                             "ecl_calc (ECL calculation), local_calc (local impairment calculation)")
+    parser.add_argument("portfolio_id", type=int, help="Portfolio ID to process")
+    parser.add_argument("--date", type=str, help="Report date in YYYY-MM-DD format (defaults to today)")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
+    
+    args = parser.parse_args()
+    
+    # Set up logging based on verbosity
+    if args.verbose:
+        logging.basicConfig(level=logging.INFO, 
+                           format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    else:
+        logging.basicConfig(level=logging.WARNING)
+    
+    # Parse the report date if provided
+    if args.date:
+        try:
+            report_date = datetime.strptime(args.date, "%Y-%m-%d").date()
+        except ValueError:
+            print(f"Error: Invalid date format. Please use YYYY-MM-DD format.")
+            sys.exit(1)
+    else:
+        report_date = date.today()
+    
+    # Create a database session
+    db = SessionLocal()
+    
+    try:
+        print(f"Running {args.function} for portfolio {args.portfolio_id} with report date {report_date}")
+        
+        # Run the requested function
+        if args.function == "ecl_report":
+            start_time = time.time()
+            result = generate_ecl_detailed_report(db, args.portfolio_id, report_date)
+            elapsed_time = time.time() - start_time
+            
+            print(f"\nECL Detailed Report Summary:")
+            print(f"Portfolio ID: {args.portfolio_id}")
+            print(f"Report Date: {report_date}")
+            print(f"Total loans processed: {len(result.get('loans', []))}")
+            print(f"Total ECL: {result.get('total_ecl', 0)}")
+            print(f"Execution time: {elapsed_time:.2f} seconds")
+            
+        elif args.function == "local_report":
+            start_time = time.time()
+            result = generate_local_impairment_details_report(db, args.portfolio_id, report_date)
+            elapsed_time = time.time() - start_time
+            
+            print(f"\nLocal Impairment Details Report Summary:")
+            print(f"Portfolio: {result.get('portfolio_name', '')}")
+            print(f"Report Date: {report_date}")
+            print(f"Total loans processed: {len(result.get('loans', []))}")
+            print(f"Total provision: {result.get('total_provision', 0)}")
+            print(f"Execution time: {elapsed_time:.2f} seconds")
+            
+            # Print category breakdown
+            if "category_totals" in result:
+                print("\nCategory Breakdown:")
+                for category, data in result["category_totals"].items():
+                    print(f"  {category}: {data['count']} loans, "
+                          f"balance: {data['balance']:.2f}, "
+                          f"provision: {data['provision']:.2f}")
+            
+        elif args.function == "ecl_calc":
+            # Get the latest ECL staging result
+            staging_result = (
+                db.query(StagingResult)
+                .filter(
+                    StagingResult.portfolio_id == args.portfolio_id,
+                    StagingResult.staging_type == "ecl"
+                )
+                .order_by(StagingResult.created_at.desc())
+                .first()
+            )
+            
+            if not staging_result:
+                print("Error: No ECL staging found. Please stage loans first.")
+                sys.exit(1)
+            
+            start_time = time.time()
+            result = process_ecl_calculation_sync(args.portfolio_id, report_date, staging_result, db)
+            elapsed_time = time.time() - start_time
+            
+            print(f"\nECL Calculation Summary:")
+            print(f"Portfolio ID: {args.portfolio_id}")
+            print(f"Report Date: {report_date}")
+            
+            if result and "result" in result:
+                for stage, data in result["result"].items():
+                    if stage != "metrics":
+                        print(f"  {stage}: {data.get('num_loans', 0)} loans, "
+                              f"provision: {data.get('provision_amount', 0):.2f}, "
+                              f"rate: {data.get('provision_rate', 0):.2f}%")
+                
+                print(f"Total provision: {result.get('total_provision', 0):.2f}")
+                print(f"Provision percentage: {result.get('provision_percentage', 0):.2f}%")
+                
+                if "metrics" in result["result"]:
+                    metrics = result["result"]["metrics"]
+                    print(f"Avg LGD: {metrics.get('avg_lgd', 0):.2f}%")
+                    print(f"Avg PD: {metrics.get('avg_pd', 0):.2f}%")
+                    print(f"Avg EAD: {metrics.get('avg_ead', 0):.2f}")
+            
+            print(f"Execution time: {elapsed_time:.2f} seconds")
+            
+        elif args.function == "local_calc":
+            # Get the latest local impairment staging result
+            staging_result = (
+                db.query(StagingResult)
+                .filter(
+                    StagingResult.portfolio_id == args.portfolio_id,
+                    StagingResult.staging_type == "local_impairment"
+                )
+                .order_by(StagingResult.created_at.desc())
+                .first()
+            )
+            
+            if not staging_result:
+                print("Error: No local impairment staging found. Please stage loans first.")
+                sys.exit(1)
+            
+            start_time = time.time()
+            result = process_local_impairment_calculation_sync(args.portfolio_id, report_date, staging_result, db)
+            elapsed_time = time.time() - start_time
+            
+            print(f"\nLocal Impairment Calculation Summary:")
+            print(f"Portfolio ID: {args.portfolio_id}")
+            print(f"Report Date: {report_date}")
+            
+            if result and "result" in result:
+                for category, data in result["result"].items():
+                    print(f"  {category}: {data.get('num_loans', 0)} loans, "
+                          f"provision: {data.get('provision_amount', 0):.2f}, "
+                          f"rate: {data.get('provision_rate', 0):.2f}%")
+                
+                print(f"Total provision: {result.get('total_provision', 0):.2f}")
+                print(f"Provision percentage: {result.get('provision_percentage', 0):.2f}%")
+            
+            print(f"Execution time: {elapsed_time:.2f} seconds")
+        
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+    finally:
+        db.close()
