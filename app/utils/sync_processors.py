@@ -376,6 +376,8 @@ def process_client_data_sync(file_content, portfolio_id, db):
             "employee id": "employee_id",
             "last name": "last_name",
             "other names": "other_names",
+            "lastname": "last_name",
+            "othernames": "other_names",
             "residential address": "residential_address",
             "postal address": "postal_address",
             "phone number": "phone_number",
