@@ -113,8 +113,35 @@ def process_loan_details_sync(file_content, portfolio_id, db):
             logger.error(f"Missing required columns: {readable_missing_columns}")
             return {"error": f"Missing required columns: {readable_missing_columns}"}
         
+        # Special handling for period columns in 'MMMYYYY' format
+        period_columns = ["deduction_start_period", "submission_period", "maturity_period"]
+        from calendar import monthrange
+        import re
+        import pandas as pd
+        month_abbr_map = {abbr.upper(): num for num, abbr in enumerate(['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])}
+        for col in period_columns:
+            if col in df.columns:
+                # Convert Polars to Series for easier string ops, then back
+                s = df[col].to_pandas()
+                def mmyyyy_to_eom(val):
+                    if isinstance(val, str) and re.match(r"^[A-Za-z]{3}\d{4}$", val.strip()):
+                        try:
+                            month = month_abbr_map[val[:3].upper()]
+                            year = int(val[3:])
+                            last_day = monthrange(year, month)[1]
+                            return pd.Timestamp(year=year, month=month, day=last_day)
+                        except Exception:
+                            return None
+                    return None
+                # Convert to pd.Timestamp, then to string YYYY-MM-DD, then to Polars Date
+                s = s.apply(mmyyyy_to_eom)
+                s = s.dt.strftime("%Y-%m-%d")
+                df = df.with_columns(
+                    pl.Series(col, s).str.strptime(pl.Date, "%Y-%m-%d", strict=False)
+                )
+        
         # Convert date columns - process all at once for better performance
-        date_columns = ["loan_issue_date", "deduction_start_period", "submission_period", "maturity_period", "date_of_birth"]
+        date_columns = ["loan_issue_date", "date_of_birth"]  # Only non-period columns
         date_cols_in_df = [col for col in date_columns if col in df.columns]
         
         if date_cols_in_df:
@@ -122,22 +149,30 @@ def process_loan_details_sync(file_content, portfolio_id, db):
                 # First strip any leading/trailing quotes from date strings
                 for col in date_cols_in_df:
                     if col in df.columns:
-                        # Strip quotes from string values
+                        # Force cast to string for reliable parsing
                         df = df.with_columns(
                             pl.col(col).cast(pl.Utf8).str.replace_all("^['\"]|['\"]$", "").alias(col)
                         )
-                
-                # Try multiple date formats in sequence
-                date_formats = ["%m/%d/%Y", "%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%m-%d-%Y"]
-                
+                        if col == "loan_issue_date":
+                            logger.info(f"loan_issue_date dtype before parsing: {df[col].dtype}")
+                            logger.info(f"loan_issue_date sample: {df[col].head(5).to_list()}")
+                # Try multiple date formats in sequence, prioritizing '%Y-%m-%d'
+                date_formats = ["%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%d-%m-%Y", "%m-%d-%Y"]
                 for date_format in date_formats:
                     try:
-                        # Process all date columns with this format
-                        df = df.with_columns([
-                            pl.col(col).str.strptime(pl.Date, date_format, strict=False) for col in date_cols_in_df
-                        ])
-                        logger.info(f"Successfully parsed dates using format: {date_format}")
-                        break  # Stop if successful
+                        # Attempt parsing
+                        new_cols = [pl.col(col).str.strptime(pl.Date, date_format, strict=False) for col in date_cols_in_df]
+                        temp_df = df.with_columns(new_cols)
+                        # Check if at least one value was parsed (not all null)
+                        any_parsed = False
+                        for col in date_cols_in_df:
+                            if temp_df[col].null_count() < df.height:
+                                any_parsed = True
+                                break
+                        if any_parsed:
+                            df = temp_df
+                            logger.info(f"Successfully parsed dates using format: {date_format}")
+                            break  # Only break if parsing succeeded
                     except Exception as e:
                         logger.debug(f"Failed to parse dates with format {date_format}: {str(e)}")
                         continue
@@ -437,17 +472,23 @@ def process_client_data_sync(file_content, portfolio_id, db):
                             pl.col(col).cast(pl.Utf8).str.replace_all("^['\"]|['\"]$", "").alias(col)
                         )
                 
-                # Try multiple date formats in sequence
-                date_formats = ["%m/%d/%Y", "%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%m-%d-%Y"]
-                
+                # Try multiple date formats in sequence, prioritizing '%Y-%m-%d'
+                date_formats = ["%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%d-%m-%Y", "%m-%d-%Y"]
                 for date_format in date_formats:
                     try:
-                        # Process all date columns with this format
-                        df = df.with_columns([
-                            pl.col(col).str.strptime(pl.Date, date_format, strict=False) for col in date_cols_in_df
-                        ])
-                        logger.info(f"Successfully parsed dates using format: {date_format}")
-                        break  # Stop if successful
+                        # Attempt parsing
+                        new_cols = [pl.col(col).str.strptime(pl.Date, date_format, strict=False) for col in date_cols_in_df]
+                        temp_df = df.with_columns(new_cols)
+                        # Check if at least one value was parsed (not all null)
+                        any_parsed = False
+                        for col in date_cols_in_df:
+                            if temp_df[col].null_count() < df.height:
+                                any_parsed = True
+                                break
+                        if any_parsed:
+                            df = temp_df
+                            logger.info(f"Successfully parsed dates using format: {date_format}")
+                            break  # Only break if parsing succeeded
                     except Exception as e:
                         logger.debug(f"Failed to parse dates with format {date_format}: {str(e)}")
                         continue
