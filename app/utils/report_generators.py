@@ -964,22 +964,36 @@ def generate_ecl_detailed_report(
             "total_ead": Decimal(0),
             "total_lgd": Decimal(0),
             "total_ecl": Decimal(0),
-            "loans": []
         }
     
     # OPTIMIZATION 1: Get total loan count without loading all loans
     total_loan_count = db.query(func.count(Loan.id)).filter(Loan.portfolio_id == portfolio_id).scalar()
     print(f"Portfolio has {total_loan_count} loans to process")
     
-    # OPTIMIZATION 2: Client data caching with LRU cache
-    @lru_cache(maxsize=1000)
-    def get_client_name(employee_id):
-        client = db.query(Client).filter(Client.employee_id == employee_id).first()
-        if client:
-            return f"{client.last_name or ''} {client.other_names or ''}".strip()
-        return "Unknown"
+    # OPTIMIZATION 2: Preload all client data in a single query
+    print("Preloading client data...")
+    client_map = {}
+    # Process in batches to avoid memory issues with very large datasets
+    client_batch_size = 5000
+    for offset in range(0, total_loan_count, client_batch_size):
+        # Get employee IDs for this batch
+        employee_ids_subq = db.query(Loan.employee_id).filter(
+            Loan.portfolio_id == portfolio_id
+        ).distinct().offset(offset).limit(client_batch_size).subquery()
+        
+        # Get clients in a single query
+        clients = db.query(Client).filter(
+            Client.employee_id.in_(employee_ids_subq)
+        ).all()
+        
+        # Build client map
+        for client in clients:
+            if client.employee_id:
+                name = f"{client.last_name or ''} {client.other_names or ''}".strip()
+                client_map[client.employee_id] = name if name else "Unknown"
     
-    # OPTIMIZATION 3: Staging data optimization with O(1) lookup
+    # OPTIMIZATION 3: Preload staging data with O(1) lookup
+    print("Preloading staging data...")
     latest_staging = (
         db.query(StagingResult)
         .filter(
@@ -1007,22 +1021,49 @@ def generate_ecl_detailed_report(
             if loan_id and stage:
                 loan_stage_map[loan_id] = stage
     
-    # OPTIMIZATION 4: Process loans in database-level batches
-    batch_size = 100  # Smaller batch size to reduce memory usage
+    # OPTIMIZATION 4: Preload all securities data with a join
+    print("Preloading securities data...")
+    security_map = {}
+    # Process in batches to avoid memory issues with very large datasets
+    security_batch_size = 5000
+    for offset in range(0, total_loan_count, security_batch_size):
+        # Get employee IDs for this batch
+        employee_ids_subq = db.query(Loan.employee_id).filter(
+            Loan.portfolio_id == portfolio_id
+        ).distinct().offset(offset).limit(security_batch_size).subquery()
+        
+        # Get securities with client data in a single query
+        securities_with_clients = (
+            db.query(Security, Client.employee_id)
+            .join(Client, Security.client_id == Client.id)
+            .filter(Client.employee_id.in_(employee_ids_subq))
+            .all()
+        )
+        
+        # Group securities by employee_id for O(1) lookup
+        for security, employee_id in securities_with_clients:
+            if employee_id:
+                if employee_id not in security_map:
+                    security_map[employee_id] = []
+                security_map[employee_id].append(security)
+    
+    # OPTIMIZATION 5: Process loans in larger batches
+    batch_size = 2000  # Larger batch size for better throughput
     
     # Calculate number of batches
     num_batches = (total_loan_count + batch_size - 1) // batch_size
     print(f"Processing {num_batches} batches of {batch_size} loans each")
     
-    # OPTIMIZATION 5: Stream process with running totals
+    # OPTIMIZATION 6: Stream process with running totals
     # Initialize totals
     total_ead = 0.0
     total_lgd = 0.0
     total_ecl = 0.0
     
-    # OPTIMIZATION 6: Write loan data directly to a temporary file to avoid keeping it all in memory
+    # OPTIMIZATION 7: Use a streaming JSON writer to avoid memory issues
     import tempfile
     import json
+    import os
     
     # Create a temporary file to store loan data
     temp_file = tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.json')
@@ -1035,6 +1076,7 @@ def generate_ecl_detailed_report(
     
     # Process loans in batches
     for offset in range(0, total_loan_count, batch_size):
+        batch_start_time = time.time()
         print(f"Processing batch {offset//batch_size + 1}/{num_batches}")
         
         # Fetch batch of loans directly from database
@@ -1042,117 +1084,143 @@ def generate_ecl_detailed_report(
             Loan.portfolio_id == portfolio_id
         ).order_by(Loan.id).offset(offset).limit(batch_size).all()
         
-        # Get employee IDs for this batch
-        employee_ids = list(set([loan.employee_id for loan in loan_batch if loan.employee_id]))
+        # OPTIMIZATION 8: Parallel processing for independent calculations
+        from concurrent.futures import ThreadPoolExecutor
         
-        # Get securities for this batch
-        securities_with_clients = (
-            db.query(Security, Client)
-            .join(Client, Security.client_id == Client.id)
-            .filter(Client.employee_id.in_(employee_ids))
-            .all()
-        )
+        def process_loan(loan):
+            try:
+                # Convert to float early to reduce decimal overhead
+                loan_amount = float(loan.loan_amount) if loan.loan_amount else 0.0
+                admin_fees = float(loan.administrative_fees) if loan.administrative_fees else 0.0
+                loan_term = int(loan.loan_term) if loan.loan_term else 0
+                monthly_payment = float(loan.monthly_installment) if loan.monthly_installment else 0.0
+                outstanding_balance = float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance else 0.0
+                
+                # Get stage using O(1) lookup
+                stage = loan_stage_map.get(loan.id, "Stage 1")  # Default to Stage 1
+                
+                # Get securities using O(1) lookup
+                securities = security_map.get(loan.employee_id, [])
+                
+                # Calculate values
+                pd_value = calculate_probability_of_default(loan, db)
+                lgd = calculate_loss_given_default(loan, securities)
+                ead = calculate_exposure_at_default_percentage(loan, report_date)
+                
+                # Calculate EIR
+                eir = calculate_effective_interest_rate_lender(
+                    loan_amount=loan_amount,
+                    administrative_fees=admin_fees,
+                    loan_term=loan_term,
+                    monthly_payment=monthly_payment
+                )
+                
+                # Calculate ECL
+                ecl = float(ead) * float(pd_value) * float(lgd) / 100.0
+                
+                # Get client name using preloaded map
+                client_name = client_map.get(loan.employee_id, "Unknown")
+                
+                # Create loan entry
+                loan_entry = {
+                    "loan_id": loan.id,
+                    "employee_id": loan.employee_id,
+                    "employee_name": client_name,
+                    "loan_value": str(loan.loan_amount) if loan.loan_amount else "0",
+                    "outstanding_loan_balance": str(loan.outstanding_loan_balance) if loan.outstanding_loan_balance else "0",
+                    "accumulated_arrears": str(loan.accumulated_arrears or Decimal(0)),
+                    "ndia": str(loan.ndia or Decimal(0)),
+                    "stage": stage,
+                    "ead": str(ead),
+                    "lgd": str(lgd),
+                    "eir": str(eir),
+                    "pd": str(pd_value),
+                    "ecl": str(ecl)
+                }
+                
+                return loan_entry, {
+                    "ead": float(ead),
+                    "lgd": float(lgd) * outstanding_balance,
+                    "ecl": ecl
+                }
+                
+            except Exception as e:
+                print(f"Error processing loan {loan.id}: {str(e)}")
+                return None, None
         
-        # Group securities by employee_id for O(1) lookup
-        client_securities = {}
-        for security, client in securities_with_clients:
-            if client and client.employee_id:
-                if client.employee_id not in client_securities:
-                    client_securities[client.employee_id] = []
-                client_securities[client.employee_id].append(security)
+        # Process loans in parallel
+        max_workers = min(8, os.cpu_count() or 4)  # Use at most 8 workers or number of CPU cores
+        results = []
         
-        # Process each loan in the batch
-        for loan in loan_batch:
-            # Convert to float early to reduce decimal overhead
-            loan_amount = float(loan.loan_amount) if loan.loan_amount else 0.0
-            admin_fees = float(loan.administrative_fees) if loan.administrative_fees else 0.0
-            loan_term = int(loan.loan_term) if loan.loan_term else 0
-            monthly_payment = float(loan.monthly_installment) if loan.monthly_installment else 0.0
-            outstanding_balance = float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance else 0.0
-            
-            # Get stage using O(1) lookup
-            stage = loan_stage_map.get(loan.id, "Stage 1")  # Default to Stage 1
-            
-            # Calculate PD
-            pd_value = calculate_probability_of_default(loan, db)
-            
-            # Get securities using O(1) lookup
-            securities = client_securities.get(loan.employee_id, [])
-            
-            # Calculate remaining values
-            lgd = calculate_loss_given_default(loan, securities)
-            ead = calculate_exposure_at_default_percentage(loan, report_date)
-            
-            # Calculate EIR
-            eir = calculate_effective_interest_rate_lender(
-                loan_amount=loan_amount,
-                administrative_fees=admin_fees,
-                loan_term=loan_term,
-                monthly_payment=monthly_payment
-            )
-            
-            # Calculate ECL
-            ecl = float(ead) * float(pd_value) * float(lgd) / 100.0
-            
-            # Update totals
-            total_ead += float(ead)
-            total_lgd += float(lgd) * outstanding_balance
-            total_ecl += ecl
-            
-            # Get client name using cached function
-            client_name = get_client_name(loan.employee_id)
-            
-            # Create loan entry
-            loan_entry = {
-                "loan_id": loan.id,
-                "employee_id": loan.employee_id,
-                "employee_name": client_name,
-                "loan_value": str(loan.loan_amount) if loan.loan_amount else "0",
-                "outstanding_loan_balance": str(loan.outstanding_loan_balance) if loan.outstanding_loan_balance else "0",
-                "accumulated_arrears": str(loan.accumulated_arrears or Decimal(0)),
-                "ndia": str(loan.ndia or Decimal(0)),
-                "stage": stage,
-                "ead": str(ead),
-                "lgd": str(lgd),
-                "eir": str(eir),
-                "pd": str(pd_value),
-                "ecl": str(ecl)
-            }
-            
-            # Write loan entry to temporary file
-            if not first_loan:
-                temp_file.write(',\n')
-            first_loan = False
-            json.dump(loan_entry, temp_file)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = list(executor.map(process_loan, loan_batch))
+        
+        # Write results to file and update totals
+        for loan_entry, totals in results:
+            if loan_entry and totals:
+                # Update totals
+                total_ead += totals["ead"]
+                total_lgd += totals["lgd"]
+                total_ecl += totals["ecl"]
+                
+                # Write loan entry to temporary file
+                if not first_loan:
+                    temp_file.write(',\n')
+                first_loan = False
+                json.dump(loan_entry, temp_file)
         
         # Clear batch data to free memory
         del loan_batch
-        del securities_with_clients
-        del client_securities
+        del results
+        
+        batch_time = time.time() - batch_start_time
+        print(f"Batch processed in {batch_time:.2f} seconds")
     
     # Write the end of the JSON array
     temp_file.write('\n]')
     temp_file.close()
     
-    # OPTIMIZATION 7: Create a custom iterator to read loan data from the file
-    class LoanDataIterator:
+    # OPTIMIZATION 9: Create a streaming iterator for the Excel generator
+    class StreamingLoanDataIterator:
         def __init__(self, file_path):
             self.file_path = file_path
-            # Load all loans at once to ensure they're available for the Excel generator
-            self._load_loans()
+            self._load_metadata()
             
-        def _load_loans(self):
+        def _load_metadata(self):
+            """Just load the metadata to get the count without loading all loans"""
             import json
             with open(self.file_path, 'r') as f:
-                self.loans = json.load(f)
-            print(f"Loaded {len(self.loans)} loans from temporary file")
+                # Read first line to check if it's an empty array
+                first_line = f.readline().strip()
+                if first_line == '[' and f.readline().strip() == ']':
+                    self.count = 0
+                else:
+                    # Count the number of lines that contain loan data (excluding first and last lines)
+                    f.seek(0)
+                    content = f.read()
+                    self.count = content.count('\n') - 1
+                    if self.count < 0:
+                        self.count = 0
             
         def __iter__(self):
-            for loan in self.loans:
-                yield loan
+            import json
+            with open(self.file_path, 'r') as f:
+                # Skip the opening bracket
+                f.readline()
+                
+                # Read each line (loan entry)
+                for line in f:
+                    line = line.strip()
+                    if line.endswith(','):
+                        line = line[:-1]  # Remove trailing comma
+                    if line and line != ']':  # Skip empty lines and closing bracket
+                        try:
+                            yield json.loads(line)
+                        except json.JSONDecodeError:
+                            print(f"Error decoding JSON: {line}")
                 
         def __len__(self):
-            return len(self.loans)
+            return self.count
     
     # Create the report data structure
     report_data = {
@@ -1164,15 +1232,32 @@ def generate_ecl_detailed_report(
         "total_ead": total_ead,
         "total_lgd": total_lgd,
         "total_ecl": total_ecl,
-        "loans": LoanDataIterator(temp_file_path),
-        "total_loan_count": total_loan_count
     }
     
+    # Generate Excel file and include base64 in report data
+    try:
+        portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
+        if portfolio:
+            # Prepare a copy of report_data and add loans as a list for Excel only
+            excel_report_data = dict(report_data)
+            all_loans = list(StreamingLoanDataIterator(temp_file_path))
+            excel_report_data["loans"] = all_loans
+            
+            excel_bytes = create_excel_file(
+                portfolio_name=portfolio.name,
+                report_type="ecl_detailed_report",
+                report_date=report_date,
+                report_data=excel_report_data
+            )
+            import base64
+            excel_base64 = base64.b64encode(excel_bytes.getvalue()).decode('utf-8')
+            report_data["file"] = excel_base64
+            print("Added base64-encoded Excel file to report data")
+    except Exception as e:
+        print(f"Error generating Excel file for base64 encoding: {str(e)}")
+        # Continue without the base64 file
+    
     print(f"ECL detailed report generated in {time.time() - start_time:.2f} seconds")
-    
-    # OPTIMIZATION 8: Clean up the temporary file when the report is processed
-    # This will be handled by the Excel generator
-    
     return report_data
 
 
@@ -1321,6 +1406,7 @@ def generate_local_impairment_details_report(
         raise ValueError(f"No local impairment staging found for portfolio {portfolio_id}")
     
     # OPTIMIZATION 1: Extract staging data with O(1) lookup
+    print("Preloading staging data...")
     staging_data = []
     if "staging_data" in latest_staging.result_summary:
         staging_data = latest_staging.result_summary.get("staging_data", [])
@@ -1349,13 +1435,53 @@ def generate_local_impairment_details_report(
     total_loan_count = db.query(func.count(Loan.id)).filter(Loan.portfolio_id == portfolio_id).scalar()
     print(f"Portfolio has {total_loan_count} loans to process")
     
-    # OPTIMIZATION 4: Client data caching with LRU cache
-    @lru_cache(maxsize=1000)
-    def get_client_name(employee_id):
-        client = db.query(Client).filter(Client.employee_id == employee_id).first()
-        if client:
-            return f"{client.last_name or ''} {client.other_names or ''}".strip()
-        return "Unknown"
+    # OPTIMIZATION 4: Preload all client data in a single query
+    print("Preloading client data...")
+    client_map = {}
+    # Process in batches to avoid memory issues with very large datasets
+    client_batch_size = 5000
+    for offset in range(0, total_loan_count, client_batch_size):
+        # Get employee IDs for this batch
+        employee_ids_subq = db.query(Loan.employee_id).filter(
+            Loan.portfolio_id == portfolio_id
+        ).distinct().offset(offset).limit(client_batch_size).subquery()
+        
+        # Get clients in a single query
+        clients = db.query(Client).filter(
+            Client.employee_id.in_(employee_ids_subq)
+        ).all()
+        
+        # Build client map
+        for client in clients:
+            if client.employee_id:
+                name = f"{client.last_name or ''} {client.other_names or ''}".strip()
+                client_map[client.employee_id] = name if name else "Unknown"
+    
+    # OPTIMIZATION 5: Preload all securities data with a join
+    print("Preloading securities data...")
+    security_map = {}
+    # Process in batches to avoid memory issues with very large datasets
+    security_batch_size = 5000
+    for offset in range(0, total_loan_count, security_batch_size):
+        # Get employee IDs for this batch
+        employee_ids_subq = db.query(Loan.employee_id).filter(
+            Loan.portfolio_id == portfolio_id
+        ).distinct().offset(offset).limit(security_batch_size).subquery()
+        
+        # Get securities with client data in a single query
+        securities_with_clients = (
+            db.query(Security, Client.employee_id)
+            .join(Client, Security.client_id == Client.id)
+            .filter(Client.employee_id.in_(employee_ids_subq))
+            .all()
+        )
+        
+        # Group securities by employee_id for O(1) lookup
+        for security, employee_id in securities_with_clients:
+            if employee_id:
+                if employee_id not in security_map:
+                    security_map[employee_id] = []
+                security_map[employee_id].append(security)
     
     # Initialize category totals
     category_totals = {
@@ -1366,16 +1492,17 @@ def generate_local_impairment_details_report(
         "Loss": {"count": 0, "balance": 0.0, "provision": 0.0}
     }
     
-    # OPTIMIZATION 5: Process loans in smaller batches to reduce memory usage
-    batch_size = 100
+    # OPTIMIZATION 6: Process loans in larger batches
+    batch_size = 2000  # Increased batch size for better throughput
     
     # Calculate number of batches
     num_batches = (total_loan_count + batch_size - 1) // batch_size
     print(f"Processing {num_batches} batches of {batch_size} loans each")
     
-    # OPTIMIZATION 6: Write loan data directly to a temporary file to avoid keeping it all in memory
+    # OPTIMIZATION 7: Write loan data directly to a temporary file to avoid keeping it all in memory
     import tempfile
     import json
+    import os
     
     # Create a temporary file to store loan data
     temp_file = tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.json')
@@ -1388,6 +1515,7 @@ def generate_local_impairment_details_report(
     
     # Process loans in batches
     for offset in range(0, total_loan_count, batch_size):
+        batch_start_time = time.time()
         print(f"Processing batch {offset//batch_size + 1}/{num_batches}")
         
         # Fetch batch of loans directly from database
@@ -1395,32 +1523,10 @@ def generate_local_impairment_details_report(
             Loan.portfolio_id == portfolio_id
         ).order_by(Loan.id).offset(offset).limit(batch_size).all()
         
-        # Get employee IDs for this batch
-        employee_ids = list(set([loan.employee_id for loan in loan_batch if loan.employee_id]))
+        # OPTIMIZATION 8: Parallel processing for independent calculations
+        from concurrent.futures import ThreadPoolExecutor
         
-        # Get securities for this batch
-        securities_with_clients = []
-        # Process employee IDs in smaller sub-batches to avoid query parameter limits
-        employee_id_batches = [employee_ids[i:i + 100] for i in range(0, len(employee_ids), 100)]
-        for emp_batch in employee_id_batches:
-            batch_securities = (
-                db.query(Security, Client)
-                .join(Client, Security.client_id == Client.id)
-                .filter(Client.employee_id.in_(emp_batch))
-                .all()
-            )
-            securities_with_clients.extend(batch_securities)
-        
-        # Group securities by employee_id for O(1) lookup
-        client_securities = {}
-        for security, client in securities_with_clients:
-            if client and client.employee_id:
-                if client.employee_id not in client_securities:
-                    client_securities[client.employee_id] = []
-                client_securities[client.employee_id].append(security)
-        
-        # Process each loan in the batch
-        for loan in loan_batch:
+        def process_loan(loan):
             try:
                 # Convert to float early to reduce decimal overhead
                 outstanding_balance = float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance else 0.0
@@ -1432,7 +1538,7 @@ def generate_local_impairment_details_report(
                 provision_rate = provision_rates.get(category, 0.01)  # Default to 1% if category not found
                 
                 # Get securities using O(1) lookup
-                securities = client_securities.get(loan.employee_id, [])
+                securities = security_map.get(loan.employee_id, [])
                 
                 # Calculate LGD for more accurate provision
                 lgd = calculate_loss_given_default(loan, securities) / 100.0  # Convert to decimal
@@ -1440,14 +1546,8 @@ def generate_local_impairment_details_report(
                 # Calculate provision amount with LGD factor
                 provision_amount = outstanding_balance * provision_rate * lgd
                 
-                # Update category totals
-                if category in category_totals:
-                    category_totals[category]["count"] += 1
-                    category_totals[category]["balance"] += outstanding_balance
-                    category_totals[category]["provision"] += provision_amount
-                
-                # Get client name using cached function
-                client_name = get_client_name(loan.employee_id)
+                # Get client name using preloaded map
+                client_name = client_map.get(loan.employee_id, "Unknown")
                 
                 # Create loan entry
                 loan_entry = {
@@ -1463,45 +1563,93 @@ def generate_local_impairment_details_report(
                     "provision_amount": str(provision_amount)
                 }
                 
+                # Return loan entry and category data for totals
+                return loan_entry, {
+                    "category": category,
+                    "balance": outstanding_balance,
+                    "provision": provision_amount
+                }
+                
+            except Exception as e:
+                print(f"Error processing loan {loan.id}: {str(e)}")
+                # Continue processing other loans
+                return None, None
+        
+        # Process loans in parallel
+        max_workers = min(8, os.cpu_count() or 4)  # Use at most 8 workers or number of CPU cores
+        results = []
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = list(executor.map(process_loan, loan_batch))
+        
+        # Write results to file and update totals
+        for loan_entry, category_data in results:
+            if loan_entry and category_data:
+                # Update category totals
+                category = category_data["category"]
+                if category in category_totals:
+                    category_totals[category]["count"] += 1
+                    category_totals[category]["balance"] += category_data["balance"]
+                    category_totals[category]["provision"] += category_data["provision"]
+                
                 # Write loan entry to temporary file
                 if not first_loan:
                     temp_file.write(',\n')
                 first_loan = False
                 json.dump(loan_entry, temp_file)
-                
-            except Exception as e:
-                print(f"Error processing loan {loan.id}: {str(e)}")
-                # Continue processing other loans
-                continue
         
         # Clear batch data to free memory
         del loan_batch
-        del securities_with_clients
-        del client_securities
+        del results
+        
+        batch_time = time.time() - batch_start_time
+        print(f"Batch processed in {batch_time:.2f} seconds")
     
     # Write the end of the JSON array
     temp_file.write('\n]')
     temp_file.close()
     
-    # OPTIMIZATION 7: Create a custom iterator to read loan data from the file
-    class LoanDataIterator:
+    # OPTIMIZATION 9: Create a streaming iterator for the Excel generator
+    class StreamingLoanDataIterator:
         def __init__(self, file_path):
             self.file_path = file_path
-            # Load all loans at once to ensure they're available for the Excel generator
-            self._load_loans()
+            self._load_metadata()
             
-        def _load_loans(self):
+        def _load_metadata(self):
+            """Just load the metadata to get the count without loading all loans"""
             import json
             with open(self.file_path, 'r') as f:
-                self.loans = json.load(f)
-            print(f"Loaded {len(self.loans)} loans from temporary file")
+                # Read first line to check if it's an empty array
+                first_line = f.readline().strip()
+                if first_line == '[' and f.readline().strip() == ']':
+                    self.count = 0
+                else:
+                    # Count the number of lines that contain loan data (excluding first and last lines)
+                    f.seek(0)
+                    content = f.read()
+                    self.count = content.count('\n') - 1
+                    if self.count < 0:
+                        self.count = 0
             
         def __iter__(self):
-            for loan in self.loans:
-                yield loan
+            import json
+            with open(self.file_path, 'r') as f:
+                # Skip the opening bracket
+                f.readline()
+                
+                # Read each line (loan entry)
+                for line in f:
+                    line = line.strip()
+                    if line.endswith(','):
+                        line = line[:-1]  # Remove trailing comma
+                    if line and line != ']':  # Skip empty lines and closing bracket
+                        try:
+                            yield json.loads(line)
+                        except json.JSONDecodeError:
+                            print(f"Error decoding JSON: {line}")
                 
         def __len__(self):
-            return len(self.loans)
+            return self.count
     
     # Calculate total provision
     total_provision = sum(category_totals[category]["provision"] for category in category_totals)
@@ -1514,16 +1662,30 @@ def generate_local_impairment_details_report(
         "report_run_date": datetime.now().date(),
         "total_provision": total_provision,
         "category_totals": category_totals,
-        "loans": LoanDataIterator(temp_file_path),
-        "total_loan_count": total_loan_count
     }
+    
+    # Generate Excel file and include base64 in report data
+    try:
+        excel_report_data = dict(result)
+        all_loans = list(StreamingLoanDataIterator(temp_file_path))
+        excel_report_data["loans"] = all_loans
+        
+        excel_bytes = create_excel_file(
+            portfolio_name=portfolio.name,
+            report_type="local_impairment_detailed_report",
+            report_date=report_date,
+            report_data=excel_report_data
+        )
+        import base64
+        excel_base64 = base64.b64encode(excel_bytes.getvalue()).decode('utf-8')
+        result["file"] = excel_base64
+        print("Added base64-encoded Excel file to report data")
+    except Exception as e:
+        print(f"Error generating Excel file for base64 encoding: {str(e)}")
+        # Continue without the base64 file
     
     elapsed_time = time.time() - start_time
     print(f"Report generation completed in {elapsed_time:.2f} seconds")
-    
-    # OPTIMIZATION 8: Clean up the temporary file when the report is processed
-    # This will be handled by the Excel generator
-    
     return result
 
 

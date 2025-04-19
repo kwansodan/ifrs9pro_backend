@@ -184,6 +184,8 @@ def calculate_exposure_at_default_percentage(loan, reporting_date):
 
     # Calculate months elapsed from loan issue date to reporting date
     issue_date = loan.loan_issue_date
+    if not issue_date or not hasattr(issue_date, 'year') or not hasattr(issue_date, 'month') or not reporting_date or not hasattr(reporting_date, 'year') or not hasattr(reporting_date, 'month'):
+        return 0
     months_elapsed = (reporting_date.year - issue_date.year) * 12 + (
         reporting_date.month - issue_date.month
     )
@@ -281,8 +283,8 @@ def calculate_probability_of_default(loan, db):
                 Client.employee_id == loan.employee_id
             ).first()
             
-            if not client or not client.date_of_birth:
-                return 5.0  # Default 5% probability if client or DOB not found
+            if not client or not client.date_of_birth or not hasattr(client.date_of_birth, 'year'):
+                return 0  # Return 0 if client or DOB not found or invalid
             
             # Get year of birth from date of birth
             year_of_birth = client.date_of_birth.year
