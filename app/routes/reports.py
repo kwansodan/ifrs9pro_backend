@@ -146,11 +146,7 @@ async def generate_report(
             "report_date": report_request.report_date,
             "report_name": human_readable_name,  # Add the human-readable name
             "data": report_data,
-            "file": {
-                "filename": file_name,
-                "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                "content": excel_base64,
-            },
+            
         }
 
     except Exception as e:
@@ -187,14 +183,25 @@ async def save_report(
         )
 
     try:
-        # Remove the 'file' section from report_data if it exists to avoid storing
-        # the redundant base64-encoded Excel file in the database
+        # Instead of removing the 'file' section, we'll use it if it exists
         cleaned_report_data = report_data.report_data
+        excel_base64 = None
+        
+        # Extract the base64 Excel file if it exists
         if isinstance(cleaned_report_data, dict) and "file" in cleaned_report_data:
-            # Make a copy without the 'file' key
-            cleaned_report_data = {
-                k: v for k, v in cleaned_report_data.items() if k != "file"
-            }
+            excel_base64 = cleaned_report_data.get("file")
+            
+            # For detailed reports, we don't need to store the full loan list
+            # This saves DB space while keeping the Excel file for download
+            if report_data.report_type in ["ecl_detailed_report", "local_impairment_detailed_report"]:
+                # Remove the loans array to save space
+                if "loans" in cleaned_report_data:
+                    cleaned_report_data = {
+                        k: v for k, v in cleaned_report_data.items() if k != "loans"
+                    }
+                
+                # Keep the file for download
+                cleaned_report_data["file"] = excel_base64
 
         # Create a new report record
         new_report = Report(
@@ -202,7 +209,7 @@ async def save_report(
             report_type=report_data.report_type,
             report_date=report_data.report_date,
             report_name=report_data.report_name,
-            report_data=cleaned_report_data,  # Use the cleaned data without the file
+            report_data=cleaned_report_data,  # Use the cleaned data
             created_by=current_user.id,
         )
 
@@ -386,14 +393,28 @@ async def download_report_excel(
         )
 
     try:
-        # Generate the Excel from the saved report data
-        excel_bytes = generate_report_excel(
-            db=db,
-            portfolio_id=portfolio_id,
-            report_type=report.report_type,
-            report_date=report.report_date,
-            report_data=report.report_data,
-        )
+        # Check if we have a stored Excel file in the report data
+        excel_bytes = None
+        if isinstance(report.report_data, dict) and "file" in report.report_data:
+            # Use the stored base64 Excel file
+            try:
+                import base64
+                excel_base64 = report.report_data.get("file")
+                excel_bytes = base64.b64decode(excel_base64)
+            except Exception as e:
+                print(f"Error decoding base64 Excel: {str(e)}")
+                excel_bytes = None
+        
+        # If no stored Excel or error decoding, generate it from the report data
+        if not excel_bytes:
+            # Generate the Excel from the saved report data
+            excel_bytes = generate_report_excel(
+                db=db,
+                portfolio_id=portfolio_id,
+                report_type=report.report_type,
+                report_date=report.report_date,
+                report_data=report.report_data,
+            )
 
         # Create a file name for the Excel
         report_name = f"{portfolio.name.replace(' ', '_')}_{report.report_type}_{report.report_date}.xlsx"
