@@ -29,6 +29,8 @@ from app.calculators.ecl import (
     calculate_loss_given_default,
 )
 
+import psutil
+import logging
 
 def generate_collateral_summary(
     db: Session, portfolio_id: int, report_date: date
@@ -945,6 +947,8 @@ def generate_ecl_detailed_report(
     Includes all loans while minimizing memory usage.
     """
     start_time = time.time()
+    process = psutil.Process()
+    logging.info(f"[MEM] Start generate_ecl_detailed_report: {process.memory_info().rss / 1024 ** 2:.2f} MB")
     print(f"Starting ECL detailed report for portfolio {portfolio_id}")
     
     # Get the latest ECL calculation result
@@ -991,6 +995,7 @@ def generate_ecl_detailed_report(
             if client.employee_id:
                 name = f"{client.last_name or ''} {client.other_names or ''}".strip()
                 client_map[client.employee_id] = name if name else "Unknown"
+    logging.info(f"[MEM] After client preload: {process.memory_info().rss / 1024 ** 2:.2f} MB")
     
     # OPTIMIZATION 3: Preload staging data with O(1) lookup
     print("Preloading staging data...")
@@ -1020,6 +1025,7 @@ def generate_ecl_detailed_report(
             stage = stage_info.get("stage")
             if loan_id and stage:
                 loan_stage_map[loan_id] = stage
+    logging.info(f"[MEM] After staging preload: {process.memory_info().rss / 1024 ** 2:.2f} MB")
     
     # OPTIMIZATION 4: Preload all securities data with a join
     print("Preloading securities data...")
@@ -1046,6 +1052,7 @@ def generate_ecl_detailed_report(
                 if employee_id not in security_map:
                     security_map[employee_id] = []
                 security_map[employee_id].append(security)
+    logging.info(f"[MEM] After securities preload: {process.memory_info().rss / 1024 ** 2:.2f} MB")
     
     # OPTIMIZATION 5: Process loans in larger batches
     batch_size = 2000  # Larger batch size for better throughput
@@ -1168,13 +1175,7 @@ def generate_ecl_detailed_report(
                     temp_file.write(',\n')
                 first_loan = False
                 json.dump(loan_entry, temp_file)
-        
-        # Clear batch data to free memory
-        del loan_batch
-        del results
-        
-        batch_time = time.time() - batch_start_time
-        print(f"Batch processed in {batch_time:.2f} seconds")
+    logging.info(f"[MEM] After loan batch processing: {process.memory_info().rss / 1024 ** 2:.2f} MB")
     
     # Write the end of the JSON array
     temp_file.write('\n]')
@@ -1257,6 +1258,7 @@ def generate_ecl_detailed_report(
         print(f"Error generating Excel file for base64 encoding: {str(e)}")
         # Continue without the base64 file
     
+    logging.info(f"[MEM] End generate_ecl_detailed_report: {process.memory_info().rss / 1024 ** 2:.2f} MB")
     print(f"ECL detailed report generated in {time.time() - start_time:.2f} seconds")
     return report_data
 
@@ -1370,6 +1372,8 @@ def generate_local_impairment_details_report(
         Dict containing the report data
     """
     start_time = time.time()
+    process = psutil.Process()
+    logging.info(f"[MEM] Start generate_local_impairment_details_report: {process.memory_info().rss / 1024 ** 2:.2f} MB")
     print(f"Starting local impairment details report for portfolio {portfolio_id}")
     
     # Get the portfolio
@@ -1420,6 +1424,7 @@ def generate_local_impairment_details_report(
         category = stage_info.get("impairment_category", stage_info.get("stage"))  # Support both formats
         if loan_id and category:
             loan_category_map[loan_id] = category
+    logging.info(f"[MEM] After staging preload: {process.memory_info().rss / 1024 ** 2:.2f} MB")
     
     # OPTIMIZATION 2: Extract provision rates from calculation
     calculation_summary = latest_calculation.result_summary
@@ -1456,6 +1461,7 @@ def generate_local_impairment_details_report(
             if client.employee_id:
                 name = f"{client.last_name or ''} {client.other_names or ''}".strip()
                 client_map[client.employee_id] = name if name else "Unknown"
+    logging.info(f"[MEM] After client preload: {process.memory_info().rss / 1024 ** 2:.2f} MB")
     
     # OPTIMIZATION 5: Preload all securities data with a join
     print("Preloading securities data...")
@@ -1482,6 +1488,7 @@ def generate_local_impairment_details_report(
                 if employee_id not in security_map:
                     security_map[employee_id] = []
                 security_map[employee_id].append(security)
+    logging.info(f"[MEM] After securities preload: {process.memory_info().rss / 1024 ** 2:.2f} MB")
     
     # Initialize category totals
     category_totals = {
@@ -1597,13 +1604,7 @@ def generate_local_impairment_details_report(
                     temp_file.write(',\n')
                 first_loan = False
                 json.dump(loan_entry, temp_file)
-        
-        # Clear batch data to free memory
-        del loan_batch
-        del results
-        
-        batch_time = time.time() - batch_start_time
-        print(f"Batch processed in {batch_time:.2f} seconds")
+    logging.info(f"[MEM] After loan batch processing: {process.memory_info().rss / 1024 ** 2:.2f} MB")
     
     # Write the end of the JSON array
     temp_file.write('\n]')
@@ -1684,6 +1685,7 @@ def generate_local_impairment_details_report(
         print(f"Error generating Excel file for base64 encoding: {str(e)}")
         # Continue without the base64 file
     
+    logging.info(f"[MEM] End generate_local_impairment_details_report: {process.memory_info().rss / 1024 ** 2:.2f} MB")
     elapsed_time = time.time() - start_time
     print(f"Report generation completed in {elapsed_time:.2f} seconds")
     return result
