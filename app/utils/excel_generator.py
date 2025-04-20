@@ -437,11 +437,6 @@ def populate_ecl_detailed_report(
     ws['B12'] = report_data.get('total_ecl', 0)
     ws['B12'].number_format = currency_format
 
-    # Use total_loan_count from report_data if available
-    if 'total_loan_count' in report_data:
-        ws['B14'] = f"Total Loans: {report_data['total_loan_count']}"
-    else:
-         ws['B14'] = "Total Loans: N/A" # Or calculate while iterating if needed
 
     # Populate loan details starting from row 15
     start_row = 15

@@ -310,3 +310,43 @@ def calculate_probability_of_default(loan, db):
         # Handle exceptions but maintain return type as float
         print(f"Error calculating probability of default: {str(e)}")
         return 5.0  # Default 5% probability on error
+
+
+def calculate_pd_from_yob(year_of_birth: Optional[int], model: Any) -> float:
+    """
+    Calculate Probability of Default using the preloaded model and year_of_birth.
+
+    Parameters:
+    - year_of_birth: The client's year of birth (integer).
+    - model: The preloaded scikit-learn model object.
+
+    Returns:
+    - float: Probability of default as a rate (0.0 to 1.0). Returns default on error.
+    """
+    DEFAULT_PD_RATE = 0.05 # 5% default rate
+
+    if model is None:
+        # print("Warning: PD Model not loaded, returning default PD.") # Reduce log noise
+        return DEFAULT_PD_RATE # Default 5% probability if model failed to load
+
+    if year_of_birth is None or not isinstance(year_of_birth, int):
+        # print("Warning: Invalid year_of_birth, returning default PD.") # Reduce log noise
+        return DEFAULT_PD_RATE # Default 5% if no valid YOB
+
+    try:
+        # Create DataFrame with the correct feature name (determined during model load)
+        # No need for pandas if only one feature, numpy array is faster
+        # X_new = pd.DataFrame({PD_MODEL_FEATURE_NAME: [year_of_birth]})
+        X_new = np.array([[year_of_birth]]) # Create 2D numpy array for predict/predict_proba
+
+        # Get probability from model
+        # predict_proba returns [[prob_class_0, prob_class_1]]
+        probability_class_1 = model.predict_proba(X_new)[0][1] # Probability of class 1 (default)
+
+        # Return as a rate (0.0 to 1.0)
+        return float(probability_class_1)
+
+    except Exception as e:
+        # Handle prediction exceptions
+        print(f"Error during PD prediction for YOB {year_of_birth}: {str(e)}")
+        return DEFAULT_PD_RATE # Default 5% probability on prediction error

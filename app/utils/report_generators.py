@@ -25,6 +25,7 @@ from app.calculators.ecl import (
     calculate_exposure_at_default_percentage,
     calculate_probability_of_default,
     calculate_loss_given_default,
+    calculate_pd_from_yob
 )
 
 import psutil
@@ -40,6 +41,40 @@ import json
 import os
 import base64
 import traceback
+import pickle
+import warnings
+
+# Suppress specific warnings globally if they always occur with this model
+warnings.filterwarnings("ignore", category=UserWarning, message="X does not have valid feature names")
+warnings.filterwarnings("ignore", category=UserWarning, message="Trying to unpickle estimator")
+
+PRELOADED_PD_MODEL = None
+PD_MODEL_FEATURE_NAME = 'year_of_birth' # Default, will be updated on load if possible
+
+try:
+    # Ensure the path is correct relative to the execution context
+    model_path = "app/ml_models/logistic_model.pkl"
+    print(f"Loading PD model from: {model_path}")
+    with open(model_path, "rb") as file:
+        PRELOADED_PD_MODEL = pickle.load(file)
+        print("PD model loaded successfully.")
+        # Try to get the actual feature name used during training
+        if hasattr(PRELOADED_PD_MODEL, 'feature_names_in_'):
+            try:
+                PD_MODEL_FEATURE_NAME = PRELOADED_PD_MODEL.feature_names_in_[0]
+                print(f"Using feature name from model: {PD_MODEL_FEATURE_NAME}")
+            except IndexError:
+                 print(f"Warning: Model feature_names_in_ is empty. Using default '{PD_MODEL_FEATURE_NAME}'.")
+            except Exception as e:
+                 print(f"Warning: Could not get feature name from model ({e}). Using default '{PD_MODEL_FEATURE_NAME}'.")
+
+except FileNotFoundError:
+    print(f"FATAL ERROR: PD Model file not found at {model_path}")
+    # PRELOADED_PD_MODEL remains None
+except Exception as e:
+    print(f"FATAL ERROR: Failed to load PD model from {model_path}: {e}")
+    traceback.print_exc()
+    # PRELOADED_PD_MODEL remains None
 
 class StreamingLoanDataIterator:
     def __init__(self, file_path):
@@ -522,7 +557,8 @@ def generate_assumptions_summary(
     for loan in loans:
         # Calculate PD
         ndia = loan.ndia or Decimal(0)
-        pd = calculate_probability_of_default(loan, db)
+        # pd = calculate_probability_of_default(loan, db)
+        pd = calculate_pd_from_yob()
         pd_values.append(pd)
 
         # Calculate LGD
@@ -1058,14 +1094,34 @@ def generate_ecl_detailed_report(
             return {"error": f"Portfolio {portfolio_id} not found"}
 
         print("Preloading client data...")
-        client_map = {
-            client.employee_id: f"{client.last_name or ''} {client.other_names or ''}".strip() or "Unknown"
-            for client in db.query(Client.employee_id, Client.last_name, Client.other_names)
-                           .filter(Client.portfolio_id == portfolio_id, Client.employee_id != None)
-                           .all()
-        }
+        client_query = db.query(
+            Client.employee_id,
+            Client.last_name,
+            Client.other_names,
+            Client.date_of_birth # Fetch DOB
+        ).filter(
+            Client.portfolio_id == portfolio_id, Client.employee_id != None
+        ).all()
+
+        client_map = {}
+        employee_yob_map = {} # <--- NEW: Map for year of birth
+        for client_data in client_query:
+            emp_id = client_data.employee_id
+            client_map[emp_id] = f"{client_data.last_name or ''} {client_data.other_names or ''}".strip() or "Unknown"
+            # Extract year of birth safely
+            year_of_birth = None
+            if client_data.date_of_birth and hasattr(client_data.date_of_birth, 'year'):
+                try:
+                    year_of_birth = int(client_data.date_of_birth.year)
+                except (ValueError, TypeError):
+                    year_of_birth = None # Handle potential non-integer years if data is messy
+            employee_yob_map[emp_id] = year_of_birth # Store None if DOB is invalid/missing
+
+        print(f"Preloaded client names for {len(client_map)} clients.")
+        print(f"Preloaded YOB for {len(employee_yob_map)} employees.")
         logging.info(f"[MEM] After client preload: {process.memory_info().rss / 1024**2:.2f} MB")
 
+        
         print("Preloading staging data...")
         latest_staging = db.query(StagingResult).filter(
             StagingResult.portfolio_id == portfolio_id, StagingResult.staging_type == "ecl"
@@ -1146,7 +1202,7 @@ def generate_ecl_detailed_report(
 
                     # Calculations (Pass the loan_data object or required fields)
                     # Wrap calculations in Decimal for precision if needed, then convert to float
-                    pd_value = calculate_probability_of_default(loan_data, db) # Pass object
+                    pd_rate = calculate_pd_from_yob(year_of_birth, PRELOADED_PD_MODEL)
                     lgd_rate = calculate_loss_given_default(loan_data, securities) # Pass object
                     ead_amount = calculate_exposure_at_default_percentage(loan_data, report_date) # Pass object
                     eir_rate = calculate_effective_interest_rate_lender(
@@ -1157,7 +1213,7 @@ def generate_ecl_detailed_report(
                     )
 
                     # Ensure rates are treated as rates (e.g., 0.45) not percentages
-                    ecl_amount = float(ead_amount) * float(pd_value) * float(lgd_rate)
+                    ecl_amount = float(ead_amount) * float(pd_rate) * float(lgd_rate)
 
                     # Create loan entry for JSON (convert numbers to strings)
                     loan_entry = {
@@ -1170,9 +1226,9 @@ def generate_ecl_detailed_report(
                         "ndia": str(float(loan_data.ndia or 0.0)),
                         "stage": stage,
                         "ead": str(float(ead_amount)),
-                        "lgd": str(float(lgd_rate * 100)), # Convert rate to percentage string
-                        "eir": str(float(eir_rate * 100)), # Convert rate to percentage string
-                        "pd": str(float(pd_value * 100)),  # Convert rate to percentage string
+                        "lgd": str(float(lgd_rate)), # Convert rate to percentage string
+                        "eir": str(float(eir_rate)), # Convert rate to percentage string
+                        "pd": str(float(pd_rate * 100)),  # Convert rate to percentage string
                         "ecl": str(ecl_amount)
                     }
 
