@@ -42,9 +42,9 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://ifrs9pro.service4gh.com"],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["PUT", "POST", "GET", "DELETE"],
     allow_headers=["*"],
 )
 
