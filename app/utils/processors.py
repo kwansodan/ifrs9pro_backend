@@ -481,6 +481,7 @@ async def process_client_data(client_data, portfolio_id, db):
             "filename": client_data.filename,
         }
 
+
 async def process_loan_guarantees(loan_guarantee_data, portfolio_id, db):
     """Process loan guarantees file using Polars for high-performance data processing."""
     try:

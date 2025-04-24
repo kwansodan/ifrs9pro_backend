@@ -249,6 +249,21 @@ class Loan(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     portfolio = relationship("Portfolio", back_populates="loans")
+    ifrs9_stage = Column(String, nullable=True)
+    bog_stage = Column(String, nullable=True)
+    bog_prov_rate = Column(Numeric(precision=18, scale=2), default=0)
+    amortised_bal = Column(Numeric(precision=38, scale=2), default=0)
+    adjusted_amortised_bal = Column(Numeric(precision=38, scale=2), default=0)
+    theoretical_balance = Column(Numeric(precision=38, scale=2), default=0)
+    ead = Column(Numeric(precision=38, scale=2), default=0)
+    lgd = Column(Numeric(precision=38, scale=2), default=0)
+    pd = Column(Numeric(precision=38, scale=2), default=0)
+    ecl = Column(Numeric(precision=38, scale=2), default=0)
+    eir = Column(Numeric(precision=38, scale=2), default=0)
+    ecl_12 = Column(Numeric(precision=38, scale=2), default=0)
+    ecl_lifetime = Column(Numeric(precision=38, scale=2), default=0)
+    final_ecl = Column(Numeric(precision=38, scale=2), default=0)
+    bog_provision = Column(Numeric(precision=38, scale=2), default=0)
 
 class Guarantee(Base):
     __tablename__ = "guarantees"

@@ -22,13 +22,17 @@ from app.utils.background_tasks import get_task_manager, run_background_task
 from app.utils.background_processors import (
     process_loan_details_with_progress,
     process_client_data_with_progress
+
 )
+
 from app.utils.sync_processors import (
     process_loan_details_sync,
     process_client_data_sync,
-    run_quality_checks_sync,
+    run_quality_checks_sync
     
 )
+
+from app.utils.processors import process_loan_guarantees, process_collateral_data
 from app.utils.background_calculations import (
     process_ecl_calculation_sync,
     process_local_impairment_calculation_sync
@@ -610,7 +614,8 @@ async def process_portfolio_ingestion(
         )
         raise
 
-def process_portfolio_ingestion_sync(
+
+async def process_portfolio_ingestion_sync(
     portfolio_id: int,
     loan_details_content: Optional[bytes] = None,
     client_data_content: Optional[bytes] = None,
@@ -637,9 +642,9 @@ def process_portfolio_ingestion_sync(
         try:
             logger.info(f"Checking for existing data in portfolio {portfolio_id}")
             
-            # Delete existing data in reverse order of dependencies
+            
             # First delete staging results and calculation results
-            staging_count = db.query(StagingResult).filter(StagingResult.portfolio_id == portfolio_id).delete()
+            
             calculation_count = db.query(CalculationResult).filter(CalculationResult.portfolio_id == portfolio_id).delete()
             
             # Delete quality issues
@@ -729,7 +734,7 @@ def process_portfolio_ingestion_sync(
                 loan_guarantee_data_io = io.BytesIO(loan_guarantee_data_content)
                 
                 # Process the loan guarantee data
-                guarantee_results = process_loan_guarantees_sync(loan_guarantee_data_io, portfolio_id, db)
+                await process_loan_guarantees(io.BytesIO(loan_guarantee_data_content), portfolio_id=portfolio_id, db=db)
                 
                 # Add results to the overall results
                 results["details"]["loan_guarantee_data"] = guarantee_results
@@ -751,7 +756,7 @@ def process_portfolio_ingestion_sync(
                 loan_collateral_data_io = io.BytesIO(loan_collateral_data_content)
                 
                 # Process the loan collateral data
-                collateral_results = process_collateral_data_sync(loan_collateral_data_io, portfolio_id, db)
+                collateral_results = await process_collateral_data(loan_collateral_data_io, portfolio_id, db)
                 
                 # Add results to the overall results
                 results["details"]["loan_collateral_data"] = collateral_results
@@ -783,28 +788,77 @@ def process_portfolio_ingestion_sync(
         
         # Perform loan staging
         try:
-            logger.info(f"Performing loan staging for portfolio {portfolio_id}")
+            logger.info(f"Starting loan staging for portfolio {portfolio_id}")
             
             # Get the current date as the reporting date
             reporting_date = date.today()
-            
-            # Perform ECL staging
+            # Fetch ECL staging config from DB
+            latest_ecl_config = (
+                db.query(StagingResult)
+                .filter(
+                    StagingResult.portfolio_id == portfolio_id,
+                    StagingResult.staging_type == "ecl"
+                )
+                .order_by(StagingResult.created_at.desc())
+                .first()
+            )
+
+            # Fetch Local Impairment staging config from DB
+            latest_local_config = (
+                db.query(StagingResult)
+                .filter(
+                    StagingResult.portfolio_id == portfolio_id,
+                    StagingResult.staging_type == "local_impairment"
+                )
+                .order_by(StagingResult.created_at.desc())
+                .first()
+            )           
+                        
+            # Use ECL config if available
+            if latest_ecl_config and latest_ecl_config.config:
+                ecl_config_data = latest_ecl_config.config
+                ecl_config = ECLStagingConfig(
+                    stage_1=DaysRangeConfig(days_range=ecl_config_data["stage_1"]["days_range"]),
+                    stage_2=DaysRangeConfig(days_range=ecl_config_data["stage_2"]["days_range"]),
+                    stage_3=DaysRangeConfig(days_range=ecl_config_data["stage_3"]["days_range"])
+                )
+            else:
+                raise ValueError("Missing ECL staging config for portfolio")
+
+            # Use Local Impairment config if available
+            if latest_local_config and latest_local_config.config:
+                local_config_data = latest_local_config.config
+                local_config = LocalImpairmentConfig(
+                    current=DaysRangeConfig(days_range=local_config_data["current"]["days_range"]),
+                    olem=DaysRangeConfig(days_range=local_config_data["olem"]["days_range"]),
+                    substandard=DaysRangeConfig(days_range=local_config_data["substandard"]["days_range"]),
+                    doubtful=DaysRangeConfig(days_range=local_config_data["doubtful"]["days_range"]),
+                    loss=DaysRangeConfig(days_range=local_config_data["loss"]["days_range"])
+                )
+            else:
+                raise ValueError("Missing Local Impairment staging config for portfolio")       
+
+            ecl_config_data = latest_ecl_config.config  # This is a dict
             ecl_config = ECLStagingConfig(
-                stage_1=DaysRangeConfig(days_range="0-30"),
-                stage_2=DaysRangeConfig(days_range="31-90"),
-                stage_3=DaysRangeConfig(days_range="91+")
+                stage_1=DaysRangeConfig(days_range=ecl_config_data["stage_1"]["days_range"]),
+                stage_2=DaysRangeConfig(days_range=ecl_config_data["stage_2"]["days_range"]),
+                stage_3=DaysRangeConfig(days_range=ecl_config_data["stage_3"]["days_range"]),
             )
+
             ecl_staging_result = stage_loans_ecl_orm_sync(portfolio_id, ecl_config, db)
-            
-            # Perform local impairment staging
+
+           
+            local_config_data = latest_local_config.config
             local_config = LocalImpairmentConfig(
-                current=DaysRangeConfig(days_range="0-30"),
-                olem=DaysRangeConfig(days_range="31-90"),
-                substandard=DaysRangeConfig(days_range="91-180"),
-                doubtful=DaysRangeConfig(days_range="181-360"),
-                loss=DaysRangeConfig(days_range="361+")
+                current=DaysRangeConfig(days_range=local_config_data["current"]["days_range"]),
+                olem=DaysRangeConfig(days_range=local_config_data["olem"]["days_range"]),
+                substandard=DaysRangeConfig(days_range=local_config_data["substandard"]["days_range"]),
+                doubtful=DaysRangeConfig(days_range=local_config_data["doubtful"]["days_range"]),
+                loss=DaysRangeConfig(days_range=local_config_data["loss"]["days_range"])
             )
+
             local_staging_result = stage_loans_local_impairment_orm_sync(portfolio_id, local_config, db)
+
             
             # Add staging results to the overall results
             results["staging"] = {

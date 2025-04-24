@@ -99,8 +99,6 @@ from app.utils.background_ingestion import (
 )
 from app.utils.staging import parse_days_range
 from app.utils.background_calculations import (
-    start_background_ecl_calculation,
-    start_background_local_impairment_calculation,
     process_ecl_calculation_sync,
     process_local_impairment_calculation_sync
 )
@@ -862,7 +860,7 @@ def delete_portfolio(
 
 
 @router.post("/{portfolio_id}/ingest", status_code=status.HTTP_200_OK)
-def ingest_portfolio_data(
+async def ingest_portfolio_data(
     portfolio_id: int,
     loan_details: Optional[UploadFile] = File(None),
     client_data: Optional[UploadFile] = File(None),
@@ -907,12 +905,12 @@ def ingest_portfolio_data(
         )
     
     # Process files synchronously
-    result = process_portfolio_ingestion_sync(
-        portfolio_id=portfolio_id,
-        loan_details_content=loan_details.file.read(),
-        client_data_content=client_data.file.read(),
-        loan_guarantee_data_content=loan_guarantee_data.file.read() if loan_guarantee_data else None,
-        loan_collateral_data_content=loan_collateral_data.file.read() if loan_collateral_data else None,
+    result = await process_portfolio_ingestion_sync(
+        portfolio_id= portfolio_id,
+        loan_details_content= await loan_details.read(),
+        client_data_content= await client_data.read(),
+        loan_guarantee_data_content=await loan_guarantee_data.read() if loan_guarantee_data else None,
+        loan_collateral_data_content=await loan_collateral_data.read() if loan_collateral_data else None,
         db=db
     )
     
@@ -977,7 +975,7 @@ def ingest_portfolio_data(
     return result
 
 @router.get("/{portfolio_id}/calculate-ecl")
-def calculate_ecl_provision(
+async def calculate_ecl_provision(
     portfolio_id: int,
     reporting_date: Optional[date] = None,
     db: Session = Depends(get_db),
@@ -1022,10 +1020,9 @@ def calculate_ecl_provision(
     
     # Start the background task for ECL calculation
     try:
-        return process_ecl_calculation_sync(
+        return await process_ecl_calculation_sync(
             portfolio_id=portfolio_id,
             reporting_date=reporting_date,
-            staging_result=latest_staging,
             db=db
         )
     except Exception as e:
