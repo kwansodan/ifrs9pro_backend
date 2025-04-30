@@ -42,7 +42,7 @@ from app.schemas import ECLStagingConfig, LocalImpairmentConfig, DaysRangeConfig
 from app.utils.staging import (
     stage_loans_ecl_orm, 
     stage_loans_local_impairment_orm,
-    stage_loans_ecl_orm_sync,
+    stage_loans_ecl_orm,
     stage_loans_local_impairment_orm_sync
 )
 from app.utils.quality_checks import create_quality_issues_if_needed, create_and_save_quality_issues
@@ -845,7 +845,7 @@ async def process_portfolio_ingestion_sync(
                 stage_3=DaysRangeConfig(days_range=ecl_config_data["stage_3"]["days_range"]),
             )
 
-            ecl_staging_result = stage_loans_ecl_orm_sync(portfolio_id, ecl_config, db)
+            ecl_staging_result = await stage_loans_ecl_orm(portfolio_id, db)
 
            
             local_config_data = latest_local_config.config

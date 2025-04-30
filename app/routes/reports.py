@@ -62,7 +62,7 @@ async def generate_report(
     # Verify portfolio exists and belongs to current user
     portfolio = (
         db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .filter(Portfolio.id == portfolio_id)
         .first()
     )
 
@@ -173,7 +173,7 @@ async def save_report(
     # Verify portfolio exists and belongs to current user
     portfolio = (
         db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .filter(Portfolio.id == portfolio_id)
         .first()
     )
 
@@ -244,7 +244,7 @@ async def get_report_history(
     # Verify portfolio exists and belongs to current user
     portfolio = (
         db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .filter(Portfolio.id == portfolio_id)
         .first()
     )
 
@@ -288,7 +288,7 @@ async def get_report(
     # Verify portfolio exists and belongs to current user
     portfolio = (
         db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .filter(Portfolio.id == portfolio_id)
         .first()
     )
 
@@ -327,7 +327,7 @@ async def delete_report(
     # Verify portfolio exists and belongs to current user
     portfolio = (
         db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .filter(Portfolio.id == portfolio_id)
         .first()
     )
 
@@ -371,7 +371,7 @@ async def download_report_excel(
     # Verify portfolio exists and belongs to current user
     portfolio = (
         db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .filter(Portfolio.id == portfolio_id)
         .first()
     )
 

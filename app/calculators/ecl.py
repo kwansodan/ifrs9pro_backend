@@ -250,79 +250,82 @@ def is_in_range(value: int, range_tuple: Tuple[int, Optional[int]]) -> bool:
 
 
 
-def calculate_probability_of_default(loan, db):
-    """
-    Calculate Probability of Default using the machine learning model based on customer age
-    
-    Parameters:
-    - loan: Loan object from the database
-    - db: SQLAlchemy database session
-    
-    Returns:
-    - float: Probability of default as a percentage (0-100)
-    """
+def calculate_probability_of_default(employee_id,outstanding_loan_balance, start_date, selected_dt, end_date, arrears, db):
     try:
         # Import here to avoid circular imports
         import numpy as np
         import pandas as pd
         import warnings
         
-        # Suppress specific warnings
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=UserWarning, 
-                                  message="X does not have valid feature names")
-            warnings.filterwarnings("ignore", category=UserWarning, 
-                                  message="Trying to unpickle estimator")
-        
-            # Load the pre-trained logistic regression model
-            with open("app/ml_models/logistic_model.pkl", "rb") as file:
-                model = pickle.load(file)
-                
-            # Get client associated with this loan's employee_id
-            client = db.query(Client).filter(
-                Client.employee_id == loan.employee_id
-            ).first()
-            
-            if not client or not client.date_of_birth or not hasattr(client.date_of_birth, 'year'):
-                return 0  # Return 0 if client or DOB not found or invalid
-            
-            # Get year of birth from date of birth
-            year_of_birth = client.date_of_birth.year
-            
-            # Get feature name from the model if available
-            if hasattr(model, 'feature_names_in_'):
-                feature_name = model.feature_names_in_[0]  # Assuming only one feature
+
+        if outstanding_loan_balance >= 0:
+            if start_date <=reporting_date and end_date>reporting_date:
+                run_pd(employee_id, db)
+            if start_date<reporting_date and end_date<reporting_date:
+                if accumulated_arrears:
+                    return 1.0
+                else:
+                    return "N/A"
+
+
+        elif outstanding_loan_balance < 0:
+            if arrears>0:
+                if end_date<= reporting_date:
+                    return 1.0
             else:
-                feature_name = 'year_of_birth'  # Default name if not found
+                return 0.0
+
+
+        def run_pd (employee_id, db):
+
+            #suppressing errors
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=UserWarning, 
+                                      message="X does not have valid feature names")
+                warnings.filterwarnings("ignore", category=UserWarning, 
+                                      message="Trying to unpickle estimator")
+            
+                # Load the pre-trained logistic regression model
+                with open("app/ml_models/logistic_model.pkl", "rb") as file:
+                    model = pickle.load(file)
+                    
+                # Get client associated with this loan's employee_id
+                client = db.query(Client).filter(
+                    Client.employee_id == employee_id
+                ).first()
                 
-            # Create DataFrame with proper feature name
-            X_new = pd.DataFrame({feature_name: [year_of_birth]})
-            
-            # Get prediction and probability from model
-            prediction = model.predict(X_new)[0]
-            probability = model.predict_proba(X_new)[0][1]  # Probability of default
-            
-            # Convert to percentage
-            percentage = probability * 100
-            
-            return percentage
+                if not client or not client.date_of_birth or not hasattr(client.date_of_birth, 'year'):
+                    return 0  # Return 0 if client or DOB not found or invalid
+                
+                # Get year of birth from date of birth
+                year_of_birth = client.date_of_birth.year
+                
+                # Get feature name from the model if available
+                if hasattr(model, 'feature_names_in_'):
+                    feature_name = model.feature_names_in_[0]  # Assuming only one feature
+                else:
+                    feature_name = 'year_of_birth'  # Default name if not found
+                    
+                # Create DataFrame with proper feature name
+                X_new = pd.DataFrame({feature_name: [year_of_birth]})
+                
+                # Get prediction and probability from model
+                prediction = model.predict(X_new)[0]
+                probability = model.predict_proba(X_new)[0][1]  # Probability of default
+                
+                
+                pd_dec = round(float(probability),2) #not percentage
+                
+                return pd_dec
+
     except Exception as e:
         # Handle exceptions but maintain return type as float
         print(f"Error calculating probability of default: {str(e)}")
-        return 5.0  # Default 5% probability on error
+        
 
 
 def calculate_pd_from_yob(year_of_birth: Optional[int], model: Any) -> float:
-    """
-    Calculate Probability of Default using the preloaded model and year_of_birth.
-
-    Parameters:
-    - year_of_birth: The client's year of birth (integer).
-    - model: The preloaded scikit-learn model object.
-
-    Returns:
-    - float: Probability of default as a rate (0.0 to 1.0). Returns default on error.
-    """
+    
     DEFAULT_PD_RATE = 0.05 # 5% default rate
 
     if model is None:

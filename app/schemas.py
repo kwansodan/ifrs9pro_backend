@@ -366,7 +366,6 @@ class CategoryData(BaseModel):
     num_loans: int
     total_loan_value: float
     provision_amount: float
-    provision_rate: float
 
 class ECLCalculationDetail(BaseModel):
     """Detailed ECL calculation results for a portfolio"""
@@ -374,11 +373,11 @@ class ECLCalculationDetail(BaseModel):
     stage_2: Optional[CategoryData] = Field(None, alias="Stage 2")
     stage_3: Optional[CategoryData] = Field(None, alias="Stage 3")
     total_provision: float = 0
-    provision_percentage: float = 0
+    provision_percentage:Optional [float] = 0
     calculation_date: Optional[datetime] = None
     
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name  = True
         json_encoders = {
             datetime: lambda v: v.isoformat() if v else None
         }
@@ -395,7 +394,7 @@ class LocalImpairmentDetail(BaseModel):
     calculation_date: Optional[datetime] = None
     
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name  = True
         json_encoders = {
             datetime: lambda v: v.isoformat() if v else None
         }
@@ -484,13 +483,16 @@ class ImpairmentCategory(BaseModel):
     days_range: str  # Format: "0-30", "31-90", "360+" etc.
     rate: float
 
+class ImpairmentRate(BaseModel):
+    rate: float = Field(..., example=0.01)
+
 
 class LocalImpairmentConfig(BaseModel):
-    current: DaysRangeConfig
-    olem: DaysRangeConfig
-    substandard: DaysRangeConfig
-    doubtful: DaysRangeConfig
-    loss: DaysRangeConfig
+    current: ImpairmentCategory
+    olem: ImpairmentCategory
+    substandard: ImpairmentCategory
+    doubtful: ImpairmentCategory
+    loss: ImpairmentCategory
 
 
 class ImpairmentConfig(BaseModel):
@@ -521,7 +523,6 @@ class LocalImpairmentCategoryData(BaseModel):
     num_loans: int
     total_loan_value: float
     provision_amount: float
-    provision_rate: float
 
 
 class ImpairmentSummaryMetrics(BaseModel):
@@ -539,7 +540,7 @@ class LocalImpairmentSummary(BaseModel):
     doubtful: CategoryData
     loss: CategoryData
     total_provision: float
-    provision_percentage: float
+    provision_percentage: Optional [float]=0
 
 
 class StagingSummaryStageData(BaseModel):
@@ -563,7 +564,7 @@ class ECLStagingSummary(BaseModel):
     staging_date: Optional[datetime] = None
     
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name  = True
         json_encoders = {
             datetime: lambda v: v.isoformat() if v else None
         }
@@ -580,7 +581,7 @@ class LocalImpairmentStagingSummary(BaseModel):
     config: Optional[LocalImpairmentConfig] = None
     
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name  = True
         json_encoders = {
             datetime: lambda v: v.isoformat() if v else None
         }
@@ -612,7 +613,7 @@ class ECLSummaryMetrics(BaseModel):
     avg_lgd: float
     avg_ead: float
     total_provision: float
-    provision_percentage: float
+    provision_percentage: Optional [float]=0
 
 
 class ECLSummary(BaseModel):
@@ -624,7 +625,7 @@ class ECLSummary(BaseModel):
     summary_metrics: ECLSummaryMetrics
     
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name  = True
 
 
 # ==================== CALCULATOR MODELS ====================
@@ -686,7 +687,7 @@ class StagingSummary(BaseModel):
     local_impairment: Optional[LocalImpairmentStagingSummary] = Field(None, alias="local_impairment")
     
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name  = True
         
 
         
@@ -848,16 +849,16 @@ class PortfolioWithSummaryResponse(BaseModel):
     asset_type: Optional[str] = None
     customer_type: Optional[str] = None
     funding_source: Optional[str] = None
-    data_source: Optional[str] = None
+    # data_source: Optional[str] = None
     repayment_source: Optional[bool] = None
-    credit_risk_reserve: Optional[str] = None
-    loan_assets: Optional[str] = None
-    ecl_impairment_account: Optional[str] = None
+    # credit_risk_reserve: Optional[str] = None
+    # loan_assets: Optional[str] = None
+    # ecl_impairment_account: Optional[str] = None
     has_ingested_data: bool
     has_calculated_ecl: bool 
     has_calculated_local_impairment: bool
     has_all_issues_approved: Optional[bool] = None
-    created_at: datetime
+    # created_at: datetime
     updated_at: Optional[datetime] = None
     overview: OverviewModel
     customer_summary: CustomerSummaryModel
