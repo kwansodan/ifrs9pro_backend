@@ -10,10 +10,10 @@ from app.auth.utils import get_current_active_user
 from app.calculators.ecl import (
     calculate_exposure_at_default_percentage,
     calculate_probability_of_default,
-    calculate_loss_given_default,
     calculate_marginal_ecl,
     is_in_range,
 )
+from app.utils.ecl_calculator import calculate_loss_given_default
 from app.calculators.local_impairment import (
     calculate_loan_impairment,
     parse_days_range,
