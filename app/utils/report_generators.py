@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+import multiprocessing
 from sqlalchemy import func, and_
 import numpy as np
 import pandas as pd
@@ -1244,7 +1245,8 @@ def generate_ecl_detailed_report(
                     # traceback.print_exc() # Uncomment for detailed debug
                     return None, None # Indicate failure
 
-            max_workers = min(4, os.cpu_count() or 2) # Fewer workers for B3 plan
+            # max_workers = min(4, os.cpu_count() or 2) # Fewer workers for B3 plan
+            max_workers = multiprocessing.cpu_count()-1 
             batch_results = []
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                  batch_results = list(executor.map(process_loan_ecl, loan_batch))
@@ -1604,7 +1606,7 @@ def generate_local_impairment_details_report(
                      print(f"Error processing loan {loan_id} for local impairment: {str(e)}")
                      return None, None
 
-            max_workers = min(4, os.cpu_count() or 2)
+            max_workers = multiprocessing.cpu_count()-1 
             batch_results = []
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                  batch_results = list(executor.map(process_loan_local, loan_batch))
