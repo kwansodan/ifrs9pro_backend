@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
 import numpy as np
 import pandas as pd
-
+import multiprocessing
 from app.database import get_db, SessionLocal
 from app.models import (
     Portfolio, Loan, Client, Security, Guarantee, Report,
@@ -212,8 +212,8 @@ def generate_ecl_detailed_report(
     total_ead = 0.0
     total_lgd = 0.0
     total_ecl = 0.0
-    
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    max_workers = multiprocessing.cpu_count()-1 
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
         batch_results = list(executor.map(process_loan_batch, loan_batches))
         
         # Combine results from all batches
@@ -235,7 +235,6 @@ def generate_ecl_detailed_report(
         "total_ecl": total_ecl,
         "loans": loan_data
     }
-    
     print(f"ECL detailed report generated in {time.time() - start_time:.2f} seconds")
     return report_data
 
@@ -452,7 +451,8 @@ def generate_local_impairment_details_report(
     offsets = list(range(0, total_loan_count, batch_size))
     
     # OPTIMIZATION 8: Use ThreadPoolExecutor for parallel processing
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    max_workers = multiprocessing.cpu_count()-1 
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
         batch_results = list(executor.map(process_loan_batch, offsets))
         
         # Combine results from all batches
