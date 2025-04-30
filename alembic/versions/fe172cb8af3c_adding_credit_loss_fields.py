@@ -28,7 +28,7 @@ def upgrade() -> None:
     op.add_column('loans', sa.Column('ead', sa.Float(), nullable=True))
     op.add_column('loans', sa.Column('lgd', sa.Float(), nullable=True))
     op.add_column('loans', sa.Column('pd', sa.Float(), nullable=True))
-    op.add_column('loans', sa.Column('ecl', sa.Float(), nullable=True))
+    # op.add_column('loans', sa.Column('ecl', sa.Float(), nullable=True))
     op.add_column('loans', sa.Column('eir', sa.Float(), nullable=True))
     op.add_column('loans', sa.Column('pv_ecl', sa.Float(), nullable=True))
     # ### end Alembic commands ###
