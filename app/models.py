@@ -258,12 +258,12 @@ class Loan(Base):
     ead = Column(Numeric(precision=38, scale=2), default=0)
     lgd = Column(Numeric(precision=38, scale=2), default=0)
     pd = Column(Numeric(precision=38, scale=2), default=0)
-    ecl = Column(Numeric(precision=38, scale=2), default=0)
     eir = Column(Numeric(precision=38, scale=2), default=0)
     ecl_12 = Column(Numeric(precision=38, scale=2), default=0)
     ecl_lifetime = Column(Numeric(precision=38, scale=2), default=0)
     final_ecl = Column(Numeric(precision=38, scale=2), default=0)
     bog_provision = Column(Numeric(precision=38, scale=2), default=0)
+    calculation_date = Column(DateTime(timezone=False), nullable=True)
 
 class Guarantee(Base):
     __tablename__ = "guarantees"

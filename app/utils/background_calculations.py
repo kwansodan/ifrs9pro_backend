@@ -1,4 +1,5 @@
 import asyncio
+import multiprocessing
 import logging
 import threading
 import random
@@ -14,129 +15,194 @@ from app.models import (
 )
 from app.utils.background_tasks import get_task_manager, run_background_task
 from app.utils.ecl_calculator import (
-    calculate_loss_given_default, calculate_probability_of_default,
+    calculate_loss_given_default,
     calculate_exposure_at_default_percentage, calculate_marginal_ecl, is_in_range,
     get_amortization_schedule, get_ecl_by_stage, calculate_effective_interest_rate_lender
 )
+from app.calculators.ecl import calculate_probability_of_default
 from app.utils.staging import parse_days_range
 from sqlalchemy import func
+from dateutil.relativedelta import relativedelta
+
 
 logger = logging.getLogger(__name__)
 
+import asyncio
+from concurrent.futures import ProcessPoolExecutor
+from sqlalchemy.orm import Session
+import pandas as pd
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
+
+# --- Correct safe_float ---
+def safe_float(value, default=0.0):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+# --- Move process_loan to pure sync ---
+def process_loan_sync(loan_data, selected_dt_str, db):
+    try:
+        selected_dt = pd.to_datetime(selected_dt_str)
+        principal = safe_float(loan_data.get('loan_amount', 0))
+        term_months = int(loan_data.get('loan_term', 0))
+        arrears = safe_float(loan_data.get('accumulated_arrears', 0))
+        start_date = pd.to_datetime(loan_data.get('deduction_start_period'))
+        monthly_installment = safe_float(loan_data.get('monthly_installment', 0))
+        end_date = start_date + relativedelta(months=term_months)
+        employee_id=loan_data.get('employee_id')
+        administrative_fees=safe_float(loan_data.get('administrative_fees', 0))
+        loan_result = {}
+
+
+        
+
+        # Handle matured or future loans
+        # if end_date <= selected_dt or (start_date > selected_dt and arrears <= 0):
+        #     loan_result['eir'] = round(eir, 2) if eir else 0.0
+            
+        #     for field in ['amortised_bal', 'adjusted_amortised_bal', 'theoretical_balance', 'ecl_lifetime', 'ecl_12']:
+        #         loan_result[field] = 0.0 if arrears <= 0 else round(arrears, 2)
+        #     return loan_data['id'], loan_result
+
+        # if principal <= 0 or term_months <= 0 or monthly_installment <= 0:
+        #     for field in ['ead', 'pd', 'final_ecl', 'ecl_12', 'ecl_lifetime']:
+        #         loan_result[field] = 0.0
+        #     return loan_data['id'], loan_result
+        
+
+        # Calculate EIR and store
+        eir = calculate_effective_interest_rate_lender(
+            loan_amount=principal,
+            administrative_fees=administrative_fees,
+            loan_term=term_months,
+            monthly_payment=monthly_installment
+        )
+        loan_result['eir'] = eir if isinstance(eir, float) else eir
+
+
+        # Calculation of loss given default
+        loan_result['lgd']=1 #given all loans are unsecured
+
+
+        # Calculate EIR and store
+        pd_rate=calculate_probability_of_default(
+            employee_id=employee_id,
+            db=db
+            )
+        loan_result['pd'] = pd_rate
+        pd_monthly = pd_rate / 12 if isinstance(pd_rate, float) else 0.0
+
+        # Determining latest amortised loan balance before report-date
+        eir_monthly = safe_float(eir) / 12
+        delta_months = max(0, (selected_dt.year - start_date.year) * 12 + (selected_dt.month - start_date.month))
+        balance = principal-administrative_fees
+        for _ in range(1, delta_months + 1):
+            interest = balance * eir_monthly
+            balance = balance + interest - monthly_installment
+            balance = max(0, balance)  # Cannot be negative
+        loan_result['amortised_bal'] = loan_result['theoretical_balance'] = round(balance, 2)
+        adjusted_balance = round(balance + arrears,2)
+        loan_result['adjusted_amortised_bal'] = round(adjusted_balance, 0)
+        loan_result['ead'] = round(adjusted_balance, 2)
+        
+
+        # ECL Calculation
+        current_balance = adjusted_balance
+        discounted_el_schedule = []
+        remaining_months = max(0, term_months - delta_months)
+
+
+        for m in range(1, remaining_months + 1):
+            interest = current_balance * eir_monthly
+            current_balance = current_balance + interest - monthly_installment
+            current_balance = max(0, current_balance)
+            expected_loss = current_balance * pd_monthly
+            discount_factor = 1 / ((1 + eir_monthly) ** m)
+            discounted_el_schedule.append(expected_loss * discount_factor)
+
+        loan_result['ecl_12'] = round(sum(discounted_el_schedule[:12]), 2)
+        loan_result['ecl_lifetime'] = round(sum(discounted_el_schedule), 2)
+        loan_result['calculation_date'] = selected_dt.to_pydatetime() 
+
+        # Determining final ECL
+        if loan_data.get('ifrs9_stage') == "Stage 1":
+            loan_result['final_ecl'] = loan_result['ecl_12']
+        else:
+            loan_result['final_ecl'] = loan_result['ecl_lifetime']
+
+        return loan_data['id'], loan_result
+
+    except Exception as e:
+        print(f"Error processing loan ID {loan_data.get('id', 'unknown')}: {e}")
+        return loan_data.get('id', None)
+
+# --- Main controller for ECL calculations---
 async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, db: Session):
-    selected_dt = pd.to_datetime(reporting_date)
+    selected_dt_str = reporting_date
+    batch_size = 500
+    max_workers = multiprocessing.cpu_count()-1 
+
     updates = []
-    query = db.query(Loan).yield_per(2000)
-    first_loan = query.first()
-
-
-    grand_total_ecl = 0
+    processed_count = 0
     loan_count = 0
+    grand_total_ecl = 0
+
+    executor = ProcessPoolExecutor(max_workers=max_workers)
+
+    # Manual batching variables
+    offset = 0
+
+    # Fetch first loan separately to get portfolio_id
+    first_loan = db.query(Loan).order_by(Loan.id).first()
+    if not first_loan:
+        return {"error": "No loans found."}
     portfolio_id = first_loan.portfolio_id
 
-    async def process_loan(loan):
-        nonlocal grand_total_ecl, loan_count, portfolio_id
-        try:
-            principal = float(loan.loan_amount or 0)  # Ensure this is a float
-            term_months = int(loan.loan_term or 0)    # Ensure this is an integer
-            arrears = float(loan.accumulated_arrears or 0)  # Ensure this is a float
+    while True:
+        loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).order_by(Loan.id).offset(offset).limit(batch_size).all()
+        if not loans:
+            break  # No more loans to process
 
-            start_date = pd.to_datetime(loan.loan_issue_date)
-            payment = float(loan.monthly_installment or 0)
+        tasks = []
 
-            if principal <= 0 or term_months <= 0 or payment <= 0:
-                return
+        for loan in loans:
+            loan_data = {
+                "id": loan.id,
+                "loan_amount": loan.loan_amount,
+                "loan_term": loan.loan_term,
+                "accumulated_arrears": loan.accumulated_arrears,
+                "deduction_start_period": loan.deduction_start_period,
+                "monthly_installment": loan.monthly_installment,
+                "administrative_fees": loan.administrative_fees,
+                "ifrs9_stage": loan.ifrs9_stage,
+                "pd": loan.pd,
+            }
+            task = asyncio.get_running_loop().run_in_executor(executor, process_loan_sync, loan_data, selected_dt_str, db)
+            tasks.append(task)
 
-            discount_rate = calculate_effective_interest_rate_lender(
-                loan_amount=principal,
-                administrative_fees=float(loan.administrative_fees or 0),
-                loan_term=term_months,
-                monthly_payment=payment
-            )
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            if discount_rate is None:
-                return
+        for res in results:
+            if isinstance(res, tuple) and res[1] is not None:
+                loan_id, loan_fields = res
+                db.query(Loan).filter(Loan.id == loan_id).update(loan_fields)
+                loan_count += 1
+                grand_total_ecl += loan_fields.get('final_ecl', 0.0)
 
-            pd_raw=calculate_probability_of_default(loan, db)
-            discount_rate = float(discount_rate) if isinstance(discount_rate, str) else discount_rate
-            loan.eir = float(round(discount_rate,2))
-            pd_annual = float(pd_raw) if isinstance(pd_raw, str) else pd_raw
-            
-            loan.pd = float(round(pd_annual, 2))
-            discount_rate_monthly = discount_rate / 12
-            r = discount_rate_monthly
-
-            delta_months = (selected_dt.year - start_date.year) * 12 + (selected_dt.month - start_date.month)
-
-            balance = principal
-            for _ in range(1, delta_months + 1):
-                interest = balance * r
-                principal_payment = payment - interest
-                balance -= principal_payment
-                balance = max(0, balance)
-
-                loan.amortised_bal=float(round(balance,2))
-                loan.theoretical_balance = float(round(balance, 2))
-                loan.ead = float(round(balance, 2))
-                adjusted_balance = balance + arrears
-                loan.adjusted_amortised_bal=float(round(adjusted_balance,0))
-                current_balance = adjusted_balance
-
-            discounted_el_schedule = []
-            for m in range(1, term_months - delta_months + 1):
-                interest = current_balance * r
-                principal_payment = payment - interest
-                current_balance -= principal_payment
-                current_balance = max(0, current_balance)
-
-                expected_loss = current_balance * pd_annual * 1.0  # LGD = 100%
-                discount_factor = 1 / ((1 + r) ** m)
-                discounted_el = expected_loss * discount_factor
-                # el_schedule.append(expected_loss)
-                discounted_el_schedule.append(discounted_el)
-
-            ecl_12_month = sum(discounted_el_schedule[:12])
-            ecl_lifetime = sum(discounted_el_schedule)
-
-            loan.ecl_12 = float(round(ecl_12_month, 2))
-            loan.ecl_lifetime = float(round(ecl_lifetime, 2))
-
-
-
-            if loan.ifrs9_stage == "Stage 1":
-                loan.final_ecl = float(round(ecl_12_month, 2))
-            elif loan.ifrs9_stage in ["Stage 2", "Stage 3"]:
-                loan.final_ecl = float(round(ecl_lifetime, 2))
-
-            grand_total_ecl += loan.final_ecl or 0
-            loan_count += 1
-            portfolio_id = loan.portfolio_id
-
-            updates.append(loan)
-        except Exception as e:
-            print(f"Error processing loan ID {loan.id if hasattr(loan, 'id') else 'unknown'}: {str(e)}")
-
-    tasks = []
-    for loan in query:
-        tasks.append(process_loan(loan))
-        if len(tasks) >= 1000:
-            await asyncio.gather(*tasks)
-            db.bulk_save_objects(updates)
-            db.commit()
-            updates.clear()
-            tasks.clear()
-
-    if tasks:
-        await asyncio.gather(*tasks)
-        db.bulk_save_objects(updates)
         db.commit()
-        updates.clear()
+        processed_count += len(loans)
+        print(f"Processed and saved {processed_count} loans...")
 
+        offset += batch_size  # Move to next batch
+
+    # Save CalculationResult
     calculation_result = CalculationResult(
         portfolio_id=portfolio_id,
         calculation_type="ecl",
         total_provision=grand_total_ecl,
-        provision_percentage=0,
+        provision_percentage=0.0,
         reporting_date=datetime.now().date(),
         config={},
         result_summary={}
@@ -147,336 +213,450 @@ async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, d
     return {
         "calculation_id": calculation_result.id,
         "portfolio_id": calculation_result.portfolio_id,
-        "grand_total_ecl": float(grand_total_ecl),
-        "provision_percentage": float(0),
+        "grand_total_ecl": safe_float(grand_total_ecl),
+        "provision_percentage": 0.0,
+        "loan_count": loan_count
+    }
+# --- Move process_loan to pure sync ---
+def process_loan_local_sync(loan_data, relevant_prov_rate, selected_dt_str):
+    try:
+        selected_dt = pd.to_datetime(selected_dt_str)
+        ead = Decimal(safe_float(loan_data.get('ead', 0)))
+        if not loan_data.get('bog_stage'):
+            print(f"Warning: Loan ID {loan_data['id']} has no bog_stage!")
+
+        loan_result = {}
+        rate=relevant_prov_rate
+        loan_result = {}
+        loan_result['bog_prov_rate']=relevant_prov_rate
+        loan_result['bog_provision'] = round(float(rate * ead),2)
+        return loan_data['id'], loan_result
+
+    except Exception as e:
+        print(f"Error processing loan ID {loan_data.get('id', 'unknown')}: {e}")
+        return loan_data.get('id', None)
+
+# --- Main controller for Local impairment calculations---
+async def process_bog_impairment_calculation_sync(portfolio_id: int, reporting_date: str, db: Session):
+    selected_dt_str = reporting_date
+    batch_size = 500
+    max_workers = multiprocessing.cpu_count()-1   # You can tune this depending on your CPU power
+
+    updates = []
+    processed_count = 0
+    loan_count = 0
+    grand_total_local = 0
+    portfolio_id = portfolio_id
+    executor = ProcessPoolExecutor(max_workers=max_workers)
+
+    # Manual batching variables
+    offset = 0
+
+    # Fetch first loan separately to get portfolio_id
+    first_loan = first_loan = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).order_by(Loan.id).first()
+    if not first_loan:
+        return {"error": "No loans found."}
+    
+    while True:
+        #Fetch BOG staging/impairment rules for portlio
+        latest_config = db.query(StagingResult).filter( StagingResult.portfolio_id == portfolio_id, StagingResult.staging_type == "local_impairment" ).order_by(StagingResult.created_at.desc()).first()
+        if not latest_config:
+            return {"error": "No BOG staging rules found. Update BOG staging rules."}
+        # Get provision rates from config
+        provision_config = latest_config.config or {}  # Access like attribute
+
+        current_rate = Decimal(provision_config.get("current", {}).get("rate", 0))
+        olem_rate = Decimal(provision_config.get("olem", {}).get("rate", 0))
+        substandard_rate = Decimal(provision_config.get("substandard", {}).get("rate", 0))
+        doubtful_rate = Decimal(provision_config.get("doubtful", {}).get("rate", 0))
+        loss_rate = Decimal(provision_config.get("loss", {}).get("rate", 0))
+
+
+        #fethc all loans in the portfolio
+        loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).order_by(Loan.id).offset(offset).limit(batch_size).all()
+        if not loans:
+            break  # No more loans to process
+
+        tasks = []
+
+        for loan in loans:
+            loan_data = {
+                "id": loan.id,
+                "ead": loan.ead,
+                "bog_stage": loan.bog_stage,
+            }
+
+            if loan_data.get('bog_stage'):
+                stage_key = (loan_data.get('bog_stage') or '').lower()
+                relevant_prov_rate = Decimal(provision_config.get(stage_key, {}).get('rate', 0))
+
+            else:
+                relevant_prov_rate = Decimal(0)
+
+            task = asyncio.get_running_loop().run_in_executor(executor, process_loan_local_sync, loan_data, relevant_prov_rate,selected_dt_str)
+            tasks.append(task)
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for res in results:
+            if isinstance(res, tuple) and res[1] is not None:
+                loan_id, loan_fields = res
+                db.query(Loan).filter(Loan.id == loan_id).update(loan_fields)
+                loan_count += 1
+                grand_total_local += loan_fields.get('bog_provision', 0.0)
+
+        db.commit()
+        processed_count += len(loans)
+        print(f"Processed and saved {processed_count} loans...")
+
+        offset += batch_size  # Move to next batch
+
+    # Save CalculationResult
+    calculation_result = CalculationResult(
+        portfolio_id=portfolio_id,
+        calculation_type="local_impairment",
+        total_provision=grand_total_local,
+        provision_percentage=0.0,
+        reporting_date=datetime.now().date(),
+        config={},
+        result_summary={}
+    )
+    db.add(calculation_result)
+    db.commit()
+
+    return {
+        "calculation_id": calculation_result.id,
+        "portfolio_id": calculation_result.portfolio_id,
+        "grand_total_local": safe_float(grand_total_local),
+        "provision_percentage": 0.0,
         "loan_count": loan_count
     }
 
-async def process_local_impairment_calculation(
-    task_id: str,
-    portfolio_id: int,
-    reporting_date: date,
-    db: Session
-):
-    """
-    Process local impairment calculation in the background with progress reporting.
-    """
-    try:
-        get_task_manager().update_progress(
-            task_id,
-            progress=5,
-            status_message=f"Starting local impairment calculation for portfolio {portfolio_id}"
-        )
-        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
+# async def process_local_impairment_calculation(
+#     task_id: str,
+#     portfolio_id: int,
+#     reporting_date: date,
+#     db: Session
+# ):
+#     """
+#     Process local impairment calculation in the background with progress reporting.
+#     """
+#     try:
+#         get_task_manager().update_progress(
+#             task_id,
+#             progress=5,
+#             status_message=f"Starting local impairment calculation for portfolio {portfolio_id}"
+#         )
+#         await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
         
-        # Verify portfolio exists
-        portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
-        if not portfolio:
-            raise ValueError(f"Portfolio with ID {portfolio_id} not found")
+#         # Verify portfolio exists
+#         portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
+#         if not portfolio:
+#             raise ValueError(f"Portfolio with ID {portfolio_id} not found")
         
-        get_task_manager().update_progress(
-            task_id,
-            progress=10,
-            status_message="Retrieving latest local impairment staging data"
-        )
-        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
+#         get_task_manager().update_progress(
+#             task_id,
+#             progress=10,
+#             status_message="Retrieving latest local impairment staging data"
+#         )
+#         await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
         
-        # Get the latest local impairment staging result
-        latest_staging = (
-            db.query(StagingResult)
-            .filter(
-                StagingResult.portfolio_id == portfolio_id,
-                StagingResult.staging_type == "local_impairment"
-            )
-            .order_by(StagingResult.created_at.desc())
-            .first()
-        )
+#         # Get the latest local impairment staging result
+#         latest_staging = (
+#             db.query(StagingResult)
+#             .filter(
+#                 StagingResult.portfolio_id == portfolio_id,
+#                 StagingResult.staging_type == "local_impairment"
+#             )
+#             .order_by(StagingResult.created_at.desc())
+#             .first()
+#         )
         
-        if not latest_staging:
-            raise ValueError("No local impairment staging found. Please stage loans first.")
+#         if not latest_staging:
+#             raise ValueError("No local impairment staging found. Please stage loans first.")
         
-        # Extract config from the staging result
-        config = latest_staging.config
-        if not config:
-            raise ValueError("Invalid staging configuration")
+#         # Extract config from the staging result
+#         config = latest_staging.config
+#         if not config:
+#             raise ValueError("Invalid staging configuration")
         
-        get_task_manager().update_progress(
-            task_id,
-            progress=20,
-            status_message="Processing loan staging data"
-        )
-        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
+#         get_task_manager().update_progress(
+#             task_id,
+#             progress=20,
+#             status_message="Processing loan staging data"
+#         )
+#         await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
         
-        # Get the loan staging data from the result_summary
-        staging_data = []
-        if "loans" in latest_staging.result_summary:
-            # New format with detailed loan data
-            staging_data = latest_staging.result_summary["loans"]
-        else:
-            # Without detailed loan data, we need to re-stage based on summary stats
-            logger.warning("No detailed loan staging data in result_summary, reconstructing staging using database query")
+#         # Get the loan staging data from the result_summary
+#         staging_data = []
+#         if "loans" in latest_staging.result_summary:
+#             # New format with detailed loan data
+#             staging_data = latest_staging.result_summary["loans"]
+#         else:
+#             # Without detailed loan data, we need to re-stage based on summary stats
+#             logger.warning("No detailed loan staging data in result_summary, reconstructing staging using database query")
             
-            # Recreate basic staging info from loan query using the config
-            try:
-                current_range = parse_days_range(config["current"]["days_range"])
-                olem_range = parse_days_range(config["olem"]["days_range"])
-                substandard_range = parse_days_range(config["substandard"]["days_range"])
-                doubtful_range = parse_days_range(config["doubtful"]["days_range"])
-                loss_range = parse_days_range(config["loss"]["days_range"])
-            except (KeyError, ValueError) as e:
-                logger.error(f"Error parsing day ranges: {str(e)}")
-                raise ValueError(f"Could not parse staging configuration: {str(e)}")
+#             # Recreate basic staging info from loan query using the config
+#             try:
+#                 current_range = parse_days_range(config["current"]["days_range"])
+#                 olem_range = parse_days_range(config["olem"]["days_range"])
+#                 substandard_range = parse_days_range(config["substandard"]["days_range"])
+#                 doubtful_range = parse_days_range(config["doubtful"]["days_range"])
+#                 loss_range = parse_days_range(config["loss"]["days_range"])
+#             except (KeyError, ValueError) as e:
+#                 logger.error(f"Error parsing day ranges: {str(e)}")
+#                 raise ValueError(f"Could not parse staging configuration: {str(e)}")
                 
-            # Get the loans
-            loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
+#             # Get the loans
+#             loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
             
-            logger.info(f"Found {len(loans)} loans for portfolio {portfolio_id}")
+#             logger.info(f"Found {len(loans)} loans for portfolio {portfolio_id}")
             
-            get_task_manager().update_progress(
-                task_id,
-                progress=30,
-                status_message=f"Re-staging {len(loans)} loans based on configuration"
-            )
-            await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
+#             get_task_manager().update_progress(
+#                 task_id,
+#                 progress=30,
+#                 status_message=f"Re-staging {len(loans)} loans based on configuration"
+#             )
+#             await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
             
                 
-        if not staging_data:
-            # If we still don't have staging data, return an error
-            raise ValueError("No loan staging data found. Please re-run the staging process.")
+#         if not staging_data:
+#             # If we still don't have staging data, return an error
+#             raise ValueError("No loan staging data found. Please re-run the staging process.")
             
-        get_task_manager().update_progress(
-            task_id,
-            progress=40,
-            status_message="Retrieving loan data"
-        )
-        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
+#         get_task_manager().update_progress(
+#             task_id,
+#             progress=40,
+#             status_message="Retrieving loan data"
+#         )
+#         await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
         
-        # Get all loans in the portfolio
-        loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
+#         # Get all loans in the portfolio
+#         loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
         
-        # Create a map of loan_id to loan object for faster lookup
-        loan_map = {loan.id: loan for loan in loans}
+#         # Create a map of loan_id to loan object for faster lookup
+#         loan_map = {loan.id: loan for loan in loans}
 
-        # Initialize category tracking
-        current_loans = []
-        olem_loans = []
-        substandard_loans = []
-        doubtful_loans = []
-        loss_loans = []
+#         # Initialize category tracking
+#         current_loans = []
+#         olem_loans = []
+#         substandard_loans = []
+#         doubtful_loans = []
+#         loss_loans = []
 
-        # Calculate totals for each category
-        current_total = 0
-        olem_total = 0
-        substandard_total = 0
-        doubtful_total = 0
-        loss_total = 0
+#         # Calculate totals for each category
+#         current_total = 0
+#         olem_total = 0
+#         substandard_total = 0
+#         doubtful_total = 0
+#         loss_total = 0
 
-        # Get provision rates from config
-        try:
-            # Check if we have a provision_config object
-            provision_config = config.get("provision_config", {})
-            if provision_config:
-                # Get rates from provision_config
-                current_rate = Decimal(provision_config.get("Current", 0.01))
-                olem_rate = Decimal(provision_config.get("OLEM", 0.03))
-                substandard_rate = Decimal(provision_config.get("Substandard", 0.2))
-                doubtful_rate = Decimal(provision_config.get("Doubtful", 0.5))
-                loss_rate = Decimal(provision_config.get("Loss", 1.0))
-            else:
-                # Fall back to old structure
-                current_rate = Decimal(config.get("current", {}).get("rate", 0.01))
-                olem_rate = Decimal(config.get("olem", {}).get("rate", 0.03))
-                substandard_rate = Decimal(config.get("substandard", {}).get("rate", 0.2))
-                doubtful_rate = Decimal(config.get("doubtful", {}).get("rate", 0.5))
-                loss_rate = Decimal(config.get("loss", {}).get("rate", 1.0))
+#         # Get provision rates from config
+#         try:
+#             # Check if we have a provision_config object
+#             provision_config = config.get("provision_config", {})
+#             if provision_config:
+#                 # Get rates from provision_config
+#                 current_rate = Decimal(provision_config.get("Current", 0.01))
+#                 olem_rate = Decimal(provision_config.get("OLEM", 0.03))
+#                 substandard_rate = Decimal(provision_config.get("Substandard", 0.2))
+#                 doubtful_rate = Decimal(provision_config.get("Doubtful", 0.5))
+#                 loss_rate = Decimal(provision_config.get("Loss", 1.0))
+#             else:
+#                 # Fall back to old structure
+#                 current_rate = Decimal(config.get("current", {}).get("rate", 0.01))
+#                 olem_rate = Decimal(config.get("olem", {}).get("rate", 0.03))
+#                 substandard_rate = Decimal(config.get("substandard", {}).get("rate", 0.2))
+#                 doubtful_rate = Decimal(config.get("doubtful", {}).get("rate", 0.5))
+#                 loss_rate = Decimal(config.get("loss", {}).get("rate", 1.0))
             
-            # Log the rates being used
-            logger.info(f"Using provision rates - Current: {current_rate}, OLEM: {olem_rate}, Substandard: {substandard_rate}, Doubtful: {doubtful_rate}, Loss: {loss_rate}")
+#             # Log the rates being used
+#             logger.info(f"Using provision rates - Current: {current_rate}, OLEM: {olem_rate}, Substandard: {substandard_rate}, Doubtful: {doubtful_rate}, Loss: {loss_rate}")
             
-        except (KeyError, ValueError) as e:
-            logger.error(f"Error parsing provision rates: {str(e)}")
-            raise ValueError(f"Could not parse provision rates from configuration: {str(e)}")
+#         except (KeyError, ValueError) as e:
+#             logger.error(f"Error parsing provision rates: {str(e)}")
+#             raise ValueError(f"Could not parse provision rates from configuration: {str(e)}")
 
-        # Calculate stage statistics
-        stage_stats = {}
-        for stage in ["Current", "OLEM", "Substandard", "Doubtful", "Loss"]:
-            stage_loans = [loan for loan in staging_data if loan["stage"] == stage]
-            total_balance = sum(loan["outstanding_loan_balance"] for loan in stage_loans)
-            stage_stats[stage] = {
-                "num_loans": len(stage_loans),
-                "total_loan_value": round(total_balance, 2),
-            }
+#         # Calculate stage statistics
+#         stage_stats = {}
+#         for stage in ["Current", "OLEM", "Substandard", "Doubtful", "Loss"]:
+#             stage_loans = [loan for loan in staging_data if loan["stage"] == stage]
+#             total_balance = sum(loan["outstanding_loan_balance"] for loan in stage_loans)
+#             stage_stats[stage] = {
+#                 "num_loans": len(stage_loans),
+#                 "total_loan_value": round(total_balance, 2),
+#             }
             
-        logger.info(f"Local impairment stage statistics for portfolio {portfolio_id}:")
-        logger.info(f"Current: {stage_stats['Current']['num_loans']} loans, balance: {stage_stats['Current']['total_loan_value']}")
-        logger.info(f"OLEM: {stage_stats['OLEM']['num_loans']} loans, balance: {stage_stats['OLEM']['total_loan_value']}")
-        logger.info(f"Substandard: {stage_stats['Substandard']['num_loans']} loans, balance: {stage_stats['Substandard']['total_loan_value']}")
-        logger.info(f"Doubtful: {stage_stats['Doubtful']['num_loans']} loans, balance: {stage_stats['Doubtful']['total_loan_value']}")
-        logger.info(f"Loss: {stage_stats['Loss']['num_loans']} loans, balance: {stage_stats['Loss']['total_loan_value']}")
+#         logger.info(f"Local impairment stage statistics for portfolio {portfolio_id}:")
+#         logger.info(f"Current: {stage_stats['Current']['num_loans']} loans, balance: {stage_stats['Current']['total_loan_value']}")
+#         logger.info(f"OLEM: {stage_stats['OLEM']['num_loans']} loans, balance: {stage_stats['OLEM']['total_loan_value']}")
+#         logger.info(f"Substandard: {stage_stats['Substandard']['num_loans']} loans, balance: {stage_stats['Substandard']['total_loan_value']}")
+#         logger.info(f"Doubtful: {stage_stats['Doubtful']['num_loans']} loans, balance: {stage_stats['Doubtful']['total_loan_value']}")
+#         logger.info(f"Loss: {stage_stats['Loss']['num_loans']} loans, balance: {stage_stats['Loss']['total_loan_value']}")
         
-        get_task_manager().update_progress(
-            task_id,
-            progress=60,
-            status_message=f"Calculating local impairment for {len(staging_data)} loans"
-        )
-        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
+#         get_task_manager().update_progress(
+#             task_id,
+#             progress=60,
+#             status_message=f"Calculating local impairment for {len(staging_data)} loans"
+#         )
+#         await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
         
-        # Process loans using staging data
-        total_items = len(staging_data)
-        for i, stage_info in enumerate(staging_data):
-            if i % 50 == 0:  # Update progress every 50 loans (more frequent updates)
-                progress = 60 + (i / total_items) * 30  # Progress from 60% to 90%
-                get_task_manager().update_progress(
-                    task_id,
-                    progress=round(progress, 2),  # Round to 2 decimal places
-                    processed_items=i,
-                    total_items=total_items,
-                    status_message=f"Calculating local impairment: Processed {i}/{total_items} loans ({round(i/total_items*100, 1)}%)"
-                )
-                await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
+#         # Process loans using staging data
+#         total_items = len(staging_data)
+#         for i, stage_info in enumerate(staging_data):
+#             if i % 50 == 0:  # Update progress every 50 loans (more frequent updates)
+#                 progress = 60 + (i / total_items) * 30  # Progress from 60% to 90%
+#                 get_task_manager().update_progress(
+#                     task_id,
+#                     progress=round(progress, 2),  # Round to 2 decimal places
+#                     processed_items=i,
+#                     total_items=total_items,
+#                     status_message=f"Calculating local impairment: Processed {i}/{total_items} loans ({round(i/total_items*100, 1)}%)"
+#                 )
+#                 await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
                 
-            loan_id = stage_info.get("loan_id")
-            stage = stage_info.get("stage")
+#             loan_id = stage_info.get("loan_id")
+#             stage = stage_info.get("stage")
             
-            if not loan_id or not stage:
-                logger.warning(f"Missing loan_id or stage in staging data: {stage_info}")
-                continue
+#             if not loan_id or not stage:
+#                 logger.warning(f"Missing loan_id or stage in staging data: {stage_info}")
+#                 continue
                 
-            loan = loan_map.get(loan_id)
-            if not loan or loan.outstanding_loan_balance is None:
-                logger.warning(f"Loan {loan_id} not found or has no outstanding balance")
-                continue
+#             loan = loan_map.get(loan_id)
+#             if not loan or loan.outstanding_loan_balance is None:
+#                 logger.warning(f"Loan {loan_id} not found or has no outstanding balance")
+#                 continue
                 
-            outstanding_loan_balance = loan.outstanding_loan_balance
+#             outstanding_loan_balance = loan.outstanding_loan_balance
             
-            # Update category totals based on the assigned stage
-            if stage == "Current":
-                current_loans.append(loan)
-                current_total += outstanding_loan_balance
-            elif stage == "OLEM":
-                olem_loans.append(loan)
-                olem_total += outstanding_loan_balance
-            elif stage == "Substandard":
-                substandard_loans.append(loan)
-                substandard_total += outstanding_loan_balance
-            elif stage == "Doubtful":
-                doubtful_loans.append(loan)
-                doubtful_total += outstanding_loan_balance
-            elif stage == "Loss":
-                loss_loans.append(loan)
-                loss_total += outstanding_loan_balance
-            else:
-                # Default to Loss if stage is something unexpected
-                logger.warning(f"Unexpected stage '{stage}' for loan {loan_id}, treating as Loss")
-                loss_loans.append(loan)
-                loss_total += outstanding_loan_balance
+#             # Update category totals based on the assigned stage
+#             if stage == "Current":
+#                 current_loans.append(loan)
+#                 current_total += outstanding_loan_balance
+#             elif stage == "OLEM":
+#                 olem_loans.append(loan)
+#                 olem_total += outstanding_loan_balance
+#             elif stage == "Substandard":
+#                 substandard_loans.append(loan)
+#                 substandard_total += outstanding_loan_balance
+#             elif stage == "Doubtful":
+#                 doubtful_loans.append(loan)
+#                 doubtful_total += outstanding_loan_balance
+#             elif stage == "Loss":
+#                 loss_loans.append(loan)
+#                 loss_total += outstanding_loan_balance
+#             else:
+#                 # Default to Loss if stage is something unexpected
+#                 logger.warning(f"Unexpected stage '{stage}' for loan {loan_id}, treating as Loss")
+#                 loss_loans.append(loan)
+#                 loss_total += outstanding_loan_balance
 
-        get_task_manager().update_progress(
-            task_id,
-            progress=90,
-            status_message="Finalizing local impairment calculation results",
-        )
-        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
+#         get_task_manager().update_progress(
+#             task_id,
+#             progress=90,
+#             status_message="Finalizing local impairment calculation results",
+#         )
+#         await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
         
-        # Calculate provisions for each category
-        current_provision = current_total * current_rate
-        olem_provision = olem_total * olem_rate
-        substandard_provision = substandard_total * substandard_rate
-        doubtful_provision = doubtful_total * doubtful_rate
-        loss_provision = loss_total * loss_rate
+#         # Calculate provisions for each category
+#         current_provision = current_total * current_rate
+#         olem_provision = olem_total * olem_rate
+#         substandard_provision = substandard_total * substandard_rate
+#         doubtful_provision = doubtful_total * doubtful_rate
+#         loss_provision = loss_total * loss_rate
 
-        logger.info(f"Local impairment provisions for portfolio {portfolio_id}:")
-        logger.info(f"Current: rate={current_rate}, value={current_total}, provision={current_provision}")
-        logger.info(f"OLEM: rate={olem_rate}, value={olem_total}, provision={olem_provision}")
-        logger.info(f"Substandard: rate={substandard_rate}, value={substandard_total}, provision={substandard_provision}")
-        logger.info(f"Doubtful: rate={doubtful_rate}, value={doubtful_total}, provision={doubtful_provision}")
-        logger.info(f"Loss: rate={loss_rate}, value={loss_total}, provision={loss_provision}")
+#         logger.info(f"Local impairment provisions for portfolio {portfolio_id}:")
+#         logger.info(f"Current: rate={current_rate}, value={current_total}, provision={current_provision}")
+#         logger.info(f"OLEM: rate={olem_rate}, value={olem_total}, provision={olem_provision}")
+#         logger.info(f"Substandard: rate={substandard_rate}, value={substandard_total}, provision={substandard_provision}")
+#         logger.info(f"Doubtful: rate={doubtful_rate}, value={doubtful_total}, provision={doubtful_provision}")
+#         logger.info(f"Loss: rate={loss_rate}, value={loss_total}, provision={loss_provision}")
         
-        # Calculate total loan value and provision amount
-        total_loan_value = current_total + olem_total + substandard_total + doubtful_total + loss_total
-        total_provision = current_provision + olem_provision + substandard_provision + doubtful_provision + loss_provision
+#         # Calculate total loan value and provision amount
+#         total_loan_value = current_total + olem_total + substandard_total + doubtful_total + loss_total
+#         total_provision = current_provision + olem_provision + substandard_provision + doubtful_provision + loss_provision
 
-       # Create a new CalculationResult record
-        calculation_result = CalculationResult(
-            portfolio_id=portfolio_id,
-            calculation_type="local_impairment",
-            config=config,  # Use the config from staging
-            result_summary={
-                "Current": {
-                    "num_loans": len(current_loans),
-                    "total_loan_value": float(current_total),
-                    "outstanding_loan_balance": float(current_total),
-                    "provision_amount": float(current_provision),
-                    "provision_rate": float(current_rate),
-                },
-                "OLEM": {
-                    "num_loans": len(olem_loans),
-                    "total_loan_value": float(olem_total),
-                    "outstanding_loan_balance": float(olem_total),
-                    "provision_amount": float(olem_provision),
-                    "provision_rate": float(olem_rate),
-                },
-                "Substandard": {
-                    "num_loans": len(substandard_loans),
-                    "total_loan_value": float(substandard_total),
-                    "outstanding_loan_balance": float(substandard_total),
-                    "provision_amount": float(substandard_provision),
-                    "provision_rate": float(substandard_rate),
-                },
-                "Doubtful": {
-                    "num_loans": len(doubtful_loans),
-                    "total_loan_value": float(doubtful_total),
-                    "outstanding_loan_balance": float(doubtful_total),
-                    "provision_amount": float(doubtful_provision),
-                    "provision_rate": float(doubtful_rate),
-                },
-                "Loss": {
-                    "num_loans": len(loss_loans),
-                    "total_loan_value": float(loss_total),
-                    "outstanding_loan_balance": float(loss_total),
-                    "provision_amount": float(loss_provision),
-                    "provision_rate": float(loss_rate),
-                },
-                "total_loans": len(staging_data)
-            },
-            total_provision=float(total_provision),
-            provision_percentage=float(provision_percentage),
-            reporting_date=reporting_date
-        )
-        db.add(calculation_result)
-        db.commit()
+#        # Create a new CalculationResult record
+#         calculation_result = CalculationResult(
+#             portfolio_id=portfolio_id,
+#             calculation_type="local_impairment",
+#             config=config,  # Use the config from staging
+#             result_summary={
+#                 "Current": {
+#                     "num_loans": len(current_loans),
+#                     "total_loan_value": safe_float(current_total),
+#                     "outstanding_loan_balance": safe_float(current_total),
+#                     "provision_amount": safe_float(current_provision),
+#                     "provision_rate": safe_float(current_rate),
+#                 },
+#                 "OLEM": {
+#                     "num_loans": len(olem_loans),
+#                     "total_loan_value": safe_float(olem_total),
+#                     "outstanding_loan_balance": safe_float(olem_total),
+#                     "provision_amount": safe_float(olem_provision),
+#                     "provision_rate": safe_float(olem_rate),
+#                 },
+#                 "Substandard": {
+#                     "num_loans": len(substandard_loans),
+#                     "total_loan_value": safe_float(substandard_total),
+#                     "outstanding_loan_balance": safe_float(substandard_total),
+#                     "provision_amount": safe_float(substandard_provision),
+#                     "provision_rate": safe_float(substandard_rate),
+#                 },
+#                 "Doubtful": {
+#                     "num_loans": len(doubtful_loans),
+#                     "total_loan_value": safe_float(doubtful_total),
+#                     "outstanding_loan_balance": safe_float(doubtful_total),
+#                     "provision_amount": safe_float(doubtful_provision),
+#                     "provision_rate": safe_float(doubtful_rate),
+#                 },
+#                 "Loss": {
+#                     "num_loans": len(loss_loans),
+#                     "total_loan_value": safe_float(loss_total),
+#                     "outstanding_loan_balance": safe_float(loss_total),
+#                     "provision_amount": safe_float(loss_provision),
+#                     "provision_rate": safe_float(loss_rate),
+#                 },
+#                 "total_loans": len(staging_data)
+#             },
+#             total_provision=safe_float(total_provision),
+#             provision_percentage=safe_float(provision_percentage),
+#             reporting_date=reporting_date
+#         )
+#         db.add(calculation_result)
+#         db.commit()
 
-        get_task_manager().update_progress(
-            task_id,
-            progress=95,
-            status_message="Saving local impairment calculation results to database"
-        )
-        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
+#         get_task_manager().update_progress(
+#             task_id,
+#             progress=95,
+#             status_message="Saving local impairment calculation results to database"
+#         )
+#         await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
         
-        get_task_manager().update_progress(
-            task_id,
-            progress=100,
-            status_message="Local impairment calculation completed successfully"
-        )
-        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
+#         get_task_manager().update_progress(
+#             task_id,
+#             progress=100,
+#             status_message="Local impairment calculation completed successfully"
+#         )
+#         await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
         
-        # Return the calculation result ID
-        return {
-            "calculation_id": calculation_result.id,
-            "portfolio_id": portfolio_id,
-            "total_provision": float(total_provision),
-            "provision_percentage": float(provision_percentage),
-            "total_loans": len(staging_data)
-        }
+#         # Return the calculation result ID
+#         return {
+#             "calculation_id": calculation_result.id,
+#             "portfolio_id": portfolio_id,
+#             "total_provision": safe_float(total_provision),
+#             "provision_percentage": safe_float(provision_percentage),
+#             "total_loans": len(staging_data)
+#         }
         
-    except Exception as e:
-        logger.exception(f"Error during local impairment calculation: {str(e)}")
-        get_task_manager().update_progress(
-            task_id,
-            progress=100,
-            status_message=f"Error during local impairment calculation: {str(e)}"
-        )
-        raise
+#     except Exception as e:
+#         logger.exception(f"Error during local impairment calculation: {str(e)}")
+#         get_task_manager().update_progress(
+#             task_id,
+#             progress=100,
+#             status_message=f"Error during local impairment calculation: {str(e)}"
+#         )
+#         raise
 
 
 # def retrieve_loans_for_staging(portfolio_id: int, db: Session):
@@ -533,7 +713,7 @@ async def process_local_impairment_calculation(
 #         stage_3_count = summary.get("Stage 3", {}).get("num_loans", 0)
         
 #         # Sort loans by outstanding loan balance for a simple approximation
-#         sorted_loans = sorted(all_loans, key=lambda x: float(x.outstanding_loan_balance) if x.outstanding_loan_balance is not None else 0, reverse=True)
+#         sorted_loans = sorted(all_loans, key=lambda x: safe_float(x.outstanding_loan_balance) if x.outstanding_loan_balance is not None else 0, reverse=True)
         
 #         # Distribute loans based on counts
 #         stage_1_loans = []
@@ -562,15 +742,15 @@ def calculate_stage_totals(loans):
     """
     Calculate total outstanding balance and provision amount for a set of loans.
     """
-    total_outstanding = sum(float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance is not None else 0 for loan in loans)
+    total_outstanding = sum(safe_float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance is not None else 0 for loan in loans)
     
     # Since the Loan model doesn't have PD, LGD, and EAD attributes,
     # we'll use simplified calculations based on available attributes
     total_provision = 0
     for loan in loans:
         # Use loan_amount as a base for calculations
-        loan_amount = float(loan.loan_amount) if loan.loan_amount is not None else 0
-        outstanding_balance = float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance is not None else 0
+        loan_amount = safe_float(loan.loan_amount) if loan.loan_amount is not None else 0
+        outstanding_balance = safe_float(loan.outstanding_loan_balance) if loan.outstanding_loan_balance is not None else 0
         
         # Simple default calculation: 5% of outstanding balance
         # This is a placeholder - in a real system, these would be calculated based on 
@@ -617,7 +797,7 @@ async def process_local_impairment_calculation_sync(
                 ead = Decimal(loan.adjusted_amortised_bal or 0)
                 provision_rate = stage_provision_rates.get(stage, Decimal("0.0"))
                 local_impairment = ead * provision_rate
-                loan.local_ecl = float(round(local_impairment, 2))
+                loan.local_ecl = round(safe_float(local_impairment), 2)
                 total_provision += local_impairment
                 loan_count += 1
                 updates.append(loan)
@@ -645,7 +825,7 @@ async def process_local_impairment_calculation_sync(
         return {
             "status": "success",
             "portfolio_id": portfolio_id,
-            "total_provision": float(round(total_provision, 2)),
+            "total_provision": round(safe_float(total_provision), 2),
             "loan_count": loan_count,
             "failed_loans": failed_loans
         }

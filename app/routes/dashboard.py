@@ -34,7 +34,7 @@ def get_dashboard(
     - Portfolio list
     """
     # Get all portfolios for current user
-    portfolios = db.query(Portfolio).filter(Portfolio.user_id == current_user.id).all()
+    portfolios = db.query(Portfolio).all()
 
     if not portfolios:
         return {

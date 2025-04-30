@@ -757,7 +757,7 @@ async def process_collateral_data(collateral_data, portfolio_id, db):
                     else:
                         values.append("")  # NULL in COPY format
                 csv_buffer.write("\t".join(values) + "\n")
-            
+            values.append(str(portfolio_id)) 
             # Reset buffer position to start
             csv_buffer.seek(0)
             
@@ -772,7 +772,7 @@ async def process_collateral_data(collateral_data, portfolio_id, db):
                 csv_buffer,
                 'securities',
                 columns=["loan_no", "security_type", "security_description", "security_value", 
-                        "valuation_date", "location", "registration_details", "ownership"]
+             "valuation_date", "location", "registration_details", "ownership", "portfolio_id"]
             )
             
             # Prepare SQL templates

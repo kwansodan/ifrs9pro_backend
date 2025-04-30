@@ -4,7 +4,6 @@ from app.utils.db import convert_libpq_to_sqlalchemy
 
 load_dotenv()  # Load environment variables from .env
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
-print("✅ Alembic sees DB URL:", os.getenv("SQLALCHEMY_DATABASE_URL"))
 
 
 class Settings:

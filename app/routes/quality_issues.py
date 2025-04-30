@@ -66,7 +66,7 @@ def get_quality_issues(
     # Verify portfolio exists and belongs to current user
     portfolio = (
         db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .filter(Portfolio.id == portfolio_id)
         .first()
     )
 
@@ -116,7 +116,7 @@ async def download_all_quality_issues_excel(
     # Verify portfolio exists and belongs to current user
     portfolio = (
         db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .filter(Portfolio.id == portfolio_id)
         .first()
     )
 
@@ -245,7 +245,7 @@ def get_quality_issue(
     # Verify portfolio exists and belongs to current user
     portfolio = (
         db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .filter(Portfolio.id == portfolio_id)
         .first()
     )
 
@@ -286,7 +286,7 @@ def update_quality_issue(
     # Verify portfolio exists and belongs to current user
     portfolio = (
         db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .filter(Portfolio.id == portfolio_id)
         .first()
     )
 
@@ -338,7 +338,7 @@ def add_comment_to_quality_issue(
     # Verify portfolio exists and belongs to current user
     portfolio = (
         db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .filter(Portfolio.id == portfolio_id)
         .first()
     )
 
@@ -387,7 +387,7 @@ def get_quality_issue_comments(
     # Verify portfolio exists and belongs to current user
     portfolio = (
         db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .filter(Portfolio.id == portfolio_id)
         .first()
     )
 
@@ -437,7 +437,7 @@ def edit_quality_issue_comment(
     # Verify portfolio exists and belongs to current user
     portfolio = (
         db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .filter(Portfolio.id == portfolio_id)
         .first()
     )
     if not portfolio:
@@ -497,7 +497,7 @@ def approve_quality_issue(
     # Verify portfolio exists and belongs to current user
     portfolio = (
         db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .filter(Portfolio.id == portfolio_id)
         .first()
     )
 
@@ -553,7 +553,7 @@ def approve_all_quality_issues(
     # Verify portfolio exists and belongs to current user
     portfolio = (
         db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .filter(Portfolio.id == portfolio_id)
         .first()
     )
 
@@ -604,7 +604,7 @@ def recheck_quality_issues(
     # Verify portfolio exists and belongs to current user
     portfolio = (
         db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .filter(Portfolio.id == portfolio_id)
         .first()
     )
 
@@ -645,7 +645,7 @@ async def download_quality_issue_excel(
     # Verify portfolio exists and belongs to current user
     portfolio = (
         db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+        .filter(Portfolio.id == portfolio_id)
         .first()
     )
 

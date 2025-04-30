@@ -10,60 +10,62 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def calculate_effective_interest_rate_lender(loan_amount, administrative_fees, loan_term, monthly_payment):
-    """
-    Calculates the effective annual interest rate of a loan from the lender's perspective,
-    considering administrative fees as income.
+def calculate_effective_interest_rate_lender(loan_amount, administrative_fees, loan_term, monthly_payment, submission_period, report_date):
+    import math
+    total_income = loan_amount + administrative_fees #From the lender's perspective the admin fees are income.
+    cash_flows = [-(loan_amount - administrative_fees)] + [monthly_payment] * loan_term
+    if not all(isinstance(val, (int, float)) and not (math.isnan(val) or math.isinf(val)) for val in cash_flows):
+        return None
 
-    Args:
-        loan_amount (float): The original loan amount.
-        administrative_fees (float): The one-time administrative fees (lender's income).
-        loan_term (int): The loan term in months.
-        monthly_payment (float): The monthly payment amount.
+    def irr(values, guess=0.1):
+        rate = guess
+        for _ in range(100):  # Maximum iterations
+            npv = sum(v / (1 + rate)**i for i, v in enumerate(values))
+            derivative = sum(-i * v / (1 + rate)**(i + 1) for i, v in enumerate(values))
+            rate -= npv / derivative
+            if abs(npv) < 1e-6:
+                return rate
+        return None #failed to converge
 
-    Returns:
-        str: The effective annual interest rate as a percentage, or None if calculation fails.
-    """
-    try:
-        total_income = loan_amount + administrative_fees #From the lender's perspective the admin fees are income.
+    if submission_period and maturity_period < report_date: #loans matured before reporting date
+        try:
+            monthly_rate = irr(cash_flows)
+            if monthly_rate is None:
+                return None
+            annual_rate = monthly_rate * 12
+            return round((annual_rate),2)
 
-        cash_flows = [-loan_amount] + [monthly_payment] * loan_term
+        except (TypeError, ValueError, ZeroDivisionError):
+            return None  # Handle potential errors
 
-        def irr(values, guess=0.1):
-            """Internal rate of return calculation."""
-            rate = guess
-            for _ in range(100):  # Maximum iterations
-                npv = sum(v / (1 + rate)**i for i, v in enumerate(values))
-                derivative = sum(-i * v / (1 + rate)**(i + 1) for i, v in enumerate(values))
-                rate -= npv / derivative
-                if abs(npv) < 1e-6:
-                    return rate
-            return None #failed to converge
 
-        import math
 
-        if not all(isinstance(val, (int, float)) for val in cash_flows):
-          return None
-
-        if any(math.isnan(val) or math.isinf(val) for val in cash_flows):
+    elif submission_period and maturity_period > report_date: #loans not yet started
+        try:
             return None
 
-        monthly_rate = irr(cash_flows)
+        except (TypeError, ValueError, ZeroDivisionError):
+            return None  # Handle potential errors
 
+    elif submission_period <= report_date and maturity_period >= report_date: #current/active loans
+        monthly_rate = irr(cash_flows)
         if monthly_rate is None:
             return None
-
         annual_rate = monthly_rate * 12
-        return str(annual_rate * 100)  # Return as percentage
+        return round((annual_rate),2)
 
-    except (TypeError, ValueError, ZeroDivisionError):
-        return None  # Handle potential errors
-
+        
+  
 
 def calculate_loss_given_default() -> float:
-    default_lgd = 100.0  # loans are unsecured
 
-    return default_lgd
+    if submission_period and maturity_period < report_date: #loans matured before reporting date
+        return None
+    elif submission_period and maturity_period > report_date: #loans not yet started
+        return None
+    elif submission_period <= report_date and maturity_period >= report_date: #current/active loans
+        default_lgd = 1.0  # loans are unsecured
+        return default_lgd
 
 
 def calculate_exposure_at_default_percentage(loan, reporting_date):
@@ -84,7 +86,6 @@ def calculate_exposure_at_default_percentage(loan, reporting_date):
     """
     if not loan.loan_amount or loan.loan_amount <= 0:
         return Decimal(0)  # If no original amount, assume 0 exposure
-
     original_amount = loan.loan_amount
 
     # Get effective interest rate (annual) and convert to monthly
@@ -165,91 +166,91 @@ def is_in_range(value: int, range_tuple: Tuple[int, Optional[int]]) -> bool:
         return min_val <= value <= max_val
 
 
-def calculate_probability_of_default(loan, db):
-    """
-    Calculate Probability of Default using the machine learning model based on customer age
+# def calculate_probability_of_default(loan, db):
+#     """
+#     Calculate Probability of Default using the machine learning model based on customer age
     
-    Parameters:
-    - loan: Loan object from the database
-    - db: SQLAlchemy database session
+#     Parameters:
+#     - loan: Loan object from the database
+#     - db: SQLAlchemy database session
     
-    Returns:
-    - float: Probability of default as a percentage (0-100)
-    """
-    try:
-        # Import here to avoid circular imports
-        import numpy as np
-        import polars as pl
-        import warnings
+#     Returns:
+#     - float: Probability of default as a percentage (0-100)
+#     """
+#     try:
+#         # Import here to avoid circular imports
+#         import numpy as np
+#         import polars as pl
+#         import warnings
         
-        # Import Client model inside the function to avoid circular imports
-        try:
-            from app.models import Client
-        except ImportError:
-            logger.error("Failed to import Client model, using default PD value")
-            return 5.0
+#         # Import Client model inside the function to avoid circular imports
+#         try:
+#             from app.models import Client
+#         except ImportError:
+#             logger.error("Failed to import Client model, using default PD value")
+#             return 5.0
         
-        # Suppress specific warnings
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=UserWarning, 
-                                  message="X does not have valid feature names")
-            warnings.filterwarnings("ignore", category=UserWarning, 
-                                  message="Trying to unpickle estimator")
+#         # Suppress specific warnings
+#         with warnings.catch_warnings():
+#             warnings.filterwarnings("ignore", category=UserWarning, 
+#                                   message="X does not have valid feature names")
+#             warnings.filterwarnings("ignore", category=UserWarning, 
+#                                   message="Trying to unpickle estimator")
         
-            # Load the pre-trained logistic regression model
-            try:
-                with open("app/ml_models/logistic_model.pkl", "rb") as file:
-                    model = pickle.load(file)
-            except FileNotFoundError:
-                logger.warning("ML model file not found, using default PD value")
-                return 5.0
+#             # Load the pre-trained logistic regression model
+#             try:
+#                 with open("app/ml_models/logistic_model.pkl", "rb") as file:
+#                     model = pickle.load(file)
+#             except FileNotFoundError:
+#                 logger.warning("ML model file not found, using default PD value")
+#                 return 5.0
                 
-            # Check if employee_id exists
-            if not loan or not loan.employee_id:
-                logger.warning(f"Loan has no employee_id, using default PD value")
-                return 5.0
+#             # Check if employee_id exists
+#             if not loan or not loan.employee_id:
+#                 logger.warning(f"Loan has no employee_id, using default PD value")
+#                 return 5.0
                 
-            # Get client associated with this loan's employee_id
-            try:
-                client = db.query(Client).filter(
-                    Client.employee_id == loan.employee_id
-                ).first()
-            except Exception as e:
-                logger.error(f"Error querying client: {str(e)}")
-                return 5.0
+#             # Get client associated with this loan's employee_id
+#             try:
+#                 client = db.query(Client).filter(
+#                     Client.employee_id == loan.employee_id
+#                 ).first()
+#             except Exception as e:
+#                 logger.error(f"Error querying client: {str(e)}")
+#                 return 5.0
             
-            if not client:
-                logger.warning(f"Client not found for employee_id {loan.employee_id}, using default PD value")
-                return 5.0
-            if not client.date_of_birth:
-                logger.warning(f"DOB not found for employee_id {loan.employee_id}, using default PD value")
-                return 5.0
+#             if not client:
+#                 logger.warning(f"Client not found for employee_id {loan.employee_id}, using default PD value")
+#                 return 5.0
+#             if not client.date_of_birth:
+#                 logger.warning(f"DOB not found for employee_id {loan.employee_id}, using default PD value")
+#                 return 5.0
             
-            # Get year of birth from date of birth
-            year_of_birth = client.date_of_birth.year
+#             # Get year of birth from date of birth
+#             year_of_birth = client.date_of_birth.year
             
-            # Get feature name from the model if available
-            if hasattr(model, 'feature_names_in_'):
-                feature_name = model.feature_names_in_[0]  # Assuming only one feature
-            else:
-                feature_name = 'year_of_birth'  # Default name if not found
+#             # Get feature name from the model if available
+#             if hasattr(model, 'feature_names_in_'):
+#                 feature_name = model.feature_names_in_[0]  # Assuming only one feature
+#             else:
+#                 feature_name = 'year_of_birth'  # Default name if not found
                 
-            # Create DataFrame with proper feature name
-            X_new = pl.DataFrame({feature_name: [year_of_birth]})
+#             # Create DataFrame with proper feature name
+#             X_new = pl.DataFrame({feature_name: [year_of_birth]})
             
-            # Predict probability of default
-            try:
-                # Get the probability of the positive class (default)
-                proba = model.predict_proba(X_new)[0][1]
-                # Convert to percentage
-                pd_value = proba * 100
-                return pd_value
-            except Exception as e:
-                logger.error(f"Error predicting PD: {str(e)}")
-                return 5.0
-    except Exception as e:
-        logger.error(f"Error calculating probability of default: {str(e)}")
-        return 5.0  # Default 5% probability on error
+#             # Predict probability of default
+#             try:
+#                 # Get the probability of the positive class (default)
+#                 proba = model.predict_proba(X_new)[0][1]
+#                 # Convert to percentage
+#                 pd_value = proba * 100
+#                 return pd_value
+#             except Exception as e:
+#                 logger.error(f"Error predicting PD: {str(e)}")
+#                 return 5.0
+#     except Exception as e:
+#         logger.error(f"Error calculating probability of default: {str(e)}")
+#         return 5.0  # Default 5% probability on error
 
 
 def get_amortization_schedule(
