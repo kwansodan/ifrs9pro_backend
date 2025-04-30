@@ -841,7 +841,6 @@ class CustomerSummaryModel(BaseModel):
         from_attributes = True
 
 
-
 class PortfolioWithSummaryResponse(BaseModel):
     id: int
     name: str
