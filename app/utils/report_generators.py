@@ -24,10 +24,9 @@ from app.calculators.ecl import (
     calculate_effective_interest_rate_lender,
     calculate_exposure_at_default_percentage,
     calculate_probability_of_default,
-    calculate_loss_given_default,
     calculate_pd_from_yob
 )
-
+from app.utils.ecl_calculator import calculate_loss_given_default
 import psutil
 import logging
 from app.utils.excel_generator import (

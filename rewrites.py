@@ -20,14 +20,14 @@ from app.calculators.ecl import (
     calculate_effective_interest_rate_lender,
     calculate_exposure_at_default_percentage,
     calculate_probability_of_default,
-    calculate_loss_given_default,
     calculate_marginal_ecl,
     is_in_range
 )
 
 from app.utils.ecl_calculator import (
     get_amortization_schedule,
-    get_ecl_by_stage
+    get_ecl_by_stage,
+    calculate_loss_given_default
 )
 from app.utils.staging import parse_days_range
 

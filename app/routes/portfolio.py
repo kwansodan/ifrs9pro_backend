@@ -28,7 +28,6 @@ from app.auth.utils import get_current_active_user
 from app.calculators.ecl import (
     calculate_exposure_at_default_percentage,
     calculate_probability_of_default,
-    calculate_loss_given_default,
     calculate_marginal_ecl,
     is_in_range,
 )
@@ -102,6 +101,7 @@ from app.utils.background_calculations import (
     process_ecl_calculation_sync,
     process_bog_impairment_calculation_sync
 )
+from app.utils.ecl_calculator import calculate_loss_given_default
 import os
 
 logger = logging.getLogger(__name__)
