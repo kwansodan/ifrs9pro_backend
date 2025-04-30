@@ -151,7 +151,7 @@ def get_portfolios(
     Retrieve all portfolios belonging to the current user.
     Optional filtering by asset_type and customer_type.
     """
-    query = db.query(Portfolio).filter(Portfolio.user_id == current_user.id)
+    query = db.query(Portfolio)
 
     # Apply filters if provided
     if asset_type:
@@ -228,8 +228,7 @@ def get_portfolio(
     try:
         # Verify portfolio exists and user has access
         portfolio = db.query(Portfolio).filter(
-            Portfolio.id == portfolio_id, 
-            Portfolio.user_id == current_user.id
+            Portfolio.id == portfolio_id
         ).first()
         
         if not portfolio:
@@ -717,7 +716,7 @@ def update_portfolio(
         # Get only the portfolio itself
         portfolio = (
             db.query(Portfolio)
-            .filter(Portfolio.id == portfolio_id, Portfolio.user_id == current_user.id)
+            .filter(Portfolio.id == portfolio_id)
             .with_for_update()
             .first()
         )
