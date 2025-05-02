@@ -13,7 +13,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import text, func, case, cast, String, and_
+from sqlalchemy import text, func, case, cast, String, and_, select
 import numpy as np
 import math
 from decimal import Decimal
@@ -290,7 +290,7 @@ def get_portfolio(
         
         active_customers = db.query(Client).filter(
             Client.portfolio_id == portfolio_id,
-            Client.employee_id.in_(active_loans)
+            Client.employee_id.in_(select(active_loans))
         ).count()
         
         # Get the portfolio's customer type to distribute active customers
