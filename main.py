@@ -40,13 +40,13 @@ async def health_check():
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Configure CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["https://ifrs9pro.service4gh.com", "http://localhost:5173"],
-    allow_credentials=True,
-    allow_methods=["POST", "PUT", "DELETE", "GET"],
-    allow_headers=["*"],
-)
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=["https://ifrs9pro.service4gh.com", "http://localhost:5173"],
+#     allow_credentials=True,
+#     allow_methods=["POST", "PUT", "DELETE", "GET"],
+#     allow_headers=["*"],
+# )
 
 # Register routers
 app.include_router(auth.router)
