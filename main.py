@@ -212,10 +212,33 @@ async def startup_event():
     - First responds to health checks
     """
     logger.info("Application startup event triggered")
-    
+
+
+
+from fastapi.responses import JSONResponse
+from fastapi.requests import Request
+
+@app.options("/{rest_of_path:path}")
+async def preflight_handler(request: Request):
+    return JSONResponse(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "https://ifrs9pro.service4gh.com",
+            "Access-Control-Allow-Methods": "POST, GET, OPTIONS, PUT, DELETE",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Credentials": "true",
+        }
+    )
+
 if __name__ == "__main__":
     import uvicorn
+    import os 
+    port = int(os.environ.get("PORT", 8000))
 
     uvicorn.run(
-        app, host="0.0.0.0", port=8000, forwarded_allow_ips="*", proxy_headers=True
+        app, 
+        host="0.0.0.0", 
+        port=port, 
+        forwarded_allow_ips="*",
+        proxy_headers=True
     )
