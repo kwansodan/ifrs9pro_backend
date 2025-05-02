@@ -142,7 +142,7 @@ def process_loan_sync(loan_data, selected_dt_str, db):
 async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, db: Session):
     selected_dt_str = reporting_date
     batch_size = 500
-    max_workers = multiprocessing.cpu_count()-1 
+    max_workers = max(1, multiprocessing.cpu_count() - 1)
 
     updates = []
     processed_count = 0
@@ -240,7 +240,7 @@ def process_loan_local_sync(loan_data, relevant_prov_rate, selected_dt_str):
 async def process_bog_impairment_calculation_sync(portfolio_id: int, reporting_date: str, db: Session):
     selected_dt_str = reporting_date
     batch_size = 500
-    max_workers = multiprocessing.cpu_count()-1   # You can tune this depending on your CPU power
+    max_workers = max(1, multiprocessing.cpu_count() - 1)   # You can tune this depending on your CPU power
 
     updates = []
     processed_count = 0
