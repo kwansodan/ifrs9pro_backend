@@ -221,6 +221,7 @@ from fastapi.requests import Request
 @app.options("/{rest_of_path:path}")
 async def preflight_handler(request: Request):
     return JSONResponse(
+        content={}, 
         status_code=200,
         headers={
             "Access-Control-Allow-Origin": "https://ifrs9pro.service4gh.com",
