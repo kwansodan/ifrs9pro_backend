@@ -39,14 +39,14 @@ async def health_check():
 # Add GZip compression middleware
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-# Configure CORS
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=["https://ifrs9pro.service4gh.com", "http://localhost:5173"],
-#     allow_credentials=True,
-#     allow_methods=["POST", "PUT", "DELETE", "GET"],
-#     allow_headers=["*"],
-# )
+Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://ifrs9pro.service4gh.com", "http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["POST", "PUT", "DELETE", "GET"],
+    allow_headers=["*"],
+)
 
 # Register routers
 app.include_router(auth.router)
@@ -215,21 +215,21 @@ async def startup_event():
 
 
 
-from fastapi.responses import JSONResponse
-from fastapi.requests import Request
+# from fastapi.responses import JSONResponse
+# from fastapi.requests import Request
 
-@app.options("/{rest_of_path:path}")
-async def preflight_handler(request: Request):
-    return JSONResponse(
-        content={}, 
-        status_code=200,
-        headers={
-            "Access-Control-Allow-Origin": "https://ifrs9pro.service4gh.com",
-            "Access-Control-Allow-Methods": "POST, GET, OPTIONS, PUT, DELETE",
-            "Access-Control-Allow-Headers": "*",
-            "Access-Control-Allow-Credentials": "true",
-        }
-    )
+# @app.options("/{rest_of_path:path}")
+# async def preflight_handler(request: Request):
+#     return JSONResponse(
+#         content={}, 
+#         status_code=200,
+#         headers={
+#             "Access-Control-Allow-Origin": "https://ifrs9pro.service4gh.com",
+#             "Access-Control-Allow-Methods": "POST, GET, OPTIONS, PUT, DELETE",
+#             "Access-Control-Allow-Headers": "*",
+#             "Access-Control-Allow-Credentials": "true",
+#         }
+#     )
 
 if __name__ == "__main__":
     import uvicorn
