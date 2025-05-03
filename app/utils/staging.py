@@ -9,7 +9,7 @@ from typing import Dict, Any, List, Tuple
 from sqlalchemy import func
 from decimal import Decimal
 
-from app.models import StagingResult, Loan
+from app.models import Portfolio, Loan
 from app.schemas import ECLStagingConfig, LocalImpairmentConfig
 
 logger = logging.getLogger(__name__)
@@ -23,14 +23,11 @@ async def stage_loans_ecl_orm(portfolio_id: int, db: Session) -> Dict[str, Any]:
         
      # Fetch ECL staging config from DB
         latest_ecl_config = (
-            db.query(StagingResult)
-            .filter(
-                StagingResult.portfolio_id == portfolio_id,
-                StagingResult.staging_type == "ecl"
-            )
-            .order_by(StagingResult.created_at.desc())
-            .first()
-        )
+    db.query(Portfolio.ecl_staging_config)
+    .filter(Portfolio.id == portfolio_id)
+    .scalar()
+)
+
 
         if not latest_ecl_config:
             logger.error(f"No ECL staging config found for portfolio {portfolio_id}")
@@ -39,7 +36,7 @@ async def stage_loans_ecl_orm(portfolio_id: int, db: Session) -> Dict[str, Any]:
                 "error": "Missing ECL staging configuration"
             }
             
-        config = latest_ecl_config.config  # Assuming it's a dict
+        config = latest_ecl_config  # Assuming it's a dict
 
         stage_1_range = config.get("stage_1", {}).get("days_range", "")
         stage_2_range = config.get("stage_2", {}).get("days_range", "")
@@ -119,17 +116,15 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, db: Session) -> Di
         logger.info(f"Starting BOG staging for portfolio {portfolio_id}")
         
      # Fetch BOG staging config from DB
+        
         latest_bog_config = (
-            db.query(StagingResult)
-            .filter(
-                StagingResult.portfolio_id == portfolio_id,
-                StagingResult.staging_type == "local_impairment"
-            )
-            .order_by(StagingResult.created_at.desc())
-            .first()
-        )
+    db.query(Portfolio.bog_staging_config)
+    .filter(Portfolio.id == portfolio_id)
+    .scalar()
+)
 
-        config = latest_bog_config.config  # Assuming it's a dict
+
+        config = latest_bog_config  # Assuming it's a dict
 
         current_range = config.get("current", {}).get("days_range", "")
         olem_range = config.get("olem", {}).get("days_range", "")

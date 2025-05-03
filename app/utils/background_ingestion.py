@@ -47,252 +47,6 @@ from app.utils.quality_checks import create_quality_issues_if_needed, create_and
 
 logger = logging.getLogger(__name__)
 
-async def process_portfolio_ingestion(
-    task_id: str,
-    portfolio_id: int,
-    loan_details_content: Optional[bytes] = None,
-    loan_details_filename: Optional[str] = None,
-    client_data_content: Optional[bytes] = None,
-    client_data_filename: Optional[str] = None,
-    loan_guarantee_data_content: Optional[bytes] = None,
-    loan_guarantee_data_filename: Optional[str] = None,
-    loan_collateral_data_content: Optional[bytes] = None,
-    loan_collateral_data_filename: Optional[str] = None,
-    db: Session = None
-):
-    """
-    Process portfolio data ingestion in the background with progress reporting.
-    
-    This function orchestrates the processing of multiple data files for a portfolio,
-    updating progress as each file is processed. It also performs staging and quality checks.
-    """
-    try:
-        # Initialize result tracking
-        results = {
-            "portfolio_id": portfolio_id,
-            "files_processed": 0,
-            "total_files": 0,
-            "details": {}
-        }
-        
-        # Check for and delete existing data for this portfolio
-        try:
-            get_task_manager().update_progress(
-                task_id,
-                progress=5,
-                status_message=f"Checking for existing data in portfolio {portfolio_id}"
-            )
-            
-            # Delete existing data in reverse order of dependencies
-            # First delete staging results and calculation results
-            staging_count = db.query(StagingResult).filter(StagingResult.portfolio_id == portfolio_id).delete()
-            calculation_count = db.query(CalculationResult).filter(CalculationResult.portfolio_id == portfolio_id).delete()
-            
-            # Delete quality issues
-            quality_count = db.query(QualityIssue).filter(QualityIssue.portfolio_id == portfolio_id).delete()
-            
-            # Delete loans, guarantees, and clients
-            loan_count = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).delete()
-            guarantee_count = db.query(Guarantee).filter(Guarantee.portfolio_id == portfolio_id).delete()
-            client_count = db.query(Client).filter(Client.portfolio_id == portfolio_id).delete()
-            
-            # Commit the deletions
-            db.commit()
-            
-            logger.info(f"Cleared existing data: {loan_count} loans, {client_count} clients, {guarantee_count} guarantees")
-            
-            # Log the deletion results but don't add to response
-            logger.info(f"Data cleared: loans={loan_count}, clients={client_count}, guarantees={guarantee_count}, " +
-                       f"quality_issues={quality_count}, staging_results={staging_count}, calculation_results={calculation_count}")
-            
-        except Exception as e:
-            logger.error(f"Error clearing existing data: {str(e)}")
-            results["errors"] = results.get("errors", []) + [f"Error clearing existing data: {str(e)}"]
-        
-        # Count total files to process
-        files_to_process = []
-        if loan_details_content:
-            files_to_process.append(("loan_details", loan_details_content, loan_details_filename))
-            results["total_files"] += 1
-        
-        if client_data_content:
-            files_to_process.append(("client_data", client_data_content, client_data_filename))
-            results["total_files"] += 1
-            
-        if loan_guarantee_data_content:
-            files_to_process.append(("loan_guarantee_data", loan_guarantee_data_content, loan_guarantee_data_filename))
-            results["total_files"] += 1
-            
-        if loan_collateral_data_content:
-            files_to_process.append(("loan_collateral_data", loan_collateral_data_content, loan_collateral_data_filename))
-            results["total_files"] += 1
-        
-        # If no files provided, return early
-        if not files_to_process:
-            get_task_manager().update_task(
-                task_id, 
-                status_message="No files provided for ingestion",
-                progress=100
-            )
-            return results
-        
-        # Calculate progress allocation per file
-        # Data ingestion takes 80% of the total progress (10-90%)
-        # Each file gets an equal portion of that 80%
-        progress_per_file = 80.0 / len(files_to_process)
-        
-        # Process each file in sequence
-        for i, (file_type, file_content, filename) in enumerate(files_to_process):
-            # Calculate progress range for this file
-            file_start_progress = 10 + (i * progress_per_file)
-            file_end_progress = 10 + ((i + 1) * progress_per_file)
-            
-            # Update overall task progress
-            get_task_manager().update_progress(
-                task_id,
-                progress=file_start_progress,
-                status_message=f"Processing {file_type} ({i+1}/{len(files_to_process)})"
-            )
-            
-            # Process based on file type
-            if file_type == "loan_details":
-                get_task_manager().update_task(task_id, status_message=f"Processing loan details from {filename}")
-                
-                # Create a progress wrapper function
-                async def progress_wrapper(progress, processed_items=None, status_message=None):
-                    # Map the file's internal progress (0-100%) to its allocated range
-                    overall_progress = file_start_progress + (progress / 100.0) * (file_end_progress - file_start_progress)
-                    get_task_manager().update_progress(
-                        task_id,
-                        progress=round(overall_progress, 2),
-                        processed_items=processed_items,
-                        status_message=status_message
-                    )
-                
-                # Pass the wrapper to the processor
-                file_result = await process_loan_details_with_progress(
-                    task_id, 
-                    file_content, 
-                    portfolio_id, 
-                    db,
-                    progress_callback=progress_wrapper
-                )
-                results["details"]["loan_details"] = file_result
-                
-            elif file_type == "client_data":
-                get_task_manager().update_task(task_id, status_message=f"Processing client data from {filename}")
-                
-                # Create a progress wrapper function
-                async def progress_wrapper(progress, processed_items=None, status_message=None):
-                    # Map the file's internal progress (0-100%) to its allocated range
-                    overall_progress = file_start_progress + (progress / 100.0) * (file_end_progress - file_start_progress)
-                    get_task_manager().update_progress(
-                        task_id,
-                        progress=round(overall_progress, 2),
-                        processed_items=processed_items,
-                        status_message=status_message
-                    )
-                
-                # Pass the wrapper to the processor
-                file_result = await process_client_data_with_progress(
-                    task_id, 
-                    file_content, 
-                    portfolio_id, 
-                    db,
-                    progress_callback=progress_wrapper
-                )
-                results["details"]["client_data"] = file_result
-                
-            # Increment processed files count
-            results["files_processed"] += 1
-            
-            # Update overall progress
-            get_task_manager().update_progress(
-                task_id,
-                progress=file_end_progress,
-                status_message=f"Completed processing {file_type}"
-            )
-        
-        # Now perform staging operations - 10% of progress
-        get_task_manager().update_progress(
-            task_id,
-            progress=90,
-            status_message="Starting loan staging operations"
-        )
-        
-        staging_results = {}
-        
-        # 1. Perform ECL staging
-        try:
-            get_task_manager().update_progress(
-                task_id,
-                progress=92,
-                status_message="Performing ECL staging"
-            )
-                        
-            # Perform ECL staging
-            ecl_result = await stage_loans_ecl_orm(
-                portfolio_id=portfolio_id,
-                config=ecl_config,
-                db=db
-            )
-            
-            staging_results["ecl"] = ecl_result
-            
-        except Exception as e:
-            logger.error(f"Error during ECL staging: {str(e)}")
-            staging_results["ecl"] = {
-                "status": "error",
-                "error": str(e)
-            }
-        
-        
-        db.commit()
-        
-        
-        # Finally, create quality issues - 2% of progress
-        try:
-            get_task_manager().update_progress(
-                task_id,
-                progress=99,
-                status_message="Checking data quality"
-            )
-            await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
-            
-            # Create quality issues
-            quality_result = create_and_save_quality_issues(db, portfolio_id, task_id)
-            results["quality_checks"] = quality_result
-            db.commit()
-            
-        except Exception as e:
-            logger.error(f"Error creating quality issues: {str(e)}")
-            results["quality_checks"] = {
-                "status": "error",
-                "error": str(e)
-            }
-            db.rollback()
-        
-        # Complete the task
-        get_task_manager().update_progress(
-            task_id,
-            progress=100,
-            status_message=f"Completed processing {results['files_processed']} files"
-        )
-        await asyncio.sleep(0.1)  # Small delay to ensure WebSocket message is sent
-        
-        return results
-        
-    except Exception as e:
-        logger.error(f"Error in portfolio ingestion: {str(e)}")
-        get_task_manager().update_task(
-            task_id,
-            status="error",
-            error=str(e),
-            status_message=f"Error during ingestion: {str(e)}",
-            progress=100
-        )
-        raise
-
 
 async def process_portfolio_ingestion_sync(
     portfolio_id: int,
@@ -341,7 +95,7 @@ async def process_portfolio_ingestion_sync(
             
             # Log the deletion results but don't add to response
             logger.info(f"Data cleared: loans={loan_count}, clients={client_count}, guarantees={guarantee_count}, " +
-                       f"quality_issues={quality_count}, staging_results={staging_count}, calculation_results={calculation_count}")
+                       f"quality_issues={quality_count}, calculation_results={calculation_count}")
             
         except Exception as e:
             logger.error(f"Error clearing existing data: {str(e)}")
@@ -369,7 +123,7 @@ async def process_portfolio_ingestion_sync(
                 loan_details_io = io.BytesIO(loan_details_content)
                 
                 # Process the loan details
-                loan_results = process_loan_details_sync(loan_details_io, portfolio_id, db)
+                loan_results = await process_loan_details_sync(loan_details_io, portfolio_id, db)
 
 
                 # Add results to the overall results
@@ -392,7 +146,7 @@ async def process_portfolio_ingestion_sync(
                 client_data_io = io.BytesIO(client_data_content)
                 
                 # Process the client data
-                client_results = process_client_data_sync(client_data_io, portfolio_id, db)
+                client_results = await process_client_data_sync(client_data_io, portfolio_id, db)
                 
                 # Add results to the overall results
                 results["details"]["client_data"] = client_results
@@ -414,7 +168,7 @@ async def process_portfolio_ingestion_sync(
                 loan_guarantee_data_io = io.BytesIO(loan_guarantee_data_content)
                 
                 # Process the loan guarantee data
-                await process_loan_guarantees(io.BytesIO(loan_guarantee_data_content), portfolio_id=portfolio_id, db=db)
+                guarantee_results=await process_loan_guarantees(io.BytesIO(loan_guarantee_data_content), portfolio_id=portfolio_id, db=db)
                 
                 # Add results to the overall results
                 results["details"]["loan_guarantee_data"] = guarantee_results
