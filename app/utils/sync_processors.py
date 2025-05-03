@@ -19,7 +19,7 @@ from app.utils.quality_checks import create_and_save_quality_issues
 
 logger = logging.getLogger(__name__)
 
-def process_loan_details_sync(file_content, portfolio_id, db):
+async def process_loan_details_sync(file_content, portfolio_id, db):
     """Synchronous function to process loan details with high-performance optimizations for large datasets using Polars."""
     try:
         # Target column names (lowercase for matching)
@@ -403,7 +403,7 @@ def process_loan_details_sync(file_content, portfolio_id, db):
         return {"error": str(e)}
 
 
-def process_client_data_sync(file_content, portfolio_id, db):
+async def process_client_data_sync(file_content, portfolio_id, db):
     """Synchronous function to process client data with high-performance optimizations for large datasets using Polars."""
     try:
         # Target column names (lowercase for matching)

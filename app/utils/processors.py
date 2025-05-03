@@ -485,7 +485,7 @@ async def process_client_data(client_data, portfolio_id, db):
 async def process_loan_guarantees(loan_guarantee_data, portfolio_id, db):
     """Process loan guarantees file using Polars for high-performance data processing."""
     try:
-        content = await loan_guarantee_data.read()
+        content = loan_guarantee_data.read()
         
         # Target column names (lowercase for matching)
         target_columns = {
@@ -639,20 +639,20 @@ async def process_loan_guarantees(loan_guarantee_data, portfolio_id, db):
         return {
             "status": "success",
             "rows_processed": len(df) if isinstance(df, pl.DataFrame) else 0,
-            "filename": loan_guarantee_data.filename,
+            "filename": getattr(loan_guarantee_data, "filename", "in-memory-file"),
         }
     except Exception as e:
         db.rollback()
         return {
             "status": "error",
             "message": str(e),
-            "filename": loan_guarantee_data.filename,
+            "filename": getattr(loan_guarantee_data, "filename", "in-memory-file"),
         }
 
 async def process_collateral_data(collateral_data, portfolio_id, db):
     """Process loan collateral (securities) data using optimized bulk operations with Polars."""
     try:
-        content = await collateral_data.read()
+        content = collateral_data.read()
         
         # Target column names (lowercase for matching)
         target_columns = {
@@ -668,8 +668,7 @@ async def process_collateral_data(collateral_data, portfolio_id, db):
         
         # Get existing securities from the database using raw SQL for performance
         existing_securities_query = text("""
-            SELECT loan_no, security_type, security_description, id FROM securities 
-            WHERE loan_no IS NOT NULL AND security_type IS NOT NULL AND security_description IS NOT NULL
+            SELECT * FROM securities 
         """)
         result = db.execute(existing_securities_query)
         existing_securities = {(loan_no, security_type, security_description): security_id for loan_no, security_type, security_description, security_id in result}
@@ -821,7 +820,7 @@ async def process_collateral_data(collateral_data, portfolio_id, db):
         return {
             "status": "success",
             "rows_processed": len(df) if isinstance(df, pl.DataFrame) else 0,
-            "filename": collateral_data.filename,
+            "filename": getattr(collateral_data, "filename", "in-memory-file"),
         }
     except Exception as e:
         db.rollback()
@@ -830,5 +829,5 @@ async def process_collateral_data(collateral_data, portfolio_id, db):
         return {
             "status": "error",
             "message": str(e),
-            "filename": collateral_data.filename,
+            "filename": getattr(collateral_data, "filename", "in-memory-file"),
         }
