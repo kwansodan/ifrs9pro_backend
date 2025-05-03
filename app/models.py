@@ -114,14 +114,12 @@ class Portfolio(Base):
     loans = relationship("Loan", back_populates="portfolio")
     clients = relationship("Client", back_populates="portfolio")
     guarantees = relationship("Guarantee", back_populates="portfolio")
-    quality_issues = relationship(
-        "QualityIssue", back_populates="portfolio", cascade="all, delete-orphan"
-    )
-    reports = relationship(
-        "Report", back_populates="portfolio", cascade="all, delete-orphan"
-    )
+    quality_issues = relationship("QualityIssue", back_populates="portfolio", cascade="all, delete-orphan")
+    reports = relationship("Report", back_populates="portfolio", cascade="all, delete-orphan")
     staging_results = relationship("StagingResult", back_populates="portfolio", cascade="all, delete-orphan")
     calculation_results = relationship("CalculationResult", back_populates="portfolio", cascade="all, delete-orphan")
+    ecl_staging_config = Column(JSON, nullable=True)  # Store the configuration used for staging
+    bog_staging_config = Column(JSON, nullable=True)  # Store the configuration used for staging
 
 
 class ClientType(str, PyEnum):
