@@ -10,7 +10,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def calculate_effective_interest_rate_lender(loan_amount, administrative_fees, loan_term, monthly_payment, submission_period, report_date):
+def calculate_effective_interest_rate_lender(loan_amount, administrative_fees, loan_term, monthly_payment, submission_period, report_date, maturity_period):
     import math
     total_income = loan_amount + administrative_fees #From the lender's perspective the admin fees are income.
     cash_flows = [-(loan_amount - administrative_fees)] + [monthly_payment] * loan_term
@@ -57,7 +57,7 @@ def calculate_effective_interest_rate_lender(loan_amount, administrative_fees, l
         
   
 
-def calculate_loss_given_default() -> float:
+def calculate_loss_given_default(submission_period, maturity_period, report_date) -> float:
 
     if submission_period and maturity_period < report_date: #loans matured before reporting date
         return None
@@ -261,7 +261,6 @@ def get_amortization_schedule(
     start_date: str,
     reporting_date: str,
     pd: float = None,
-    db = None,
     loan = None
 ) -> Tuple[List[List], float, float]:
     """Generates amortization schedule and returns schedule, 12-month ECL and lifetime ECL.

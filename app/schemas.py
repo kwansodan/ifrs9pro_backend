@@ -798,13 +798,13 @@ class PortfolioUpdate(BaseModel):
 
 class PortfolioResponseBase(BaseModel):
     id: int
-    name: str
-    description: str
-    asset_type: str
-    customer_type: str
-    funding_source: str
-    data_source: str
-    repayment_source: bool
+    name: Optional[str] = ""
+    description: Optional[str] = ""
+    asset_type: Optional[str] = ""
+    customer_type: Optional[str] = ""
+    funding_source: Optional[str] = ""
+    data_source: Optional[str] = ""
+    repayment_source: Optional[bool] = False
     credit_risk_reserve: Optional[str] = None
     loan_assets: Optional[str] = None
     ecl_impairment_account: Optional[str] = None
