@@ -793,7 +793,7 @@ class PortfolioUpdate(BaseModel):
     loan_assets: Optional[str] = None
     ecl_impairment_account: Optional[str] = None
     ecl_staging_config: Optional[ECLStagingConfig] = None
-    local_impairment_config: Optional[LocalImpairmentConfig] = None
+    bog_staging_config: Optional[LocalImpairmentConfig] = None
 
 
 class PortfolioResponseBase(BaseModel):
@@ -811,6 +811,8 @@ class PortfolioResponseBase(BaseModel):
     user_id: int
     created_at: datetime
     updated_at: Optional[datetime] = None
+    ecl_staging_config: Optional[ECLStagingConfig] = None
+    local_impairment_config: Optional[LocalImpairmentConfig] = None
     
     class Config:
         from_attributes = True
