@@ -42,7 +42,7 @@ def safe_float(value, default=0.0):
         return default
 
 # --- Move process_loan to pure sync ---
-def process_loan_sync(loan_data, selected_dt_str, db):
+def process_loan_sync(loan_data, selected_dt_str):
     try:
         selected_dt = pd.to_datetime(selected_dt_str)
         principal = safe_float(loan_data.get('loan_amount', 0))
@@ -50,9 +50,12 @@ def process_loan_sync(loan_data, selected_dt_str, db):
         arrears = safe_float(loan_data.get('accumulated_arrears', 0))
         start_date = pd.to_datetime(loan_data.get('deduction_start_period'))
         monthly_installment = safe_float(loan_data.get('monthly_installment', 0))
+        pd_rate=safe_float(loan_data.get('pd_value', 0))
         end_date = start_date + relativedelta(months=term_months)
         employee_id=loan_data.get('employee_id')
         administrative_fees=safe_float(loan_data.get('administrative_fees', 0))
+        submission_period=pd.to_datetime(loan_data.get('submission_period'))
+        maturity_period=pd.to_datetime(loan_data.get('maturity_period'))
         loan_result = {}
 
 
@@ -77,7 +80,12 @@ def process_loan_sync(loan_data, selected_dt_str, db):
             loan_amount=principal,
             administrative_fees=administrative_fees,
             loan_term=term_months,
-            monthly_payment=monthly_installment
+            monthly_payment=monthly_installment,
+            submission_period=submission_period,
+            report_date=selected_dt,
+            maturity_period=maturity_period,
+            
+            
         )
         loan_result['eir'] = eir if isinstance(eir, float) else eir
 
@@ -87,10 +95,7 @@ def process_loan_sync(loan_data, selected_dt_str, db):
 
 
         # Calculate EIR and store
-        pd_rate=calculate_probability_of_default(
-            employee_id=employee_id,
-            db=db
-            )
+        
         loan_result['pd'] = pd_rate
         pd_monthly = pd_rate / 12 if isinstance(pd_rate, float) else 0.0
 
@@ -155,7 +160,7 @@ async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, d
     offset = 0
 
     # Fetch first loan separately to get portfolio_id
-    first_loan = db.query(Loan).order_by(Loan.id).first()
+    first_loan = db.query(Loan).order_by(Loan.id).filter(Loan.portfolio_id == portfolio_id).first()
     if not first_loan:
         return {"error": "No loans found."}
     portfolio_id = first_loan.portfolio_id
@@ -164,10 +169,21 @@ async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, d
         loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).order_by(Loan.id).offset(offset).limit(batch_size).all()
         if not loans:
             break  # No more loans to process
-
+        
+        
         tasks = []
 
         for loan in loans:
+                
+            pd_value = calculate_probability_of_default(
+            employee_id=loan.employee_id,
+            outstanding_loan_balance=loan.outstanding_loan_balance,
+            start_date=loan.deduction_start_period,
+            selected_dt=selected_dt_str,
+            end_date=loan.maturity_period,
+            arrears=loan.accumulated_arrears,
+            db=db
+        )
             loan_data = {
                 "id": loan.id,
                 "loan_amount": loan.loan_amount,
@@ -177,9 +193,12 @@ async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, d
                 "monthly_installment": loan.monthly_installment,
                 "administrative_fees": loan.administrative_fees,
                 "ifrs9_stage": loan.ifrs9_stage,
-                "pd": loan.pd,
+                "pd_value": pd_value,
+                "submission_period": loan.submission_period,
+                "maturity_period": loan.maturity_period,
+                
             }
-            task = asyncio.get_running_loop().run_in_executor(executor, process_loan_sync, loan_data, selected_dt_str, db)
+            task = asyncio.get_running_loop().run_in_executor(executor, process_loan_sync, loan_data, selected_dt_str)
             tasks.append(task)
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -259,11 +278,15 @@ async def process_bog_impairment_calculation_sync(portfolio_id: int, reporting_d
     
     while True:
         #Fetch BOG staging/impairment rules for portlio
-        latest_config = db.query(StagingResult).filter( StagingResult.portfolio_id == portfolio_id, StagingResult.staging_type == "local_impairment" ).order_by(StagingResult.created_at.desc()).first()
-        if not latest_config:
+        latest_bog_config = (
+    db.query(Portfolio.bog_staging_config)
+    .filter(Portfolio.id == portfolio_id)
+    .scalar()
+)
+        if not latest_bog_config:
             return {"error": "No BOG staging rules found. Update BOG staging rules."}
         # Get provision rates from config
-        provision_config = latest_config.config or {}  # Access like attribute
+        provision_config = latest_bog_config or {}  # Access like attribute
 
         current_rate = Decimal(provision_config.get("current", {}).get("rate", 0))
         olem_rate = Decimal(provision_config.get("olem", {}).get("rate", 0))

@@ -164,78 +164,64 @@ def is_in_range(value: int, range_tuple: Tuple[int, Optional[int]]) -> bool:
 
 
 
-def calculate_probability_of_default(employee_id,outstanding_loan_balance, start_date, selected_dt, end_date, arrears, db):
+def calculate_probability_of_default(employee_id, outstanding_loan_balance, start_date, selected_dt, end_date, arrears, db):
     try:
         # Import here to avoid circular imports
         import numpy as np
         import pandas as pd
         import warnings
-        
+        import pickle
+        from app.models import Client
 
-        if outstanding_loan_balance >= 0:
-            if start_date <=reporting_date and end_date>reporting_date:
-                run_pd(employee_id, db)
-            if start_date<reporting_date and end_date<reporting_date:
-                if accumulated_arrears:
-                    return 1.0
-                else:
-                    return "N/A"
+        def run_pd(employee_id, db):
 
-
-        elif outstanding_loan_balance < 0:
-            if arrears>0:
-                if end_date<= reporting_date:
-                    return 1.0
-            else:
-                return 0.0
-
-
-        def run_pd (employee_id, db):
-
-            #suppressing errors
+            # Suppressing warnings
             with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", category=UserWarning, 
-                                      message="X does not have valid feature names")
-                warnings.filterwarnings("ignore", category=UserWarning, 
-                                      message="Trying to unpickle estimator")
-            
-                # Load the pre-trained logistic regression model
+                warnings.filterwarnings("ignore", category=UserWarning, message="X does not have valid feature names")
+                warnings.filterwarnings("ignore", category=UserWarning, message="Trying to unpickle estimator")
+
+                # Load pre-trained logistic regression model
                 with open("app/ml_models/logistic_model.pkl", "rb") as file:
                     model = pickle.load(file)
-                    
-                # Get client associated with this loan's employee_id
-                client = db.query(Client).filter(
-                    Client.employee_id == employee_id
-                ).first()
-                
+
+                client = db.query(Client).filter(Client.employee_id == employee_id).first()                
+                print(f"Client for {employee_id}: {client}, DOB: {getattr(client, 'date_of_birth', None)}")
+
                 if not client or not client.date_of_birth or not hasattr(client.date_of_birth, 'year'):
-                    return 0  # Return 0 if client or DOB not found or invalid
-                
-                # Get year of birth from date of birth
+                    return 0.0
+
                 year_of_birth = client.date_of_birth.year
-                
-                # Get feature name from the model if available
-                if hasattr(model, 'feature_names_in_'):
-                    feature_name = model.feature_names_in_[0]  # Assuming only one feature
-                else:
-                    feature_name = 'year_of_birth'  # Default name if not found
-                    
-                # Create DataFrame with proper feature name
+                feature_name = getattr(model, 'feature_names_in_', ['year_of_birth'])[0]
                 X_new = pd.DataFrame({feature_name: [year_of_birth]})
-                
-                # Get prediction and probability from model
-                prediction = model.predict(X_new)[0]
-                probability = model.predict_proba(X_new)[0][1]  # Probability of default
-                
-                
-                pd_dec = round(float(probability),2) #not percentage
-                
-                return pd_dec
+                probability = model.predict_proba(X_new)[0][1]
+                return round(float(probability), 2)
+
+        # Main logic
+        print(f"Loan {employee_id}: outstanding_loan_balance={outstanding_loan_balance}, start_date={start_date}, selected_dt={selected_dt}, end_date={end_date}, arrears={arrears}")
+        result = 0.00
+        if outstanding_loan_balance >= 0:
+            if start_date <= selected_dt and end_date > selected_dt:
+                result= run_pd(employee_id, db)
+            if start_date < selected_dt and end_date < selected_dt:
+                if arrears:
+                    result= 1.0
+                else:
+                    result= None
+        elif outstanding_loan_balance < 0:
+            if arrears > 0:
+                if end_date <= selected_dt:
+                    result= 1.0
+            else:
+                result= 0.0
+
+
+        
+        
+        return result
 
     except Exception as e:
-        # Handle exceptions but maintain return type as float
         print(f"Error calculating probability of default: {str(e)}")
-        
+        return 0.0
 
 
 def calculate_pd_from_yob(year_of_birth: Optional[int], model: Any) -> float:
