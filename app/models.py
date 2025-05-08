@@ -389,6 +389,8 @@ class Report(Base):
     report_date = Column(Date, nullable=False)
     report_name = Column(String, nullable=False)
     report_data = Column(JSON, nullable=False)
+    file_path = Column(String, nullable=True)
+    status = Column(String, default="pending")  # pending, success, failed
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     portfolio = relationship("Portfolio", back_populates="reports")

@@ -713,11 +713,7 @@ async def calculate_ecl_provision(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """
-    Calculate ECL provisions directly from a portfolio ID.
-    This route uses the latest staging data stored in the database.
-    The calculation is performed in a background task and returns a task ID for tracking progress.
-    """
+
     # Use provided reporting date or default to current date
     if not reporting_date:
         reporting_date = datetime.now().date()

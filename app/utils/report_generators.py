@@ -1067,104 +1067,55 @@ def generate_loss_given_default_report(
 
 
 def generate_ecl_detailed_report(
-    db: Session, portfolio_id: int, report_date: date
+    db: Session, portfolio_id: int, report_date: date, portfolio: Portfolio
 ) -> Dict[str, Any]:
-    """
-    Generate a detailed ECL report for a portfolio using memory-optimized streaming.
-    Writes loan data to a temporary JSON file and uses an iterator for Excel generation.
-    """
-    start_time = time.time()
-    process = psutil.Process()
-    start_mem = process.memory_info().rss / 1024**2
-    logging.info(f"[MEM] Start generate_ecl_detailed_report: {start_mem:.2f} MB")
-    print(f"Starting ECL detailed report generation for portfolio {portfolio_id} (Streaming Mode)")
-
-    temp_file = None
-    temp_file_path = None
-    total_ead_calc = 0.0
-    total_lgd_weighted_calc = 0.0  # Sum of (LGD_Rate * OutstandingBalance)
-    total_ecl_calc = 0.0
-    total_loan_count_actual = 0
-
     try:
-        # --- 1. Preload Static Data ---
-        portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
-        if not portfolio:
-            print(f"Error: Portfolio with ID {portfolio_id} not found.")
-            return {"error": f"Portfolio {portfolio_id} not found"}
+        start_time = time.time()
+        process = psutil.Process()
+        start_mem = process.memory_info().rss / 1024**2
+        logging.info(f"[MEM] Start generate_ecl_detailed_report: {start_mem:.2f} MB")
+        print(f"Starting ECL detailed report generation for portfolio {portfolio_id} (Streaming Mode)")
 
-        print("Preloading client data...")
-        client_query = db.query(
-            Client.employee_id,
-            Client.last_name,
-            Client.other_names,
-            Client.date_of_birth # Fetch DOB
-        ).filter(
-            Client.portfolio_id == portfolio_id, Client.employee_id != None
-        ).all()
+        temp_file = None
+        temp_file_path = None
+        total_ead_calc = db.query(func.sum(Loan.ead)).filter(Loan.portfolio_id == portfolio_id).scalar() or 0.0
+        total_lgd_calc = total_lgd_weighted_calc = (
+            db.query(func.sum(Loan.ead * Loan.lgd)).filter(Loan.portfolio_id == portfolio_id).scalar()
+        ) or 0.0
+        total_ecl_calc = db.query(func.sum(Loan.final_ecl)).filter(Loan.portfolio_id == portfolio_id).scalar() or 0.0
+        total_loan_count_actual = (
+            db.query(func.count(Loan.id)).filter(Loan.portfolio_id == portfolio_id).scalar()
+        ) or 0
 
         client_map = {}
-        employee_yob_map = {} # <--- NEW: Map for year of birth
+        employee_yob_map = {}
+        client_query = db.query(Client).filter(Client.portfolio_id == portfolio_id).all()
+
         for client_data in client_query:
             emp_id = client_data.employee_id
             client_map[emp_id] = f"{client_data.last_name or ''} {client_data.other_names or ''}".strip() or "Unknown"
-            # Extract year of birth safely
             year_of_birth = None
             if client_data.date_of_birth and hasattr(client_data.date_of_birth, 'year'):
                 try:
                     year_of_birth = int(client_data.date_of_birth.year)
                 except (ValueError, TypeError):
-                    year_of_birth = None # Handle potential non-integer years if data is messy
-            employee_yob_map[emp_id] = year_of_birth # Store None if DOB is invalid/missing
+                    year_of_birth = None
+            employee_yob_map[emp_id] = year_of_birth
 
         print(f"Preloaded client names for {len(client_map)} clients.")
         print(f"Preloaded YOB for {len(employee_yob_map)} employees.")
         logging.info(f"[MEM] After client preload: {process.memory_info().rss / 1024**2:.2f} MB")
 
-        
-        print("Preloading staging data...")
-        latest_staging = db.query(StagingResult).filter(
-            StagingResult.portfolio_id == portfolio_id, StagingResult.staging_type == "ecl"
-        ).order_by(StagingResult.created_at.desc()).first()
-        loan_stage_map = {}
-        if latest_staging and latest_staging.result_summary:
-            stage_list_key = "staging_data" if "staging_data" in latest_staging.result_summary else "loans"
-            staging_list = latest_staging.result_summary.get(stage_list_key, [])
-            loan_stage_map = {
-                item.get("loan_id"): item.get("stage", "Stage 1") # Default if missing
-                for item in staging_list if item.get("loan_id")
-            }
-        print(f"Preloaded {len(loan_stage_map)} stage mappings.")
-        logging.info(f"[MEM] After staging preload: {process.memory_info().rss / 1024**2:.2f} MB")
-
-        print("Preloading securities data...")
-        securities_query = (
-            db.query(Security, Client.employee_id)
-            .join(Client, Security.client_id == Client.id)
-            .filter(Client.portfolio_id == portfolio_id, Client.employee_id != None)
-            .all()
-        )
-        security_map = {}
-        for security, employee_id in securities_query:
-            if employee_id not in security_map:
-                security_map[employee_id] = []
-            security_map[employee_id].append(security)
-        print(f"Preloaded securities for {len(security_map)} clients.")
-        logging.info(f"[MEM] After securities preload: {process.memory_info().rss / 1024**2:.2f} MB")
-
-        # --- 2. Setup Temporary File ---
-        # Use utf-8 encoding for wider character support
         temp_file = tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.json', encoding='utf-8')
         temp_file_path = temp_file.name
         print(f"Using temporary file for loan data: {temp_file_path}")
         temp_file.write('[\n')
         first_loan = True
 
-        # --- 3. Process Loans in Batches and Write to Temp File ---
         total_loan_count_db = db.query(func.count(Loan.id)).filter(Loan.portfolio_id == portfolio_id).scalar() or 0
         print(f"Database reports {total_loan_count_db} loans to process.")
 
-        batch_size = 2000  # Adjust as needed
+        batch_size = 2000
         num_batches = (total_loan_count_db + batch_size - 1) // batch_size if total_loan_count_db > 0 else 0
         print(f"Processing {num_batches} batches of up to {batch_size} loans each.")
 
@@ -1173,12 +1124,11 @@ def generate_ecl_detailed_report(
             current_batch_num = offset // batch_size + 1
             print(f"Processing batch {current_batch_num}/{num_batches}")
 
-            # Select only necessary columns to reduce initial memory load slightly
             loan_batch = db.query(
-                Loan.id, Loan.employee_id, Loan.loan_amount, Loan.administrative_fees,
-                Loan.loan_term, Loan.monthly_installment, Loan.outstanding_loan_balance,
-                Loan.accumulated_arrears, Loan.ndia, Loan.loan_issue_date # Add any other needed fields
-                ).filter(
+                Loan.id, Loan.employee_id, Loan.loan_amount, Loan.theoretical_balance, Loan.ead,
+                Loan.lgd, Loan.eir, Loan.pd, Loan.final_ecl,
+                Loan.accumulated_arrears, Loan.ifrs9_stage, Loan.ndia
+            ).filter(
                 Loan.portfolio_id == portfolio_id
             ).order_by(Loan.id).offset(offset).limit(batch_size).all()
 
@@ -1186,170 +1136,128 @@ def generate_ecl_detailed_report(
                 print(f"No loans found in batch {current_batch_num}")
                 continue
 
-            # --- Parallel Processing within Batch ---
             def process_loan_ecl(loan_data):
-                # loan_data is now a Row object or similar from the query
                 loan_id = loan_data.id
                 try:
-                    # Access data using attributes or keys depending on query result type
                     employee_id = loan_data.employee_id
-                    outstanding_balance_f = float(loan_data.outstanding_loan_balance or 0.0)
-
-                    # Get preloaded data
-                    stage = loan_stage_map.get(loan_id, "Stage 1") # Default stage
-                    securities = security_map.get(employee_id, [])
+                    outstanding_balance_f = float(loan_data.ead or 0.0)
                     client_name = client_map.get(employee_id, "Unknown")
+                    lgd = float((loan_data.lgd or 0.0) * (loan_data.ead or 0.0))
 
-                    # Calculations (Pass the loan_data object or required fields)
-                    # Wrap calculations in Decimal for precision if needed, then convert to float
-                    pd_rate = calculate_pd_from_yob(year_of_birth, PRELOADED_PD_MODEL)
-                    lgd_rate = calculate_loss_given_default(loan_data, securities) # Pass object
-                    ead_amount = calculate_exposure_at_default_percentage(loan_data, report_date) # Pass object
-                    eir_rate = calculate_effective_interest_rate_lender(
-                        loan_amount=float(loan_data.loan_amount or 0.0),
-                        administrative_fees=float(loan_data.administrative_fees or 0.0),
-                        loan_term=int(loan_data.loan_term or 0),
-                        monthly_payment=float(loan_data.monthly_installment or 0.0)
-                    )
+                    ecl_amount = float(loan_data.final_ecl or 0.0)
 
-                    # Ensure rates are treated as rates (e.g., 0.45) not percentages
-                    ecl_amount = float(ead_amount) * float(pd_rate) * float(lgd_rate)
-
-                    # Create loan entry for JSON (convert numbers to strings)
                     loan_entry = {
-                        "loan_id": loan_id,
-                        "employee_id": employee_id,
-                        "employee_name": client_name,
-                        "loan_value": str(loan_data.loan_amount or '0'),
-                        "outstanding_loan_balance": str(loan_data.outstanding_loan_balance or '0'),
-                        "accumulated_arrears": str(loan_data.accumulated_arrears or '0'),
-                        "ndia": str(float(loan_data.ndia or 0.0)),
-                        "stage": stage,
-                        "ead": str(float(ead_amount)),
-                        "lgd": str(float(lgd_rate)), # Convert rate to percentage string
-                        "eir": str(float(eir_rate)), # Convert rate to percentage string
-                        "pd": str(float(pd_rate * 100)),  # Convert rate to percentage string
-                        "ecl": str(ecl_amount)
-                    }
+                    "loan_id": loan_id,
+                    "employee_id": employee_id,
+                    "employee_name": client_name,
+                    "loan_value": str(loan_data.loan_amount or '0'),
+                    "outstanding_loan_balance": str(float(loan_data.ead or 0.0)),
+                    "accumulated_arrears": str(float(loan_data.accumulated_arrears or 0.0)),
+                    "ndia": str(float(loan_data.ndia or 0.0)),
+                    "stage": str(loan_data.ifrs9_stage or 'Unknown'),
+                    "ead": str(float(loan_data.ead or 0.0)),
+                    "lgd": str(float((loan_data.lgd or 0.0) * (loan_data.ead or 0.0))),
+                    "eir": str(float((loan_data.eir or 0.0) * 100)),
+                    "pd": str(float((loan_data.pd or 0.0) * 100)),
+                    "ecl": str(float(loan_data.final_ecl or 0.0)),
+                }
 
-                    # Totals to return (use floats)
                     loan_totals = {
-                        "ead": float(ead_amount),
-                        "lgd_weighted": float(lgd_rate) * outstanding_balance_f,
+                        "ead": loan_data.ead,
+                        "lgd": lgd,
                         "ecl": ecl_amount
                     }
+
                     return loan_entry, loan_totals
 
                 except Exception as e:
                     print(f"Error processing loan {loan_id}: {str(e)}")
-                    # traceback.print_exc() # Uncomment for detailed debug
-                    return None, None # Indicate failure
+                    return None, None
 
-            # max_workers = min(4, os.cpu_count() or 2) # Fewer workers for B3 plan
             max_workers = max(1, multiprocessing.cpu_count() - 1)
             batch_results = []
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                 batch_results = list(executor.map(process_loan_ecl, loan_batch))
+                batch_results = list(executor.map(process_loan_ecl, loan_batch))
 
-            # Write results to file and update totals
             batch_loan_count = 0
             for loan_entry, loan_totals in batch_results:
-                 if loan_entry and loan_totals:
+                if loan_entry and loan_totals:
                     total_loan_count_actual += 1
                     batch_loan_count += 1
-                    # Update running totals
-                    total_ead_calc += loan_totals["ead"]
-                    total_lgd_weighted_calc += loan_totals["lgd_weighted"]
-                    total_ecl_calc += loan_totals["ecl"]
+                    total_ead_calc += Decimal(str(loan_totals["ead"] or 0))
+                    total_lgd_calc += Decimal(str(loan_totals["lgd"] or 0))
+                    total_ecl_calc += Decimal(str(loan_totals["ecl"] or 0))
 
-                    # Write loan entry to temporary file
                     if not first_loan:
                         temp_file.write(',\n')
                     first_loan = False
-                    # Ensure ensure_ascii=False for broader name compatibility
                     json.dump(loan_entry, temp_file, ensure_ascii=False)
 
             print(f"Finished processing batch {current_batch_num}, {batch_loan_count} loans added. Time: {time.time() - batch_start_time:.2f}s")
             current_mem = process.memory_info().rss / 1024**2
             logging.info(f"[MEM] After batch {current_batch_num}: {current_mem:.2f} MB")
 
-        # --- 4. Finalize JSON File ---
         if temp_file:
-            temp_file.write('\n]') # End JSON array
-            temp_file.close() # IMPORTANT: Close file before iterating
+            temp_file.write('\n]')
+            temp_file.close()
             print(f"Temporary JSON file {temp_file_path} created with {total_loan_count_actual} loans.")
         else:
-             print("Error: Temp file was not created.")
-             raise IOError("Failed to create temporary file for report generation.")
+            print("Error: Temp file was not created.")
+            raise IOError("Failed to create temporary file for report generation.")
 
-        # --- 5. Prepare Summary Data and Generate Excel via Iterator ---
         loans_iterator = StreamingLoanDataIterator(temp_file_path)
-        iterator_len = len(loans_iterator) # Get estimated length
+        iterator_len = len(loans_iterator)
         print(f"Streaming iterator created. Estimated length: {iterator_len}")
         if iterator_len != total_loan_count_actual:
-             print(f"Warning: Iterator length estimate ({iterator_len}) differs from actual processed count ({total_loan_count_actual}). Using actual count.")
+            print(f"Warning: Iterator length estimate ({iterator_len}) differs from actual processed count ({total_loan_count_actual}). Using actual count.")
 
-        # Prepare the summary data dictionary
         report_summary_data = {
             "portfolio_id": portfolio_id,
-            "portfolio_name": portfolio.name, # Add name for convenience
+            "portfolio_name": portfolio.name,
             "report_date": report_date.strftime("%Y-%m-%d"),
             "report_type": "ecl_detailed_report",
             "report_run_date": datetime.now().strftime("%Y-%m-%d"),
             "description": f"ECL Detailed Report for {portfolio.name}",
             "total_ead": total_ead_calc,
-            "total_lgd": total_lgd_weighted_calc, # Pass the correct weighted LGD total
+            "total_lgd": total_lgd_calc,
             "total_ecl": total_ecl_calc,
-            "total_loan_count": total_loan_count_actual # Use the actual count
+            "total_loan_count": total_loan_count_actual
         }
 
-        excel_base64 = None
-        excel_bytes_io = None
         print(f"Generating Excel file for portfolio {portfolio.name} using iterator...")
-        # Load the template (consider write_only=True here if still memory issues)
         wb = load_excel_template("ecl_detailed_report")
-
-        # Call the MODIFIED excel generator function from excel_generator.py
         excel_bytes_io = populate_ecl_detailed_excel(
             wb=wb,
             portfolio_name=portfolio.name,
             report_date=report_date,
-            report_data=report_summary_data, # Pass summary data
-            loans_iterator=loans_iterator,    # Pass the iterator
-            temp_file_path=temp_file_path     # Pass path for cleanup by excel generator
+            report_data=report_summary_data,
+            loans_iterator=loans_iterator,
+            temp_file_path=temp_file_path
         )
-        # NOTE: Temp file cleanup should happen INSIDE populate_ecl_detailed_excel's finally block
 
         excel_base64 = base64.b64encode(excel_bytes_io.getvalue()).decode('utf-8')
-        report_summary_data["file"] = excel_base64 # Add base64 to the data returned to API caller
+        report_summary_data["file"] = excel_base64
         print("Added base64-encoded Excel file to report data")
 
         end_mem = process.memory_info().rss / 1024**2
         logging.info(f"[MEM] End generate_ecl_detailed_report: {end_mem:.2f} MB (Delta: {end_mem - start_mem:.2f} MB)")
         print(f"ECL detailed report generation finished successfully in {time.time() - start_time:.2f} seconds")
-
-        # Return the summary data (including the base64 file)
+        
         return report_summary_data
 
     except Exception as main_e:
-        # Catch errors during file setup, batch processing, or Excel generation call
         print(f"FATAL ERROR during ECL report generation for portfolio {portfolio_id}: {main_e}")
         traceback.print_exc()
-        # Ensure cleanup if temp file was created but Excel generator didn't run/finish
         if temp_file and not temp_file.closed:
-             temp_file.close()
+            temp_file.close()
         if temp_file_path and os.path.exists(temp_file_path):
             try:
-                # Attempt cleanup here if populate_ecl_detailed_excel failed to do it
                 print(f"Attempting cleanup of temp file {temp_file_path} after main error...")
                 os.remove(temp_file_path)
                 print(f"Cleaned up temp file {temp_file_path} after main error.")
             except Exception as cleanup_e:
                 print(f"Error cleaning up temp file {temp_file_path} after main error: {cleanup_e}")
-        # Return an error structure to the caller
         return {"error": f"ECL Detailed Report generation failed: {main_e}"}
-
-
 
 def generate_ecl_report_summarised(
     db: Session, portfolio_id: int, report_date: date

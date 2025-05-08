@@ -4,12 +4,15 @@ from fastapi import (
     HTTPException,
     status,
     Body,
+    BackgroundTasks,
 )
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from datetime import date, datetime
+from uuid import uuid4
 from typing import List, Optional, Dict, Any
 import base64
+import logging
 from io import BytesIO
 from app.database import get_db
 from app.models import Portfolio, User, Report
@@ -31,6 +34,9 @@ from app.utils.report_generators import (
     generate_journal_report,
     generate_report_excel,  # Changed from generate_report_pdf
 )
+from app.utils.reports_factory import (
+    run_and_save_report_task, download_report
+    )
 from app.schemas import (
     ReportTypeEnum,
     ReportBase,
@@ -46,108 +52,47 @@ from app.schemas import (
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
+logger = logging.getLogger(__name__)
+
+
+
 
 @router.post("/{portfolio_id}/generate", status_code=status.HTTP_200_OK)
 async def generate_report(
     portfolio_id: int,
     report_request: ReportRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """
-    Generate a report for a portfolio based on the report type.
-    This endpoint does not save the report to the database.
-    Returns both JSON report data and Excel file as base64.
-    """
-    # Verify portfolio exists and belongs to current user
-    portfolio = (
-        db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id)
-        .first()
-    )
+    filename = f"{report_request.report_type.value}_{uuid4().hex}.xlsx"
+    file_path = f"reports/{filename}"
 
-    if not portfolio:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
-        )
-
-    # Generate the report based on the report type
     try:
-        report_data = None
+        if report_request.report_type not in ["ecl_detailed_report", "ecl_report_summarised_by_stages", "local_impairment_detailed_report", "local_impairment_report_summarised_by_stages", "journals_report"]:
+            return {"error": "Invalid report type."}
 
-
-        if report_request.report_type == ReportTypeEnum.ECL_DETAILED_REPORT:
-            report_data = generate_ecl_detailed_report(
-                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
-            )
-
-        elif report_request.report_type == ReportTypeEnum.ECL_REPORT_SUMMARISED:
-            report_data = generate_ecl_report_summarised(
-                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
-            )
-
-        elif report_request.report_type == ReportTypeEnum.LOCAL_IMPAIRMENT_DETAILS_REPORT:
-            report_data = generate_local_impairment_details_report(
-                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
-            )
-
-        elif report_request.report_type == ReportTypeEnum.LOCAL_IMPAIRMENT_REPORT_SUMMARISED:
-            report_data = generate_local_impairment_report_summarised(
-                db=db, portfolio_id=portfolio_id, report_date=report_request.report_date
-            )
-
-        elif report_request.report_type == ReportTypeEnum.JOURNALS_REPORT:
-            report_data = generate_journal_report(
-                db=db, portfolio_ids=[portfolio_id], report_date=report_request.report_date
-            )
-
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unsupported report type: {report_request.report_type}",
-            )
-
-        # Generate the Excel file from the report data
-        excel_bytes = generate_report_excel(
-            db=db,
-            portfolio_id=portfolio_id,
-            report_type=report_request.report_type.value,
+        # Save metadata
+        report = Report(
+            created_by=current_user.id,  # Assuming current_user has an 'id' attribute
+            report_type=report_request.report_type,
             report_date=report_request.report_date,
-            report_data=report_data,
+            report_name=filename,
+            file_path=file_path,
+            status="pending",
+            portfolio_id=portfolio_id,  # Save the portfolio_id
+            report_data={},  # Initialize report_data (you might populate this later)
         )
 
-        # Encode the Excel file as base64
-        excel_base64 = base64.b64encode(excel_bytes).decode("utf-8")
+        db.add(report)
+        db.commit()
+        db.refresh(report)
 
-        # Create a file name for the Excel file
-        file_name = f"{portfolio.name.replace(' ', '_')}_{report_request.report_type.value}_{report_request.report_date}.xlsx"
-        
-        # Create a human-readable report name based on report type
-        human_readable_name = ""
-        if report_request.report_type == ReportTypeEnum.ECL_DETAILED_REPORT:
-            human_readable_name = f"ECL Detailed Report - {portfolio.name}"
-        elif report_request.report_type == ReportTypeEnum.ECL_REPORT_SUMMARISED:
-            human_readable_name = f"ECL Summarised By Stages Report - {portfolio.name}"
-        elif report_request.report_type == ReportTypeEnum.LOCAL_IMPAIRMENT_DETAILS_REPORT:
-            human_readable_name = f"Local Impairment Detailed Report - {portfolio.name}"
-        elif report_request.report_type == ReportTypeEnum.LOCAL_IMPAIRMENT_REPORT_SUMMARISED:
-            human_readable_name = f"Local Impairment Summarised By Stages Report - {portfolio.name}"
-        elif report_request.report_type == ReportTypeEnum.JOURNALS_REPORT:
-            human_readable_name = f"Journals Report - {portfolio.name}"
-        else:
-            human_readable_name = f"{report_request.report_type.value.replace('_', ' ').title()} - {portfolio.name}"
-        
-    
-    
-        # Return both the data and Excel in the response
-        return {
-            "portfolio_id": portfolio_id,
-            "report_type": report_request.report_type,
-            "report_date": report_request.report_date,
-            "report_name": human_readable_name,  # Add the human-readable name
-            "data": report_data,
-            
-        }
+        # Schedule background task
+        background_tasks.add_task(run_and_save_report_task, report.id, report_request.report_type, file_path, portfolio_id)
+
+
+        return {"message": "Report generation started", "report_id": report.id}
 
     except Exception as e:
         raise HTTPException(
@@ -156,75 +101,7 @@ async def generate_report(
         )
 
 
-@router.post(
-    "/{portfolio_id}/save",
-    response_model=ReportResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-async def save_report(
-    portfolio_id: int,
-    report_data: ReportSaveRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
-):
-    """
-    Save a generated report to the database.
-    """
-    # Verify portfolio exists and belongs to current user
-    portfolio = (
-        db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id)
-        .first()
-    )
 
-    if not portfolio:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
-        )
-
-    try:
-        # Instead of removing the 'file' section, we'll use it if it exists
-        cleaned_report_data = report_data.report_data
-        excel_base64 = None
-        
-        # Extract the base64 Excel file if it exists
-        if isinstance(cleaned_report_data, dict) and "file" in cleaned_report_data:
-            excel_base64 = cleaned_report_data.get("file")
-            
-            # For detailed reports, we don't need to store the full loan list
-            # This saves DB space while keeping the Excel file for download
-            if report_data.report_type in ["ecl_detailed_report", "local_impairment_detailed_report"]:
-                # Remove the loans array to save space
-                if "loans" in cleaned_report_data:
-                    cleaned_report_data = {
-                        k: v for k, v in cleaned_report_data.items() if k != "loans"
-                    }
-                
-                # Keep the file for download
-                cleaned_report_data["file"] = excel_base64
-
-        # Create a new report record
-        new_report = Report(
-            portfolio_id=portfolio_id,
-            report_type=report_data.report_type,
-            report_date=report_data.report_date,
-            report_name=report_data.report_name,
-            report_data=cleaned_report_data,  # Use the cleaned data
-            created_by=current_user.id,
-        )
-
-        db.add(new_report)
-        db.commit()
-        db.refresh(new_report)
-
-        return new_report
-
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error saving report: {str(e)}",
-        )
 
 @router.get("/{portfolio_id}/history", response_model=ReportHistoryList)
 async def get_report_history(
@@ -393,41 +270,22 @@ async def download_report_excel(
         )
 
     try:
-        # Check if we have a stored Excel file in the report data
-        excel_bytes = None
-        if isinstance(report.report_data, dict) and "file" in report.report_data:
-            # Use the stored base64 Excel file
-            try:
-                import base64
-                excel_base64 = report.report_data.get("file")
-                excel_bytes = base64.b64decode(excel_base64)
-            except Exception as e:
-                print(f"Error decoding base64 Excel: {str(e)}")
-                excel_bytes = None
-        
-        # If no stored Excel or error decoding, generate it from the report data
-        if not excel_bytes:
-            # Generate the Excel from the saved report data
-            excel_bytes = generate_report_excel(
-                db=db,
-                portfolio_id=portfolio_id,
-                report_type=report.report_type,
-                report_date=report.report_date,
-                report_data=report.report_data,
-            )
+        download_url = await download_report(report.id, db, current_user)
 
-        # Create a file name for the Excel
-        report_name = f"{portfolio.name.replace(' ', '_')}_{report.report_type}_{report.report_date}.xlsx"
 
-        # Return the Excel as a downloadable file
-        return StreamingResponse(
-            BytesIO(excel_bytes),
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f"attachment; filename={report_name}"},
-        )
+        return download_url
 
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error generating Excel report: {str(e)}",
         )
+
+
+@router.get("/status/{report_id}")
+def get_report_status(report_id: int, db: Session = Depends(get_db)):
+    status = db.query(Report.status).filter(Report.id == report_id).scalar()
+
+    if not status:
+        raise HTTPException(status_code=404, detail="Report generated in earlier versions of IFRS9PRO no report status found")
+    return status
