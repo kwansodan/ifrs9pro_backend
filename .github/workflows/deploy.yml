@@ -29,8 +29,9 @@ jobs:
       - name: 🔌 Add poetry-plugin-export
         run: poetry self add poetry-plugin-export
 
-      - name: 📦 Install dependencies
-        run: poetry install --no-interaction --no-ansi
+      - name: Install dependencies (no root package)
+        run: poetry install --no-root
+
 
       - name: 📝 Export requirements.txt
         run: poetry export -f requirements.txt --output requirements.txt --without-hashes
