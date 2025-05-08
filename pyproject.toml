@@ -98,6 +98,8 @@ watchfiles = "==1.0.4"
 websockets = "==15.0.1"
 yarl = "==1.18.3"
 XlsxWriter = "==3.2.3"
+polars = "^0.20.16"
+
 
 [tool.poetry.dependencies.fastapi-cli]
 version = "==0.0.7"
