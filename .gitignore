@@ -136,6 +136,10 @@ ENV/
 env.bak/
 venv.bak/
 
+client_data_70k.csv
+loan_data_70k.csv
+new_requirements.txt
+
 # Spyder project settings
 .spyderproject
 .spyproject
