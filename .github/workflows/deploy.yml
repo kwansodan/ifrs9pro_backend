@@ -1,31 +1,43 @@
-name: CI/CD with Nix and Poetry
+name: CI/CD to Azure App Service
+
 on:
   push:
     branches:
-      - main  
+      - main  # Adjust if you're using another branch
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout Code
+      - name: 📦 Checkout code
         uses: actions/checkout@v4
-      
-      - name: Install Nix
-        uses: cachix/install-nix-action@v22
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
         with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-      
-      - name: Enter Nix Shell and Install Dependencies
-        run: nix-shell --run "poetry install --no-interaction --no-ansi"
-      
-      # generate requirements.txt from Poetry
-      - name: Generate requirements.txt
-        run: nix-shell --run "poetry export -f requirements.txt --output requirements.txt --without-hashes"
-      
-      - name: Deploy to Azure App Service
+          python-version: '3.12'
+
+      - name: 📜 Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python3 -
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: 🧰 Configure Poetry (no venvs in CI)
+        run: poetry config virtualenvs.create false
+
+      - name: 🔌 Add poetry-plugin-export
+        run: poetry self add poetry-plugin-export
+
+      - name: 📦 Install dependencies
+        run: poetry install --no-interaction --no-ansi
+
+      - name: 📝 Export requirements.txt
+        run: poetry export -f requirements.txt --output requirements.txt --without-hashes
+
+      - name: 📤 Deploy to Azure App Service
         uses: azure/webapps-deploy@v3
         with:
-          app-name: "ifrs9pro"
+          app-name: "ifrs9pro"  # Update this to your App Service name
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: "."
+          package: "."  # Deploys current working directory
