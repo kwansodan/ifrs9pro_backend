@@ -125,9 +125,9 @@ async def create_portfolio(
         funding_source=portfolio.funding_source.value,
         data_source=portfolio.data_source.value,
         repayment_source=portfolio.repayment_source,
-        credit_risk_reserve=portfolio.credit_risk_reserve,
-        loan_assets=portfolio.loan_assets,
-        ecl_impairment_account=portfolio.ecl_impairment_account,
+        # credit_risk_reserve=portfolio.credit_risk_reserve,
+        # loan_assets=portfolio.loan_assets,
+        # ecl_impairment_account=portfolio.ecl_impairment_account,
         user_id=current_user.id,
     )
 
@@ -213,7 +213,7 @@ def get_portfolios(
     return {"items": response_items, "total": total}
 
 @router.get("/{portfolio_id}", response_model=PortfolioWithSummaryResponse)
-def get_portfolio(
+async def get_portfolio(
     portfolio_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -511,20 +511,57 @@ async def update_portfolio(
         bog_staging_config = portfolio_update.bog_staging_config
         
         # Update basic portfolio fields
-        update_data = portfolio_update.dict()
+        update_data = portfolio_update.dict(exclude_unset=True)
+
+         
 
         # Convert enum values to strings
         for field in ["asset_type", "customer_type", "funding_source", "data_source"]:
             if field in update_data and update_data[field]:
                 update_data[field] = update_data[field].value
 
-        # Update fields
+        if "ecl_staging_config" in update_data:
+            if update_data["ecl_staging_config"] is not None:
+                # Convert ECLStagingConfig to dict
+                ecl_config = update_data["ecl_staging_config"]
+                if isinstance(ecl_config, ECLStagingConfig):
+                    # Convert the entire config to a dict
+                    update_data["ecl_staging_config"] = {
+                        "stage_1": ecl_config.stage_1.model_dump(),
+                        "stage_2": ecl_config.stage_2.model_dump(),
+                        "stage_3": ecl_config.stage_3.model_dump()
+                    }
+                logger.info(f"ECL config after serialization: {update_data['ecl_staging_config']}")
+            else:
+                update_data["ecl_staging_config"] = None
+
+        if "bog_staging_config" in update_data:
+            if update_data["bog_staging_config"] is not None:
+                # Convert LocalImpairmentConfig to dict
+                bog_config = update_data["bog_staging_config"]
+                if isinstance(bog_config, LocalImpairmentConfig):
+                    # Convert the entire config to a dict
+                    update_data["bog_staging_config"] = {
+                        "current": bog_config.current.model_dump(),
+                        "olem": bog_config.olem.model_dump(),
+                        "substandard": bog_config.substandard.model_dump(),
+                        "doubtful": bog_config.doubtful.model_dump(),
+                        "loss": bog_config.loss.model_dump()
+                    }
+                logger.info(f"BOG config after serialization: {update_data['bog_staging_config']}")
+            else:
+                update_data["bog_staging_config"] = None
+
+
+
+        # Now update all fields
         for key, value in update_data.items():
             setattr(portfolio, key, value)
-            
+
+        
+
         # Commit the basic update immediately
         db.commit()
-        db.expunge_all()
         logger.info(f"Portfolio {portfolio_id} basic fields updated successfully")
         
         # Check if the portfolio has any data
@@ -551,7 +588,7 @@ async def update_portfolio(
                 # Continue with other operations
         
         # Use the optimized get_portfolio function to return the complete portfolio data
-        return get_portfolio(
+        return await get_portfolio(
             portfolio_id=portfolio_id, 
             db=db, 
             current_user=current_user
