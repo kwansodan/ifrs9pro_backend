@@ -10,6 +10,7 @@ from app.database import get_db, init_db
 from app.routes import auth, portfolio, admin, reports, dashboard, user as user_router, quality_issues, websocket
 from app.models import User, UserRole
 from app.auth.utils import get_password_hash
+from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from datetime import datetime, timedelta
 from app.auth.utils import (
@@ -114,32 +115,9 @@ def get_model():
             return None
     return model
 
-# Commented out prediction endpoint - uncomment when ready
-# @app.get("/predict")
-# def predict_default_probability(year_of_birth: int):
-#     """
-#     Calculate and return the probability of default based on year of birth.
-#     """
-#     try:
-#         model = get_model()  # Lazy load the model
-#         if not model:
-#             raise HTTPException(status_code=503, detail="Model not available")
-#         
-#         # Prepare input for the model
-#         X_new = np.array([[year_of_birth]])
-#         
-#         # Get prediction and probability from model
-#         prediction = model.predict(X_new)[0]
-#         probability = model.predict_proba(X_new)[0][1]  # Probability of default
-#         
-#         return {
-#             "year_of_birth": year_of_birth,
-#             "default_prediction": int(prediction),
-#             "probability_of_default": round(probability, 4)
-#         }
-#     
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
+# Mount the MkDocs static site
+app.mount("/documentation", StaticFiles(directory="user_documentation", html=True), name="documentation")
+
 @app.on_event("startup")
 async def init_db_async():
     """Initialize database tables asynchronously"""
