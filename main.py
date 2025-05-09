@@ -116,7 +116,7 @@ def get_model():
     return model
 
 # Mount the MkDocs static site
-app.mount("/documentation", StaticFiles(directory="user_documentation", html=True), name="documentation")
+app.mount("/documentation", StaticFiles(directory="site", html=True), name="documentation")
 
 @app.on_event("startup")
 async def init_db_async():
