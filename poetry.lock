@@ -3022,6 +3022,18 @@ files = [
 ]
 
 [[package]]
+name = "xlsx2csv"
+version = "0.8.4"
+description = "xlsx to csv converter"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "xlsx2csv-0.8.4-py3-none-any.whl", hash = "sha256:52ab873fc7b2f2ca75d14aee8bd1985a9f5c1bcb3cc7b80df7a5d57a40a67473"},
+    {file = "xlsx2csv-0.8.4.tar.gz", hash = "sha256:2aa809888826f6af5b26c77fc7f613f2bbeada0d8cc09e5a58e0f59684bb6911"},
+]
+
+[[package]]
 name = "xlsxwriter"
 version = "3.2.3"
 description = "A Python module for creating Excel XLSX files."
@@ -3133,4 +3145,4 @@ propcache = ">=0.2.0"
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "af6c9b5f3360e03a61238577e01ecfd334ba86b4c21f18ef82853ebecff7a8d9"
+content-hash = "2239fac99f57ce6a83c58095bee3457e08a92437423e9fd90ae1af7e7d47b58a"

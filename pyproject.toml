@@ -99,6 +99,8 @@ websockets = "==15.0.1"
 yarl = "==1.18.3"
 XlsxWriter = "==3.2.3"
 polars = "^0.20.16"
+xlsx2csv = "^0.8.2"
+
 
 
 [tool.poetry.dependencies.fastapi-cli]
