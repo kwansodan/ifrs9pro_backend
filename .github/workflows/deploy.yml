@@ -35,6 +35,12 @@ jobs:
 
       - name: 📝 Export requirements.txt
         run: poetry export -f requirements.txt --output requirements.txt --without-hashes
+        
+      - name: Install MkDocs
+        run: pip install mkdocs
+
+      - name: Build MkDocs documentation
+        run: mkdocs build
 
       - name: 📤 Deploy to Azure App Service
         uses: azure/webapps-deploy@v3
