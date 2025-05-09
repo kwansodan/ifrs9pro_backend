@@ -297,7 +297,7 @@ async def process_loan_details_with_progress(
             chunk_updated = 0
             if df_update.height > 0:
                 # Process updates in batches
-                batch_size = 1000
+                batch_size = 500
                 for i in range(0, df_update.height, batch_size):
                     batch = df_update.slice(i, min(batch_size, df_update.height - i))
                         
