@@ -786,6 +786,7 @@ def process_ecl_calculation_sync(
     
     db.add(calculation_result)
     db.commit()
+    db.expunge_all()
     
     logger.info(f"ECL calculation completed for portfolio {portfolio_id} in {(datetime.now() - start_time).total_seconds()} seconds")
     
@@ -905,6 +906,7 @@ def process_local_impairment_calculation_sync(
     
     db.add(calculation_result)
     db.commit()
+    db.expunge_all()
     
     logger.info(f"Local impairment calculation completed for portfolio {portfolio_id}")
     

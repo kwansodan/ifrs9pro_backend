@@ -524,6 +524,7 @@ async def update_portfolio(
             
         # Commit the basic update immediately
         db.commit()
+        db.expunge_all()
         logger.info(f"Portfolio {portfolio_id} basic fields updated successfully")
         
         # Check if the portfolio has any data
