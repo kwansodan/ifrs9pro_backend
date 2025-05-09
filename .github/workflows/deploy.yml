@@ -32,7 +32,6 @@ jobs:
       - name: Install dependencies (no root package)
         run: poetry install --no-root
 
-
       - name: 📝 Export requirements.txt
         run: poetry export -f requirements.txt --output requirements.txt --without-hashes
         
