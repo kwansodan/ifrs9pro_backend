@@ -89,7 +89,6 @@ async def update_access_request(
         await send_invitation_email(access_request.email, token)
 
     db.commit()
-    db.expunge_all()
 
     return {"message": "Request updated successfully"}
 
@@ -111,7 +110,6 @@ async def delete_access_request(
     if access_request:
         db.delete(access_request)
         db.commit()
-        db.expunge_all()
     else:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
