@@ -40,7 +40,6 @@ jobs:
         run: pip install mkdocs
 
       - name: Build MkDocs documentation
-        working-directory: ifrs9pro_backend
         run: mkdocs build
 
 
