@@ -12,6 +12,7 @@ from app.models import (
     Loan,
     Guarantee,
     Client,
+    Report,
     Security,
     Portfolio,
     StagingResult,
@@ -87,6 +88,7 @@ async def process_portfolio_ingestion_sync(
             loan_count = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).delete()
             guarantee_count = db.query(Guarantee).filter(Guarantee.portfolio_id == portfolio_id).delete()
             client_count = db.query(Client).filter(Client.portfolio_id == portfolio_id).delete()
+            report_count = db.query(Report).filter(Report.portfolio_id == portfolio_id).delete()
             
             # Commit the deletions
             db.commit()
@@ -95,7 +97,7 @@ async def process_portfolio_ingestion_sync(
             
             # Log the deletion results but don't add to response
             logger.info(f"Data cleared: loans={loan_count}, clients={client_count}, guarantees={guarantee_count}, " +
-                       f"quality_issues={quality_count}, calculation_results={calculation_count}")
+                       f"quality_issues={quality_count}, calculation_results={calculation_count}, reports={report_count}")
             
         except Exception as e:
             logger.error(f"Error clearing existing data: {str(e)}")
