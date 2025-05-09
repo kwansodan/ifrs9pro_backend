@@ -1,5 +1,4 @@
 site_name: IFRS9Pro Docs
-docs_dir: user_documentation
 
 theme:
   name: mkdocs
