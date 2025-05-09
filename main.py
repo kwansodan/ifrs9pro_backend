@@ -80,6 +80,7 @@ async def get_token(
     # Update last login
     user.last_login = datetime.utcnow()
     db.commit()
+    db.expunge_all()
 
     # Create token
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -178,6 +179,7 @@ async def create_admin_user_async():
                     )
                     db.add(admin_user)
                     db.commit()
+                    db.expunge_all()
                     logger.info(f"Admin user created: {admin_email}")
                 except Exception as e:
                     db.rollback()
