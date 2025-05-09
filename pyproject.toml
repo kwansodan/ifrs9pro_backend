@@ -57,7 +57,7 @@ markupsafe = "==3.0.2"
 mdurl = "==0.1.2"
 msrest = "==0.7.1"
 multidict = "==6.1.0"
-numpy = "==2.2.3"
+numpy = "^1.26.4"
 oauthlib = "==3.2.2"
 openpyxl = "==3.1.5"
 packaging = "==24.2"
@@ -100,6 +100,7 @@ yarl = "==1.18.3"
 XlsxWriter = "==3.2.3"
 polars = "^0.20.16"
 xlsx2csv = "^0.8.2"
+pyarrow = "^15.0.2" 
 
 
 
