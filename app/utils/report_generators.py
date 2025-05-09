@@ -1115,7 +1115,7 @@ def generate_ecl_detailed_report(
         total_loan_count_db = db.query(func.count(Loan.id)).filter(Loan.portfolio_id == portfolio_id).scalar() or 0
         print(f"Database reports {total_loan_count_db} loans to process.")
 
-        batch_size = 2000
+        batch_size = 500
         num_batches = (total_loan_count_db + batch_size - 1) // batch_size if total_loan_count_db > 0 else 0
         print(f"Processing {num_batches} batches of up to {batch_size} loans each.")
 
@@ -1448,7 +1448,7 @@ def generate_local_impairment_details_report(
         total_loan_count_db = db.query(func.count(Loan.id)).filter(Loan.portfolio_id == portfolio_id).scalar() or 0
         print(f"Database reports {total_loan_count_db} loans to process.")
 
-        batch_size = 2000
+        batch_size = 500
         num_batches = (total_loan_count_db + batch_size - 1) // batch_size if total_loan_count_db > 0 else 0
         print(f"Processing {num_batches} batches of up to {batch_size} loans each.")
 

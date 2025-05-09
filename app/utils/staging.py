@@ -57,7 +57,7 @@ async def stage_loans_ecl_orm(portfolio_id: int, db: Session) -> Dict[str, Any]:
         timestamp = datetime.now()
         
         # Use batch processing to reduce memory usage
-        batch_size = 5000
+        batch_size = 500
         offset = 0
         
         
@@ -147,7 +147,7 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, db: Session) -> Di
         timestamp = datetime.now()
         
         # Use batch processing to reduce memory usage
-        batch_size = 5000
+        batch_size = 500
         offset = 0
         
         
