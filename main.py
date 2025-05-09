@@ -80,7 +80,6 @@ async def get_token(
     # Update last login
     user.last_login = datetime.utcnow()
     db.commit()
-    db.expunge_all()
 
     # Create token
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
