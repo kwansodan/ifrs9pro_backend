@@ -1,0 +1,18 @@
+site_name: IFRS9Pro Docs
+theme:
+  name: material
+  logo: assets/logo.png
+  favicon: assets/favicon.ico
+  palette:
+    primary: blue
+    accent: light blue
+nav:
+  - Overview: index.md
+
+  - Usage Guide:
+      - Users and authentication: authentication.md
+      # - Dashboard: dashboard.md
+      - Portfolios: portfolios.md
+      # - Feedback: feedback.md
+
+  # - FAQ: faq.md
