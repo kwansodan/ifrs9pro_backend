@@ -40,7 +40,9 @@ jobs:
         run: pip install mkdocs
 
       - name: Build MkDocs documentation
+        working-directory: ifrs9pro_backend
         run: mkdocs build
+
 
       - name: 📤 Deploy to Azure App Service
         uses: azure/webapps-deploy@v3
