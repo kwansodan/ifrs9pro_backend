@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from typing import List, Dict, Optional, Union
 import pandas as pd
 import io
+from sqlalchemy.orm.attributes import flag_modified
 from app.database import get_db
 from app.models import Portfolio, User
 from app.auth.utils import get_current_active_user
@@ -513,84 +514,61 @@ async def update_portfolio(
         # Update basic portfolio fields
         update_data = portfolio_update.dict(exclude_unset=True)
 
-         
-
         # Convert enum values to strings
         for field in ["asset_type", "customer_type", "funding_source", "data_source"]:
             if field in update_data and update_data[field]:
                 update_data[field] = update_data[field].value
 
         if "ecl_staging_config" in update_data:
-            if update_data["ecl_staging_config"] is not None:
-                # Convert ECLStagingConfig to dict
-                ecl_config = update_data["ecl_staging_config"]
-                if isinstance(ecl_config, ECLStagingConfig):
-                    # Convert the entire config to a dict
-                    update_data["ecl_staging_config"] = {
-                        "stage_1": ecl_config.stage_1.model_dump(),
-                        "stage_2": ecl_config.stage_2.model_dump(),
-                        "stage_3": ecl_config.stage_3.model_dump()
-                    }
-                logger.info(f"ECL config after serialization: {update_data['ecl_staging_config']}")
+            if update_data["ecl_staging_config"]:
+                update_data["ecl_staging_config"] = update_data["ecl_staging_config"].model_dump()
             else:
                 update_data["ecl_staging_config"] = None
 
         if "bog_staging_config" in update_data:
-            if update_data["bog_staging_config"] is not None:
-                # Convert LocalImpairmentConfig to dict
-                bog_config = update_data["bog_staging_config"]
-                if isinstance(bog_config, LocalImpairmentConfig):
-                    # Convert the entire config to a dict
-                    update_data["bog_staging_config"] = {
-                        "current": bog_config.current.model_dump(),
-                        "olem": bog_config.olem.model_dump(),
-                        "substandard": bog_config.substandard.model_dump(),
-                        "doubtful": bog_config.doubtful.model_dump(),
-                        "loss": bog_config.loss.model_dump()
-                    }
-                logger.info(f"BOG config after serialization: {update_data['bog_staging_config']}")
+            if update_data["bog_staging_config"]:
+                update_data["bog_staging_config"] = update_data["bog_staging_config"].model_dump()
             else:
                 update_data["bog_staging_config"] = None
-
-
 
         # Now update all fields
         for key, value in update_data.items():
             setattr(portfolio, key, value)
 
-        
+        # Flag JSON fields as modified so SQLAlchemy persists the changes
+        if "ecl_staging_config" in update_data:
+            flag_modified(portfolio, "ecl_staging_config")
+
+        if "bog_staging_config" in update_data:
+            flag_modified(portfolio, "bog_staging_config")
 
         # Commit the basic update immediately
         db.commit()
         logger.info(f"Portfolio {portfolio_id} basic fields updated successfully")
-        
+
         # Check if the portfolio has any data
         has_data = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).limit(1).count() > 0
-        
+
         # Process ECL staging config if provided
         if ecl_staging_config and has_data:
             try:
                 await stage_loans_ecl_orm(portfolio_id, db)
                 logger.info(f"ECL staging completed for portfolio {portfolio_id}")
-
             except Exception as e:
                 logger.error(f"Error during ECL staging: {str(e)}")
-                # Continue with other operations
-        
+
         # Process local impairment staging config if provided
         if bog_staging_config and has_data:
             try:
-                stage_loans_local_impairment_orm(portfolio_id,db)
+                stage_loans_local_impairment_orm(portfolio_id, db)
                 logger.info(f"Local impairment staging completed for portfolio {portfolio_id}")
-                
             except Exception as e:
                 logger.error(f"Error during local impairment staging: {str(e)}")
-                # Continue with other operations
-        
+
         # Use the optimized get_portfolio function to return the complete portfolio data
         return await get_portfolio(
-            portfolio_id=portfolio_id, 
-            db=db, 
+            portfolio_id=portfolio_id,
+            db=db,
             current_user=current_user
         )
 
@@ -601,6 +579,7 @@ async def update_portfolio(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update portfolio: {str(e)}"
         )
+
 
     
 @router.delete("/{portfolio_id}", status_code=status.HTTP_204_NO_CONTENT)

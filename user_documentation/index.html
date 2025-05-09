@@ -1,0 +1,579 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+      
+      
+        <link rel="next" href="authentication/">
+      
+      
+      <link rel="icon" href="assets/favicon.ico">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.12">
+    
+    
+      
+        <title>IFRS9Pro Docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="assets/stylesheets/main.2afb09e1.min.css">
+      
+        
+        <link rel="stylesheet" href="assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL(".",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="blue" data-md-color-accent="light-blue">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#welcome-to-ifrs9pro-by-service-4" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="." title="IFRS9Pro Docs" class="md-header__button md-logo" aria-label="IFRS9Pro Docs" data-md-component="logo">
+      
+  <img src="assets/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            IFRS9Pro Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Overview
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="." title="IFRS9Pro Docs" class="md-nav__button md-logo" aria-label="IFRS9Pro Docs" data-md-component="logo">
+      
+  <img src="assets/logo.png" alt="logo">
+
+    </a>
+    IFRS9Pro Docs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Overview
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="." class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    Overview
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#ifrs-9-expected-credit-loss-ecl-automation-tool" class="md-nav__link">
+    <span class="md-ellipsis">
+      IFRS 9 Expected Credit Loss (ECL) Automation Tool
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Usage Guide
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            Usage Guide
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Users and authentication
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="portfolios/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Portfolios
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#ifrs-9-expected-credit-loss-ecl-automation-tool" class="md-nav__link">
+    <span class="md-ellipsis">
+      IFRS 9 Expected Credit Loss (ECL) Automation Tool
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="welcome-to-ifrs9pro-by-service-4">Welcome to IFRS9Pro by Service 4</h1>
+<h2 id="ifrs-9-expected-credit-loss-ecl-automation-tool">IFRS 9 Expected Credit Loss (ECL) Automation Tool</h2>
+<h1 id="overview">Overview</h1>
+<p>This tool automates Expected Credit Loss (ECL) computation in compliance with IFRS 9 Financial Instruments. The system is designed to help financial institutions, including banks and microfinance institutions, calculate and report impairment losses on financial assets. The tool specifically aligns with the Bank of Ghana’s regulatory requirements, ensuring compliance with local supervisory expectations while maintaining international accounting standards.
+The application is built as a data-driven, predictive risk assessment tool, leveraging statistical models (Logistic Regression, etc ) and Probability of Default (PD) estimations to classify loans into IFRS 9’s three-stage model. The system offers robust data ingestion, processing, and reporting functionalities, with integration capabilities for banking systems.</p>
+<hr />
+<h1 id="key-features-functionalities">Key Features &amp; Functionalities</h1>
+<h3 id="1-loan-classification-into-ifrs-9-stages">1. Loan Classification into IFRS 9 Stages</h3>
+<p>The system automatically classifies financial assets into the three IFRS 9 stages based on pre-defined triggers:</p>
+<ul>
+<li>
+<p><code>Stage 1</code>: Performing Loans – 12-month ECL applied.</p>
+</li>
+<li>
+<p><code>Stage 2</code>: Underperforming Loans – Lifetime ECL applied due to a significant increase in credit risk (SICR).</p>
+</li>
+<li>
+<p><code>Stage 3</code>: Credit-Impaired Loans – Lifetime ECL applied for defaulted loans.</p>
+</li>
+</ul>
+<p>Triggers Used for Classification:</p>
+<ul>
+<li>
+<p><code>Quantitative</code>: Probability of Default (PD) increase thresholds.</p>
+</li>
+<li>
+<p><code>Qualitative</code>: Borrower financial distress, industry downturns, or internal watchlist.</p>
+</li>
+<li>
+<p><code>Backstop (DPD-based)</code>: 30+ days past due → Stage 2, 90+ days past due → Stage 3 (default).</p>
+</li>
+</ul>
+<hr />
+<h3 id="2-probability-of-default-pd-credit-risk-modeling">2. Probability of Default (PD) &amp; Credit Risk Modeling</h3>
+<p>The application leverages Logistic Regression models to predict the Probability of Default (PD) for each loan.
+* PDs are calculated at both 12-month and lifetime horizons.</p>
+<ul>
+<li>
+<p>Adjustments for forward-looking macroeconomic factors, such as GDP growth, inflation, and interest rate movements, using economic scenario weightings.</p>
+</li>
+<li>
+<p>Segmentation of loan portfolios based on borrower characteristics and risk profiles.</p>
+</li>
+</ul>
+<hr />
+<h3 id="3-exposure-at-default-ead-loss-given-default-lgd-calculation">3. Exposure at Default (EAD) &amp; Loss Given Default (LGD) Calculation</h3>
+<ul>
+<li>EAD: Captures the expected loan balance at default, considering repayment schedules, accumulated arrears, and any planned future drawdowns.</li>
+<li>LGD: Estimates potential recoveries using EAD as starting point and adjusting for accumulated arrears, collateral values, and workout strategies.</li>
+</ul>
+<p>Final ECL is computed as:
+ECL=PD×LGD×EADECL = PD \times LGD \times EAD</p>
+<hr />
+<h3 id="4-compliance-with-bank-of-ghanas-impairment-framework">4. Compliance with Bank of Ghana’s Impairment Framework</h3>
+<ul>
+<li>
+<p>The system integrates Bank of Ghana’s guidelines on loan loss provisioning to ensure compliance with both IFRS 9 and local regulatory frameworks.</p>
+</li>
+<li>
+<p>Incorporates the Prudential Classification &amp; Provisioning (PCP) framework, aligning regulatory provisions with IFRS 9 impairment methodology.</p>
+</li>
+<li>
+<p>Dual reporting approach:</p>
+</li>
+</ul>
+<p>IFRS 9-based ECL computations.
+Bank of Ghana-specific provisioning adjustments (where applicable).</p>
+<hr />
+<h3 id="5-data-integration-api-connectivity">5. Data Integration &amp; API Connectivity</h3>
+<ul>
+<li>
+<p>Seamless data ingestion from Core Banking Systems (CBS), Accounting Software, and Loan Management Systems via APIs.</p>
+</li>
+<li>
+<p>Ability to upload and process historical loan data for predictive modeling.</p>
+</li>
+</ul>
+<hr />
+<h3 id="6-automated-financial-reporting-dashboards">6. Automated Financial Reporting &amp; Dashboards</h3>
+<ul>
+<li>
+<p>IFRS 9-compliant ECL reports for financial statements.</p>
+</li>
+<li>
+<p>Regulatory impairment reports tailored to Bank of Ghana’s submission requirements.</p>
+</li>
+<li>
+<p>Customizable dashboards with loan staging distribution, PD heatmaps, and impairment trends.</p>
+</li>
+</ul>
+<hr />
+<h1 id="business-impact-value-proposition">Business Impact &amp; Value Proposition</h1>
+<h3 id="1-enhanced-credit-risk-management">1. Enhanced Credit Risk Management</h3>
+<ul>
+<li>Predictive risk assessment using data-driven PD modeling.</li>
+<li>Timely classification of loans, reducing financial statement volatility.</li>
+</ul>
+<h3 id="2-compliance-regulatory-alignment">2. Compliance &amp; Regulatory Alignment</h3>
+<ul>
+<li>Full IFRS 9 compliance with robust staging and ECL calculations.</li>
+<li>Meets Bank of Ghana’s reporting and provisioning requirements.</li>
+</ul>
+<h3 id="3-operational-efficiency">3. Operational Efficiency</h3>
+<ul>
+<li>Eliminates manual calculations, reducing errors.</li>
+<li>Automated ECL computation saves time and ensures consistency.</li>
+</ul>
+<h3 id="4-customizable-scalable-solution">4. Customizable &amp; Scalable Solution</h3>
+<ul>
+<li>Adaptable to different financial institutions, from microfinance firms to large banks.</li>
+<li>Scalable architecture allows integration with multiple banking systems.</li>
+</ul>
+<hr />
+<h1 id="takeaway">Takeaway</h1>
+<p>This IFRS 9 ECL Automation tool is a cutting-edge risk management solution, designed to help financial institutions accurately calculate impairments, stay compliant with both international and local regulations, and make data-driven credit decisions. With its predictive modeling capabilities, real-time integration, and robust reporting, the system provides a comprehensive tool for financial institutions seeking to streamline ECL calculations and credit risk assessment.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": ".", "features": [], "search": "assets/javascripts/workers/search.f8cc74c7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="assets/javascripts/bundle.c8b220af.min.js"></script>
+      
+    
+  </body>
+</html>
