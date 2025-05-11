@@ -283,15 +283,13 @@ def run_and_save_report_task(report_id: int, report_type: str, file_path: str, p
 
 
 
-blob_service_client = BlobServiceClient.from_connection_string(
-    conn_str=settings.AZURE_STORAGE_CONNECTION_STRING
-)
+
 
 async def generate_sas_url(blob_url: str, expiry_minutes: int = 10) -> str:
+    blob_service_client = BlobServiceClient.from_connection_string(conn_str=settings.AZURE_STORAGE_CONNECTION_STRING)
     parsed = urlparse(blob_url)
     container_client = blob_service_client.get_container_client(settings.CONTAINER_NAME)
-    blob_name = parsed.path.lstrip('/').split('/', 1)[1]
-
+    blob_name = parsed.path.lstrip('/').split('/', 1)[1]        
 
     sas = generate_blob_sas(
         account_name=settings.AZURE_STORAGE_ACCOUNT_NAME,
@@ -301,7 +299,6 @@ async def generate_sas_url(blob_url: str, expiry_minutes: int = 10) -> str:
         permission=BlobSasPermissions(read=True),
         expiry=datetime.utcnow() + timedelta(minutes=expiry_minutes)
     )
-
     return f"{blob_url}?{sas}"
 
 async def download_report(report_id: int, db: Session, current_user: User):
