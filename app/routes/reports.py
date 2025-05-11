@@ -35,7 +35,7 @@ from app.utils.report_generators import (
     generate_report_excel,  # Changed from generate_report_pdf
 )
 from app.utils.reports_factory import (
-    run_and_save_report_task, download_report
+    run_and_save_report_task, download_report, generate_sas_url
     )
 from app.schemas import (
     ReportTypeEnum,
@@ -270,10 +270,12 @@ async def download_report_excel(
         )
 
     try:
-        download_url = await download_report(report.id, db, current_user)
+        signed_url = await generate_sas_url(report.file_path)
+        return {"download_url": signed_url}
 
 
-        return download_url
+
+        
 
     except Exception as e:
         raise HTTPException(

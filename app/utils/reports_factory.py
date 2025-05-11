@@ -6,7 +6,7 @@ from app.auth.utils import get_current_active_user
 import pandas as pd
 from io import BytesIO
 import logging
-
+import requests
 from app.database import get_db
 from app.models import Loan, User, Report, Portfolio
 from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
@@ -283,23 +283,30 @@ def run_and_save_report_task(report_id: int, report_type: str, file_path: str, p
 
 
 
-def generate_sas_url(blob_url: str, expiry_minutes: int = 10) -> str:
-    parsed = urlparse(blob_url)
-    blob_name = parsed.path.lstrip(f"/{container_client}/")
+blob_service_client = BlobServiceClient.from_connection_string(
+    conn_str=settings.AZURE_STORAGE_CONNECTION_STRING
+)
 
-    
+async def generate_sas_url(blob_url: str, expiry_minutes: int = 10) -> str:
+    parsed = urlparse(blob_url)
+    container_client = blob_service_client.get_container_client(settings.CONTAINER_NAME)
+    blob_name = parsed.path.lstrip('/').split('/', 1)[1]
+    # blob_name = parsed.path.lstrip(f"/{container_client.container_name}/")
+
+    # Extract the account key from connection string manually
+    conn_dict = dict(item.split("=", 1) for item in settings.AZURE_STORAGE_CONNECTION_STRING.split(";") if "=" in item)
+    account_key = conn_dict.get("AccountKey")
 
     sas = generate_blob_sas(
-        account_name=blob_service_client.account_name,
-        container_name=container_client,
+        account_name='ifrs9pro',
+        container_name='ifrs9prouploads',
         blob_name=blob_name,
+        account_key='hEESy0KOVa0uzWEd5QHu1ibH2VqBsROiuW2niL0s5RcpOpTV4N4RerG8ETv00wiMAOV4CwnhWEQ7+AStjOmRQQ==',
         permission=BlobSasPermissions(read=True),
         expiry=datetime.utcnow() + timedelta(minutes=expiry_minutes)
     )
 
     return f"{blob_url}?{sas}"
-
-
 
 async def download_report(report_id: int, db: Session, current_user: User):
     report = db.query(Report).filter_by(id=report_id, created_by=current_user.id).first()
@@ -308,6 +315,14 @@ async def download_report(report_id: int, db: Session, current_user: User):
     if report.status != "success":
         raise HTTPException(status_code=400, detail=f"Report is {report.status}")
 
-    # Generate signed download URL
-    signed_url = generate_sas_url(report.file_path)
-    return {"download_url": signed_url}
+    # # Generate signed download URL
+    # signed_url = generate_sas_url(report.file_path)
+    # return {"download_url": signed_url}
+
+        # Get the SAS URL for the report file
+    signed_url = await generate_sas_url(report.file_path)
+
+    # Use the SAS URL to download the file
+    response = requests.get(signed_url, stream=True)
+
+    return response
