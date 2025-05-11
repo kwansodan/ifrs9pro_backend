@@ -291,11 +291,7 @@ async def generate_sas_url(blob_url: str, expiry_minutes: int = 10) -> str:
     parsed = urlparse(blob_url)
     container_client = blob_service_client.get_container_client(settings.CONTAINER_NAME)
     blob_name = parsed.path.lstrip('/').split('/', 1)[1]
-    # blob_name = parsed.path.lstrip(f"/{container_client.container_name}/")
 
-    # Extract the account key from connection string manually
-    conn_dict = dict(item.split("=", 1) for item in settings.AZURE_STORAGE_CONNECTION_STRING.split(";") if "=" in item)
-    account_key = conn_dict.get("AccountKey")
 
     sas = generate_blob_sas(
         account_name=settings.AZURE_STORAGE_ACCOUNT_NAME,
