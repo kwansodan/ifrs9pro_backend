@@ -298,10 +298,10 @@ async def generate_sas_url(blob_url: str, expiry_minutes: int = 10) -> str:
     account_key = conn_dict.get("AccountKey")
 
     sas = generate_blob_sas(
-        account_name='ifrs9pro',
-        container_name='ifrs9prouploads',
+        account_name=settings.AZURE_STORAGE_ACCOUNT_NAME,
+        container_name=settings.CONTAINER_NAME,
         blob_name=blob_name,
-        account_key='hEESy0KOVa0uzWEd5QHu1ibH2VqBsROiuW2niL0s5RcpOpTV4N4RerG8ETv00wiMAOV4CwnhWEQ7+AStjOmRQQ==',
+        account_key=settings.AZURE_STORAGE_ACCOUNT_KEY,
         permission=BlobSasPermissions(read=True),
         expiry=datetime.utcnow() + timedelta(minutes=expiry_minutes)
     )
