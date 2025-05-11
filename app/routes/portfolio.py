@@ -22,7 +22,6 @@ from pydantic import BaseModel
 from typing import List, Dict, Optional, Union
 import pandas as pd
 import io
-from sqlalchemy.orm.attributes import flag_modified
 from app.database import get_db
 from app.models import Portfolio, User
 from app.auth.utils import get_current_active_user
@@ -507,9 +506,7 @@ async def update_portfolio(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
             )
 
-        # Extract configs for processing
-        ecl_staging_config = portfolio_update.ecl_staging_config 
-        bog_staging_config = portfolio_update.bog_staging_config
+        
         
         # Update basic portfolio fields
         update_data = portfolio_update.dict(exclude_unset=True)
@@ -519,56 +516,57 @@ async def update_portfolio(
             if field in update_data and update_data[field]:
                 update_data[field] = update_data[field].value
 
-        if "ecl_staging_config" in update_data:
-            if update_data["ecl_staging_config"]:
-                update_data["ecl_staging_config"] = update_data["ecl_staging_config"].model_dump()
-            else:
-                update_data["ecl_staging_config"] = None
-
-        if "bog_staging_config" in update_data:
-            if update_data["bog_staging_config"]:
-                update_data["bog_staging_config"] = update_data["bog_staging_config"].model_dump()
-            else:
-                update_data["bog_staging_config"] = None
-
-        # Now update all fields
+        # Update fields
         for key, value in update_data.items():
             setattr(portfolio, key, value)
-
-        # Flag JSON fields as modified so SQLAlchemy persists the changes
-        if "ecl_staging_config" in update_data:
-            flag_modified(portfolio, "ecl_staging_config")
-
-        if "bog_staging_config" in update_data:
-            flag_modified(portfolio, "bog_staging_config")
-
+            
         # Commit the basic update immediately
         db.commit()
         logger.info(f"Portfolio {portfolio_id} basic fields updated successfully")
-
+        
         # Check if the portfolio has any data
         has_data = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).limit(1).count() > 0
+        
+        # Extract configs for processing
+        ecl_staging_config = portfolio_update.ecl_staging_config 
+        bog_staging_config = portfolio_update.bog_staging_config
+                # Process ECL staging config if provided
+        if "ecl_staging_config" in portfolio_update:
+            ecl_staging_config = portfolio_update.ecl_staging_config
+            if ecl_staging_config:
+                if "ecl_staging_config" in ecl_staging_config:
+                    if ecl_staging_config["ecl_staging_config"]:
+                        # If config is provided, serialize it
+                        ecl_staging_config["ecl_staging_config"] = ecl_staging_config["ecl_staging_config"].model_dump()
+                    else:
+                        # If config is None, set it to None
+                        ecl_staging_config["ecl_staging_config"] = None
 
-        # Process ECL staging config if provided
-        if ecl_staging_config and has_data:
-            try:
-                await stage_loans_ecl_orm(portfolio_id, db)
-                logger.info(f"ECL staging completed for portfolio {portfolio_id}")
-            except Exception as e:
-                logger.error(f"Error during ECL staging: {str(e)}")
+                    # Update the database
+                    portfolio.ecl_staging_config = ecl_staging_config["ecl_staging_config"]
+                    db.commit()
 
-        # Process local impairment staging config if provided
-        if bog_staging_config and has_data:
-            try:
-                stage_loans_local_impairment_orm(portfolio_id, db)
-                logger.info(f"Local impairment staging completed for portfolio {portfolio_id}")
-            except Exception as e:
-                logger.error(f"Error during local impairment staging: {str(e)}")
+        if "bog_staging_config" in portfolio_update:
+            bog_staging_config = portfolio_update.bog_staging_config
+            if bog_staging_config:
+                if "bog_staging_config" in bog_staging_config:
+                    if bog_staging_config["bog_staging_config"]:
+                        # If config is provided, serialize it
+                        bog_staging_config["bog_staging_config"] = bog_staging_config["bog_staging_config"].model_dump()
+                    else:
+                        # If config is None, set it to None
+                        bog_staging_config["bog_staging_config"] = None
 
+                    # Update the database
+                    portfolio.bog_staging_config = bog_staging_config["bog_staging_config"]
+                    db.commit()
+
+                # Continue with other operations
+        
         # Use the optimized get_portfolio function to return the complete portfolio data
         return await get_portfolio(
-            portfolio_id=portfolio_id,
-            db=db,
+            portfolio_id=portfolio_id, 
+            db=db, 
             current_user=current_user
         )
 
@@ -579,7 +577,6 @@ async def update_portfolio(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update portfolio: {str(e)}"
         )
-
 
     
 @router.delete("/{portfolio_id}", status_code=status.HTTP_204_NO_CONTENT)
