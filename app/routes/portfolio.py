@@ -651,13 +651,13 @@ async def ingest_portfolio_data(
         )
     
     # Process files synchronously
-    result = await process_portfolio_ingestion_sync(
+    result = await start_background_ingestion(
         portfolio_id= portfolio_id,
-        loan_details_content= await loan_details.read(),
-        client_data_content= await client_data.read(),
-        loan_guarantee_data_content=await loan_guarantee_data.read() if loan_guarantee_data else None,
-        loan_collateral_data_content=await loan_collateral_data.read() if loan_collateral_data else None,
-        db=db
+        loan_details= loan_details,
+        client_data= client_data,
+        loan_guarantee_data=loan_guarantee_data if loan_guarantee_data else None,
+        loan_collateral_data= loan_collateral_data if loan_collateral_data else None,
+        # db=db
     )
     
     # Check for errors in any component of the result

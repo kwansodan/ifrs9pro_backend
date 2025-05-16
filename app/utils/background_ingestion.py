@@ -50,11 +50,16 @@ logger = logging.getLogger(__name__)
 
 
 async def process_portfolio_ingestion_sync(
+    task_id: str,
     portfolio_id: int,
-    loan_details_content: Optional[bytes] = None,
-    client_data_content: Optional[bytes] = None,
-    loan_guarantee_data_content: Optional[bytes] = None,
-    loan_collateral_data_content: Optional[bytes] = None,
+    loan_details_content: bytes = None,
+    loan_details_filename: str = None,
+    client_data_content: bytes = None,
+    client_data_filename: str = None,
+    loan_guarantee_data_content: bytes = None,
+    loan_guarantee_data_filename: str = None,
+    loan_collateral_data_content: bytes = None,
+    loan_collateral_data_filename: str = None,
     db: Session = None
 ) -> Dict[str, Any]:
     """
@@ -276,7 +281,8 @@ async def start_background_ingestion(
         task_type="portfolio_ingestion",
         description=f"Ingesting data for portfolio {portfolio_id}"
     )
-    
+    import threading
+
     # Read file contents immediately to prevent file closure issues
     loan_details_content = None
     loan_details_filename = None
@@ -317,7 +323,7 @@ async def start_background_ingestion(
             loop.run_until_complete(
                 run_background_task(
                     task_id,
-                    process_portfolio_ingestion,
+                    process_portfolio_ingestion_sync,
                     portfolio_id=portfolio_id,
                     loan_details_content=loan_details_content,
                     loan_details_filename=loan_details_filename,
