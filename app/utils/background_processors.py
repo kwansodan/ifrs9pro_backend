@@ -74,7 +74,190 @@ async def process_loan_details_with_progress(
             "recovery rate": "recovery_rate",
             "deduction status": "deduction_status"
         }
+                # Read file content as Excel file
+        try:
+            # Read Excel file
+            if isinstance(file_content, io.BytesIO):
+                content = file_content
+            else:
+                content = file_content
+                
+            df = pl.read_excel(content)
+            logger.info(f"Successfully read Excel file with {df.height} rows")
+        except Exception as excel_error:
+            logger.error(f"Failed to read Excel file: {str(excel_error)}")
+            raise ValueError(f"Unable to read Excel file: {str(excel_error)}")
         
+        # Convert column names to lowercase for case-insensitive matching
+        df.columns = [col.lower() for col in df.columns]
+        
+        # Map columns to target names
+        rename_dict = {}
+        for source, target in target_columns.items():
+            if source in df.columns:
+                rename_dict[source] = target
+        
+        # Rename columns
+        if rename_dict:
+            df = df.rename(rename_dict)
+        
+        # Check if required columns are present
+        required_columns = ["loan_no", "employee_id", "loan_amount", "outstanding_loan_balance"]
+        column_display_names = {
+            "loan_no": "Loan No.",
+            "employee_id": "Employee Id",
+            "loan_amount": "Loan Amount",
+            "outstanding_loan_balance": "Outstanding Loan Balance"
+        }
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        
+        if missing_columns:
+            # Convert to user-friendly column names
+            readable_missing_columns = [column_display_names.get(col, col) for col in missing_columns]
+            logger.error(f"Missing required columns: {readable_missing_columns}")
+            return {"error": f"Missing required columns: {readable_missing_columns}"}
+        
+        # Special handling for period columns in 'MMMYYYY' format
+        period_columns = ["deduction_start_period", "submission_period", "maturity_period"]
+        from calendar import monthrange
+        import re
+        import pandas as pd
+        month_abbr_map = {abbr.upper(): num for num, abbr in enumerate(['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])}
+        for col in period_columns:
+            if col in df.columns:
+                # Convert Polars to Series for easier string ops, then back
+                s = df[col].to_pandas()
+                def mmyyyy_to_eom(val):
+                    if isinstance(val, str) and re.match(r"^[A-Za-z]{3}\d{4}$", val.strip()):
+                        try:
+                            month = month_abbr_map[val[:3].upper()]
+                            year = int(val[3:])
+                            last_day = monthrange(year, month)[1]
+                            return pd.Timestamp(year=year, month=month, day=last_day)
+                        except Exception:
+                            return None
+                    return None
+                # Convert to pd.Timestamp, then to string YYYY-MM-DD, then to Polars Date
+                s = s.apply(mmyyyy_to_eom)
+                s = s.dt.strftime("%Y-%m-%d")
+                df = df.with_columns(
+                    pl.Series(col, s).str.strptime(pl.Date, "%Y-%m-%d", strict=False)
+                )
+        
+        # Convert date columns - process all at once for better performance
+        date_columns = ["loan_issue_date", "date_of_birth"]  # Only non-period columns
+        date_cols_in_df = [col for col in date_columns if col in df.columns]
+        
+        if date_cols_in_df:
+            try:
+                # First strip any leading/trailing quotes from date strings
+                for col in date_cols_in_df:
+                    if col in df.columns:
+                        # Force cast to string for reliable parsing
+                        df = df.with_columns(
+                            pl.col(col).cast(pl.Utf8).str.replace_all("^['\"]|['\"]$", "").alias(col)
+                        )
+                        if col == "loan_issue_date":
+                            logger.info(f"loan_issue_date dtype before parsing: {df[col].dtype}")
+                            logger.info(f"loan_issue_date sample: {df[col].head(5).to_list()}")
+                # Try multiple date formats in sequence, prioritizing '%Y-%m-%d'
+                date_formats = ["%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%d-%m-%Y", "%m-%d-%Y"]
+                for date_format in date_formats:
+                    try:
+                        # Attempt parsing
+                        new_cols = [pl.col(col).str.strptime(pl.Date, date_format, strict=False) for col in date_cols_in_df]
+                        temp_df = df.with_columns(new_cols)
+                        # Check if at least one value was parsed (not all null)
+                        any_parsed = False
+                        for col in date_cols_in_df:
+                            if temp_df[col].null_count() < df.height:
+                                any_parsed = True
+                                break
+                        if any_parsed:
+                            df = temp_df
+                            logger.info(f"Successfully parsed dates using format: {date_format}")
+                            break  # Only break if parsing succeeded
+                    except Exception as e:
+                        logger.debug(f"Failed to parse dates with format {date_format}: {str(e)}")
+                        continue
+                
+                # If still not parsed, try the default Polars date parsing as fallback
+                for col in date_cols_in_df:
+                    if df[col].dtype != pl.Date:
+                        df = df.with_columns(pl.col(col).cast(pl.Date, strict=False))
+                        
+            except Exception as e:
+                logger.warning(f"Failed to convert date columns: {str(e)}")
+                # Fall back to individual column processing with multiple formats
+                for col in date_cols_in_df:
+                    try:
+                        # First strip quotes
+                        df = df.with_columns(
+                            pl.col(col).cast(pl.Utf8).str.replace_all("^['\"]|['\"]$", "").alias(col)
+                        )
+                        
+                        # Try each format
+                        for date_format in date_formats:
+                            try:
+                                df = df.with_columns(
+                                    pl.col(col).str.strptime(pl.Date, date_format, strict=False).alias(col)
+                                )
+                                break  # Stop if successful
+                            except:
+                                continue
+                                
+                        # If still not parsed, try the default as fallback
+                        if df[col].dtype != pl.Date:
+                            df = df.with_columns(pl.col(col).cast(pl.Date, strict=False))
+                            
+                    except Exception as e:
+                        logger.warning(f"Failed to convert {col} to date: {str(e)}")
+        
+        # Convert numeric columns - process all at once for better performance
+        numeric_columns = [
+            "loan_amount", "loan_term", "administrative_fees", "total_interest", 
+            "total_collectible", "net_loan_amount", "monthly_installment", 
+            "principal_due", "interest_due", "total_due", "principal_paid", 
+            "interest_paid", "total_paid", "principal_paid2", "interest_paid2", 
+            "total_paid2", "outstanding_principal", "outstanding_interest", 
+            "outstanding_loan_balance", "days_in_arrears", "ndia", "recovery_rate",
+            "accumulated_arrears", "prevailing_posted_repayment", 
+            "prevailing_due_payment", "current_missed_deduction", "admin_charge"
+        ]
+        
+        numeric_cols_in_df = [col for col in numeric_columns if col in df.columns]
+        if numeric_cols_in_df:
+            try:
+                # Process all numeric columns at once - fixed string operations
+                df = df.with_columns([
+                    pl.col(col).cast(pl.Float64, strict=False).fill_null(0.0) for col in numeric_cols_in_df
+                ])
+            except Exception as e:
+                logger.warning(f"Failed to convert numeric columns: {str(e)}")
+                # Fall back to individual column processing
+                for col in numeric_cols_in_df:
+                    try:
+                        df = df.with_columns(
+                            pl.col(col).cast(pl.Float64, strict=False).fill_null(0.0)
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to convert {col} to numeric: {str(e)}")
+        
+        # Convert boolean columns - process all at once
+        bool_columns = ["paid", "cancelled"]
+        bool_cols_in_df = [col for col in bool_columns if col in df.columns]
+        bool_values = ["Yes", "TRUE", "True", "true", "1", "Y", "y"]
+        
+        if bool_cols_in_df:
+            try:
+                # Fixed boolean conversion
+                for col in bool_cols_in_df:
+                    df = df.with_columns(
+                        pl.col(col).cast(pl.Utf8).is_in(bool_values).fill_null(False).alias(col)
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to convert boolean columns: {str(e)}")
+     
         # Update task status
         task_manager.update_task(task_id, status_message="Checking existing loans")
         

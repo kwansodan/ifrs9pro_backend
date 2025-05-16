@@ -259,6 +259,7 @@ def get_task_manager():
     return _task_manager_instance
 
 # Function to run a task in the background
+
 async def run_background_task(task_id: str, func, *args, **kwargs):
     """
     Run a function as a background task with progress tracking.

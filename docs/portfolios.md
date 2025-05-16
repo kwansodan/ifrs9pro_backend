@@ -15,6 +15,9 @@ Read information below for guidance on maintaining and running a portfolio!.
 ## Ingesting data
 
 1. Click Ingest data and follow steps to ingest data. Data to be ingested are Loan details, customer details, collateral details, and guarantee data.
+> **Note on data ingestion:** The data ingestion feature also automatically stages all the loans based on staging configuratoin provided at porfolio setup. So loan staging would have been completed by the end of the ingestion process. In addition the data ingestion process also automatically reviews loan and customer data for data integrity. It searches for duplicate customers, customer data not matching loan details, duplicate features in the customer data suggesting duplicate customers, etc
+
+
 
 ## Reviewing Ingested data
 
