@@ -13,7 +13,7 @@ from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
 from app.config import settings
 from azure.storage.blob import generate_blob_sas, BlobSasPermissions
 from datetime import datetime, timedelta, date
-from urllib.parse import urlparse
+import urllib.parse as parse
 from sqlalchemy.orm import Session
 
 
@@ -285,13 +285,67 @@ def run_and_save_report_task(report_id: int, report_type: str, file_path: str, p
 
 
 
-async def generate_sas_url(blob_url: str, expiry_minutes: int = 10) -> str:
-    blob_service_client = BlobServiceClient.from_connection_string(conn_str=settings.AZURE_STORAGE_CONNECTION_STRING)
-    parsed = urlparse(blob_url)
-    container_client = blob_service_client.get_container_client(settings.CONTAINER_NAME)
-    blob_name = parsed.path.lstrip('/').split('/', 1)[1]        
+# async def generate_sas_url(blob_url: str, expiry_minutes: int = 10) -> str:
+#     blob_service_client = BlobServiceClient.from_connection_string(conn_str=settings.AZURE_STORAGE_CONNECTION_STRING)
+#     parsed = urlparse(blob_url)
+#     path_parts = parsed.path.lstrip('/').split('/')
+#     container_name_from_url = path_parts[0]
+#     blob_name = '/'.join(path_parts[1:])  # Correct blob name extraction
 
-    sas = generate_blob_sas(
+#     container_client = blob_service_client.get_container_client(settings.CONTAINER_NAME)
+#     # blob_name = parsed.path.lstrip('/').split('/', 1)[1]  
+#     # blob_name = '/'.join(path_parts[1:])  # Correct blob name extraction
+#     # container_name_from_url = blob_name[0]
+
+#     # Ensure container name matches settings.CONTAINER_NAME
+#     if container_name_from_url != settings.CONTAINER_NAME:
+#         raise ValueError("Container name mismatch in URL")      
+
+#     sas = generate_blob_sas(
+#         account_name=settings.AZURE_STORAGE_ACCOUNT_NAME,
+#         container_name=settings.CONTAINER_NAME,
+#         blob_name=blob_name,
+#         account_key=settings.AZURE_STORAGE_ACCOUNT_KEY,
+#         permission=BlobSasPermissions(read=True),
+#         expiry=datetime.utcnow() + timedelta(minutes=expiry_minutes)
+#     )
+#     return f"{blob_url}?{sas}"
+
+# async def download_report(report_id: int, db: Session, current_user: User):
+#     report = db.query(Report).filter_by(id=report_id, created_by=current_user.id).first()
+#     if not report:
+#         raise HTTPException(status_code=404, detail="Report not found")
+#     if report.status != "success":
+#         raise HTTPException(status_code=400, detail=f"Report is {report.status}")
+
+#     # # Generate signed download URL
+#     # signed_url = generate_sas_url(report.file_path)
+#     # return {"download_url": signed_url}
+
+#         # Get the SAS URL for the report file
+#     signed_url = await generate_sas_url(report.file_path)
+
+#     # Use the SAS URL to download the file
+#     response = requests.get(signed_url, stream=True)
+
+#     return response
+
+
+async def generate_sas_url(blob_url: str, expiry_minutes: int = 10) -> str:
+    # Parse the blob URL to extract container and blob name
+    parsed_url = parse.urlparse(blob_url)
+    path_parts = parsed_url.path.lstrip('/').split('/')
+    
+    # Validate container name matches expected configuration
+    container_name = path_parts[0]
+    if container_name != settings.CONTAINER_NAME:
+        raise ValueError(f"Invalid container name: {container_name}")
+    
+    # Extract blob name from path
+    blob_name = '/'.join(path_parts[1:])  # Handles nested directories
+    
+    # Generate SAS token
+    sas_token = generate_blob_sas(
         account_name=settings.AZURE_STORAGE_ACCOUNT_NAME,
         container_name=settings.CONTAINER_NAME,
         blob_name=blob_name,
@@ -299,23 +353,6 @@ async def generate_sas_url(blob_url: str, expiry_minutes: int = 10) -> str:
         permission=BlobSasPermissions(read=True),
         expiry=datetime.utcnow() + timedelta(minutes=expiry_minutes)
     )
-    return f"{blob_url}?{sas}"
-
-async def download_report(report_id: int, db: Session, current_user: User):
-    report = db.query(Report).filter_by(id=report_id, created_by=current_user.id).first()
-    if not report:
-        raise HTTPException(status_code=404, detail="Report not found")
-    if report.status != "success":
-        raise HTTPException(status_code=400, detail=f"Report is {report.status}")
-
-    # # Generate signed download URL
-    # signed_url = generate_sas_url(report.file_path)
-    # return {"download_url": signed_url}
-
-        # Get the SAS URL for the report file
-    signed_url = await generate_sas_url(report.file_path)
-
-    # Use the SAS URL to download the file
-    response = requests.get(signed_url, stream=True)
-
-    return response
+    
+    # Return full URL with SAS token
+    return f"{blob_url}?{sas_token}"
