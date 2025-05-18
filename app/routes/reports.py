@@ -35,7 +35,7 @@ from app.utils.report_generators import (
     generate_report_excel,  # Changed from generate_report_pdf
 )
 from app.utils.reports_factory import (
-    run_and_save_report_task, download_report, generate_sas_url
+    run_and_save_report_task, generate_sas_url
     )
 from app.schemas import (
     ReportTypeEnum,
@@ -241,11 +241,7 @@ async def download_report_excel(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """
-    Download a saved report as Excel.
-    Returns a streaming response with the Excel file for download.
-    """
-    # Verify portfolio exists and belongs to current user
+   
     portfolio = (
         db.query(Portfolio)
         .filter(Portfolio.id == portfolio_id)
