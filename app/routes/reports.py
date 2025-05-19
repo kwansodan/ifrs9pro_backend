@@ -37,6 +37,7 @@ from app.utils.report_generators import (
 from app.utils.reports_factory import (
     run_and_save_report_task, generate_sas_url
     )
+from app.config import settings
 from app.schemas import (
     ReportTypeEnum,
     ReportBase,
@@ -266,8 +267,9 @@ async def download_report_excel(
         )
 
     try:
-        signed_url = await generate_sas_url(report.file_path)
-        return {"download_url": signed_url}
+
+        return {"download_url": report.file_path}
+
 
 
 
