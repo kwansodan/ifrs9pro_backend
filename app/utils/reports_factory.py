@@ -70,7 +70,7 @@ def run_and_save_report_task(report_id: int, report_type: str, file_path: str, p
                     worksheet.write(7, col, h, workbook.add_format({'bold': True, 'align': 'left'}))
 
                 query = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).yield_per(1000)
-                row_idx = 1
+                row_idx = start_row+1
 
                 for row in query:
                     worksheet.write(row_idx, 0, row.loan_no)
@@ -107,7 +107,7 @@ def run_and_save_report_task(report_id: int, report_type: str, file_path: str, p
                     worksheet.write(start_row, col, h, workbook.add_format({'bold': True, 'align': 'center'}))
 
                 query = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).yield_per(1000)
-                row_idx = 1
+                row_idx = start_row+1
 
                 for row in query:
                     worksheet.write(row_idx, 0, row.loan_no)
@@ -142,7 +142,7 @@ def run_and_save_report_task(report_id: int, report_type: str, file_path: str, p
 
                 query = db.query( Loan.ifrs9_stage.label("stage"), func.sum(Loan.loan_amount).label("loan_value"), func.sum(Loan.ead).label("outstanding_loan_balance"), func.sum(Loan.final_ecl).label("ecl"), cast(0.20, Numeric(5, 2)).label("recovery_rate")  # Fixed 20% for all
                  ) .filter(Loan.portfolio_id == portfolio_id) .group_by(Loan.ifrs9_stage) .order_by(Loan.ifrs9_stage) .all() 
-                row_idx = 1
+                row_idx = start_row+1
 
                 for row in query:
                     worksheet.write(row_idx, 0, row.stage)
@@ -171,7 +171,7 @@ def run_and_save_report_task(report_id: int, report_type: str, file_path: str, p
 
                 query = db.query( Loan.bog_stage.label("stage"), func.sum(Loan.loan_amount).label("loan_value"), func.sum(Loan.ead).label("outstanding_loan_balance"), func.sum(Loan.bog_provision).label("provision"), cast(0.20, Numeric(5, 2)).label("recovery_rate")  # Fixed 20% for all
                  ) .filter(Loan.portfolio_id == portfolio_id) .group_by(Loan.ifrs9_stage) .order_by(Loan.ifrs9_stage) .all() 
-                row_idx = 1
+                row_idx = start_row+1
 
                 for row in query:
                     worksheet.write(row_idx, 0, row.stage)
