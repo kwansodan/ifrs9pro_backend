@@ -32,52 +32,61 @@ async def process_loan_details_sync(file_content, portfolio_id, db):
         df = pl.read_excel(file_content)
         logger.info(f"Successfully read Excel file with {df.height} rows")
 
+        # Normalize columns: strip whitespace, lowercase, remove periods
+        def normalize_column(col: str) -> str:
+            return col.strip().lower().replace(".", "").replace(" ", "_")
+
+        df.columns = [normalize_column(col) for col in df.columns]
+        logger.info(f"Normalized columns: {df.columns}")
+
+
         # Convert column names to lowercase for case-insensitive matching
-        df.columns = [col.lower() for col in df.columns]
-        logger.info(f"Successfully lower-cased columns")
+        # df.columns = [col.lower() for col in df.columns]
+        # logger.info(f"Successfully lower-cased columns")
 
         # Normalize column names
         target_columns = {
-            "loan no": "loan_no",
-            "employee id": "employee_id",
-            "employee name": "employee_name",
+            "loan_no": "loan_no",
+            "employee_id": "employee_id",
+            "employee_name": "employee_name",
             "employer": "employer",
-            "loan issue date": "loan_issue_date",
-            "deduction start period": "deduction_start_period",
-            "submission period": "submission_period",
-            "maturity period": "maturity_period",
-            "location code": "location_code",
-            "dalex paddy": "dalex_paddy",
-            "team leader": "team_leader",
-            "loan type": "loan_type",
-            "loan amount": "loan_amount",
-            "loan term": "loan_term",
-            "administrative fees": "administrative_fees",
-            "total interest": "total_interest",
-            "total collectible": "total_collectible",
-            "net loan amount": "net_loan_amount",
-            "monthly installment": "monthly_installment",
-            "principal due": "principal_due",
-            "interest due": "interest_due",
-            "total due": "total_due",
-            "principal paid": "principal_paid",
-            "interest paid": "interest_paid",
-            "total paid": "total_paid",
-            "principal paid2": "principal_paid2",
-            "interest paid2": "interest_paid2",
-            "total paid2": "total_paid2",
+            "loan_issue_date": "loan_issue_date",
+            "deduction_start_period": "deduction_start_period",
+            "submission_period": "submission_period",
+            "maturity_period": "maturity_period",
+            "location_code": "location_code",
+            "dalex_paddy": "dalex_paddy",
+            "team_leader": "team_leader",
+            "loan_type": "loan_type",
+            "loan_amount": "loan_amount",
+            "loan_term": "loan_term",
+            "administrative_fees": "administrative_fees",
+            "total_interest": "total_interest",
+            "total_collectible": "total_collectible",
+            "net_loan_amount": "net_loan_amount",
+            "monthly_installment": "monthly_installment",
+            "principal_due": "principal_due",
+            "interest_due": "interest_due",
+            "total_due": "total_due",
+            "principal_paid": "principal_paid",
+            "interest_paid": "interest_paid",
+            "total_paid": "total_paid",
+            "principal_paid2": "principal_paid2",
+            "interest_paid2": "interest_paid2",
+            "total_paid2": "total_paid2",
             "paid": "paid",
             "cancelled": "cancelled",
-            "outstanding loan balance": "outstanding_loan_balance",
-            "accumulated arrears": "accumulated_arrears",
+            "outstanding_loan_balance": "outstanding_loan_balance",
+            "accumulated_arrears": "accumulated_arrears",
             "ndia": "ndia",
-            "prevailing posted repayment": "prevailing_posted_repayment",
-            "prevailing due payment": "prevailing_due_payment",
-            "current missed deduction": "current_missed_deduction",
-            "admin charge": "admin_charge",
-            "recovery rate": "recovery_rate",
-            "deduction status": "deduction_status"
+            "prevailing_posted_repayment": "prevailing_posted_repayment",
+            "prevailing_due_payment": "prevailing_due_payment",
+            "current_missed_deduction": "current_missed_deduction",
+            "admin_charge": "admin_charge",
+            "recovery_rate": "recovery_rate",
+            "deduction_status": "deduction_status"
         }
+
 
         # Rename columns
         # df = df.rename(target_columns)
@@ -95,16 +104,18 @@ async def process_loan_details_sync(file_content, portfolio_id, db):
         if rename_dict:
             df = df.rename(rename_dict)
 
+
         logger.info(f"Columns after renaming: {df.columns}")
         
         # Check if required columns are present
         required_columns = ["loan_no", "employee_id", "loan_amount", "outstanding_loan_balance"]
         column_display_names = {
-            "loan_no": "Loan No.",
-            "employee_id": "Employee Id",
-            "loan_amount": "Loan Amount",
-            "outstanding_loan_balance": "Outstanding Loan Balance"
-        }
+        "loan_no": "Loan No.",
+        "employee_id": "Employee ID",
+        "loan_amount": "Loan Amount",
+        "outstanding_loan_balance": "Outstanding Loan Balance"
+    }
+
         missing_columns = [col for col in required_columns if col not in df.columns]
         
         if missing_columns:
@@ -413,7 +424,13 @@ async def process_client_data_sync(file_content, portfolio_id, db):
             "next of kin": "next_of_kin",
             "next of kin contact": "next_of_kin_contact",
             "next of kin address": "next_of_kin_address",
-            "client type": "client_type"
+            "client type": "client_type",
+            "client phone no.": "phone_number",
+            "previous employee no.": "previous_employee_no",
+            "social security no.": "social_security_no",
+            "voters id no.": "voters_id_no",
+            "next of kin contact:": "next_of_kin_contact",
+
         }
         
         # Read file content as Excel file
@@ -426,6 +443,12 @@ async def process_client_data_sync(file_content, portfolio_id, db):
                 
             # Read with polars
             df = pl.read_excel(content)
+            string_cols = ["phone number", "client phone no.", "phone no.", "client phone number"]
+            for col in string_cols:
+                if col in df.columns:
+                    df = df.with_columns(pl.col(col).cast(pl.Utf8))
+            # df = pl.read_excel(content, dtypes={"Client Phone No.": pl.Utf8})
+
             logger.info(f"Successfully read Excel file with polars, found {df.height} rows")
         except Exception as excel_error:
             logger.error(f"Failed to read Excel file: {str(excel_error)}")
