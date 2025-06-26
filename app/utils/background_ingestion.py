@@ -33,6 +33,7 @@ from app.utils.sync_processors import (
     
 )
 
+from app.utils.process_email_notifyer import send_ingestion_success_email, send_ingestion_failed_email
 from app.utils.processors import process_loan_guarantees, process_collateral_data
 from app.utils.background_calculations import (
     process_ecl_calculation_sync,
@@ -60,7 +61,10 @@ async def process_portfolio_ingestion_sync(
     loan_guarantee_data_filename: str = None,
     loan_collateral_data_content: bytes = None,
     loan_collateral_data_filename: str = None,
-    db: Session = None
+    db: Session = None,
+    first_name:str = None,
+    user_email:str = None,
+    uploaded_filenames:str = None,
 ) -> Dict[str, Any]:
     """
     Process portfolio data ingestion synchronously.
@@ -257,11 +261,15 @@ async def process_portfolio_ingestion_sync(
         
     except Exception as e:
         logger.error(f"Error in portfolio ingestion: {str(e)}")
+        await send_ingestion_failed_email(user_email, first_name, portfolio_id, uploaded_filenames, cc_emails=["support@service4gh.com"])
         return {
             "status": "error",
             "error": str(e),
             "portfolio_id": portfolio_id
         }
+
+    finally:
+        await send_ingestion_success_email(user_email, first_name, portfolio_id, uploaded_filenames, cc_emails=["support@service4gh.com"])
 
 async def start_background_ingestion(
     portfolio_id: int,
@@ -269,7 +277,9 @@ async def start_background_ingestion(
     client_data: Optional[UploadFile] = None,
     loan_guarantee_data: Optional[UploadFile] = None,
     loan_collateral_data: Optional[UploadFile] = None,
-    db: Session = None
+    db: Session = None,
+    first_name: str = None,
+    user_email: str = None,
 ) -> str:
     """
     Start a background task for portfolio data ingestion.
@@ -293,21 +303,26 @@ async def start_background_ingestion(
     loan_collateral_data_content = None
     loan_collateral_data_filename = None
     
+    uploaded_filenames = []
     if loan_details:
         loan_details_content = await loan_details.read()
         loan_details_filename = loan_details.filename
+        uploaded_filenames.append(loan_details_filename)
     
     if client_data:
         client_data_content = await client_data.read()
         client_data_filename = client_data.filename
+        uploaded_filenames.append(client_data_filename)
     
     if loan_guarantee_data:
         loan_guarantee_data_content = await loan_guarantee_data.read()
         loan_guarantee_data_filename = loan_guarantee_data.filename
+        uploaded_filenames.append(loan_guarantee_data_filename)
     
     if loan_collateral_data:
         loan_collateral_data_content = await loan_collateral_data.read()
         loan_collateral_data_filename = loan_collateral_data.filename
+        uploaded_filenames.append(loan_collateral_data_filename)
     
     # Define a function to run the background task in a separate thread
     def run_task_in_thread():
@@ -333,7 +348,10 @@ async def start_background_ingestion(
                     loan_guarantee_data_filename=loan_guarantee_data_filename,
                     loan_collateral_data_content=loan_collateral_data_content,
                     loan_collateral_data_filename=loan_collateral_data_filename,
-                    db=thread_db
+                    db=thread_db,
+                    first_name=first_name,
+                    user_email=user_email,
+                    uploaded_filenames=uploaded_filenames
                 )
             )
             
@@ -346,6 +364,7 @@ async def start_background_ingestion(
             logger.exception(f"Error in background task thread: {e}")
             get_task_manager().mark_as_failed(task_id, str(e))
         finally:
+            
             # Close the database session
             thread_db.close()
             loop.close()
