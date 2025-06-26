@@ -30,21 +30,17 @@ async def process_loan_details_sync(file_content, portfolio_id, db):
     try:
         # Read and preprocess Excel data (assumed done earlier)
         df = pl.read_excel(file_content)
-        logger.info(f"Successfully read Excel file with {df.height} rows")
+        logger.info(f"Successfully read uploaded excel file for loan details. {df.height} rows identified")
 
-        # Normalize columns: strip whitespace, lowercase, remove periods
+        # Function for normalizing columns: strip whitespace, lowercase, remove periods
         def normalize_column(col: str) -> str:
             return col.strip().lower().replace(".", "").replace(" ", "_")
 
         df.columns = [normalize_column(col) for col in df.columns]
-        logger.info(f"Normalized columns: {df.columns}")
+        logger.info(f"Finished normalizing the following columns: {df.columns}")
 
 
-        # Convert column names to lowercase for case-insensitive matching
-        # df.columns = [col.lower() for col in df.columns]
-        # logger.info(f"Successfully lower-cased columns")
-
-        # Normalize column names
+        # mapping excel column names to feature_names used in this app
         target_columns = {
             "loan_no": "loan_no",
             "employee_id": "employee_id",
@@ -88,11 +84,6 @@ async def process_loan_details_sync(file_content, portfolio_id, db):
         }
 
 
-        # Rename columns
-        # df = df.rename(target_columns)
-
-
-        
         
         # Map columns to target names
         rename_dict = {}
@@ -279,8 +270,9 @@ async def process_loan_details_sync(file_content, portfolio_id, db):
             logger.error(f"Error clearing existing loans: {str(e)}")
             return {"error": str(e)}
 
-        # Use COPY unless too large
-        use_copy = df.height < 50000
+        
+        # use_copy = df.height <= 50000
+        use_copy = df.height > 1 # this line ensures to always use copy
 
         try:
             connection = db.connection().connection
@@ -338,59 +330,59 @@ async def process_loan_details_sync(file_content, portfolio_id, db):
             logger.warning(f"COPY failed: {str(copy_error)} — falling back to bulk_save_objects")
 
         # fallback to ORM
-        try:
-            batch_size = 10000
-            offset = 0
-            processed_total = 0
+        # try:
+        #     batch_size = 10000
+        #     offset = 0
+        #     processed_total = 0
 
-            while True:
-                batch_df = df.slice(offset, batch_size)
-                if batch_df.height == 0:
-                    break
+        #     while True:
+        #         batch_df = df.slice(offset, batch_size)
+        #         if batch_df.height == 0:
+        #             break
 
-                records = batch_df.to_dicts()
-                numeric_cols_in_df = [
-                    "loan_amount", "loan_term", "administrative_fees", "total_interest",
-                    "total_collectible", "net_loan_amount", "monthly_installment",
-                    "principal_due", "interest_due", "total_due", "principal_paid",
-                    "interest_paid", "total_paid", "principal_paid2", "interest_paid2",
-                    "total_paid2", "outstanding_loan_balance", "accumulated_arrears",
-                    "ndia", "prevailing_posted_repayment", "prevailing_due_payment",
-                    "current_missed_deduction", "admin_charge", "recovery_rate"
-                ]
-                required_not_null = ["loan_no", "employee_id", "loan_amount"]
-                loans = []
-                for record in records:
-                    try:
-                        for col in required_not_null:
-                            if col not in record or record[col] in [None, ""]:
-                                if col in numeric_cols_in_df:
-                                    record[col] = decimal.Decimal("0")
-                                else:
-                                    record[col] = "UNKNOWN"
-                        for col in numeric_cols_in_df:
-                            if col in record:
-                                if record[col] is None:
-                                    record[col] = decimal.Decimal("0")
-                                else:
-                                    record[col] = decimal.Decimal(str(record[col]))
-                        loan = Loan(**{k: v for k, v in record.items() if k in Loan.__table__.columns.keys()})
-                        loans.append(loan)
-                    except Exception as e:
-                        logger.warning(f"Loan skipped due to error: {str(e)}")
+        #         records = batch_df.to_dicts()
+        #         numeric_cols_in_df = [
+        #             "loan_amount", "loan_term", "administrative_fees", "total_interest",
+        #             "total_collectible", "net_loan_amount", "monthly_installment",
+        #             "principal_due", "interest_due", "total_due", "principal_paid",
+        #             "interest_paid", "total_paid", "principal_paid2", "interest_paid2",
+        #             "total_paid2", "outstanding_loan_balance", "accumulated_arrears",
+        #             "ndia", "prevailing_posted_repayment", "prevailing_due_payment",
+        #             "current_missed_deduction", "admin_charge", "recovery_rate"
+        #         ]
+        #         required_not_null = ["loan_no", "employee_id", "loan_amount"]
+        #         loans = []
+        #         for record in records:
+        #             try:
+        #                 for col in required_not_null:
+        #                     if col not in record or record[col] in [None, ""]:
+        #                         if col in numeric_cols_in_df:
+        #                             record[col] = decimal.Decimal("0")
+        #                         else:
+        #                             record[col] = "UNKNOWN"
+        #                 for col in numeric_cols_in_df:
+        #                     if col in record:
+        #                         if record[col] is None:
+        #                             record[col] = decimal.Decimal("0")
+        #                         else:
+        #                             record[col] = decimal.Decimal(str(record[col]))
+        #                 loan = Loan(**{k: v for k, v in record.items() if k in Loan.__table__.columns.keys()})
+        #                 loans.append(loan)
+        #             except Exception as e:
+        #                 logger.warning(f"Loan skipped due to error: {str(e)}")
 
-                db.bulk_save_objects(loans)
-                db.commit()
-                processed_total += len(loans)
-                offset += batch_size
+        #         db.bulk_save_objects(loans)
+        #         db.commit()
+        #         processed_total += len(loans)
+        #         offset += batch_size
 
-            logger.info(f"Inserted {processed_total} loans with bulk_save_objects")
-            return {"processed": processed_total, "success": True, "message": f"Successfully processed {processed_total} loan records"}
+        #     logger.info(f"Inserted {processed_total} loans with bulk_save_objects")
+        #     return {"processed": processed_total, "success": True, "message": f"Successfully processed {processed_total} loan records"}
 
-        except Exception as final_error:
-            db.rollback()
-            logger.error(f"Final fallback insert failed: {str(final_error)}")
-            return {"error": str(final_error)}
+        # except Exception as final_error:
+        #     db.rollback()
+        #     logger.error(f"Final fallback insert failed: {str(final_error)}")
+        #     return {"error": str(final_error)}
 
     except Exception as e:
         db.rollback()

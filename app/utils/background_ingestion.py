@@ -98,11 +98,11 @@ async def process_portfolio_ingestion_sync(
             # Commit the deletions
             db.commit()
             
-            logger.info(f"Cleared existing data: {loan_count} loans, {client_count} clients, {guarantee_count} guarantees")
+            # logger.info(f"Cleared existing data: {loan_count} loans, {client_count} clients, {guarantee_count} guarantees")
             
             # Log the deletion results but don't add to response
-            logger.info(f"Data cleared: loans={loan_count}, clients={client_count}, guarantees={guarantee_count}, " +
-                       f"quality_issues={quality_count}, calculation_results={calculation_count}, reports={report_count}")
+            logger.info(f"The following previously held data in the current portfolio cleared: Loans:{loan_count}, Clients:{client_count}, Loan guarantees:{guarantee_count}, " +
+                       f"Quality_issues:{quality_count}, Calculation_results:{calculation_count}, Generated reports:{report_count}")
             
         except Exception as e:
             logger.error(f"Error clearing existing data: {str(e)}")
@@ -124,7 +124,7 @@ async def process_portfolio_ingestion_sync(
         # Process loan details if provided
         if loan_details_content:
             try:
-                logger.info(f"Processing loan details for portfolio {portfolio_id}")
+                logger.info(f"Processing loan details for portfolio no {portfolio_id}")
                 
                 # Create BytesIO object from content
                 loan_details_io = io.BytesIO(loan_details_content)
@@ -137,12 +137,12 @@ async def process_portfolio_ingestion_sync(
                 results["details"]["loan_details"] = loan_results
                 results["files_processed"] += 1
                 
-                logger.info(f"Processed {loan_results.get('processed', 0)} loan records")
+                logger.info(f"Successfully cleaned and stored {loan_results.get('processed', 0)} loan records")
                 
             except Exception as e:
-                logger.error(f"Error processing loan details: {str(e)}")
+                logger.error(f"Error encountered while attempting to clean and store loan details: {str(e)}")
                 results["details"]["loan_details"] = {"error": str(e)}
-                results["errors"] = results.get("errors", []) + [f"Error processing loan details: {str(e)}"]
+                results["errors"] = results.get("errors", []) + [f"Error encountered while attempting to clean and store loan details: {str(e)}"]
         
         # Process client data if provided
         if client_data_content:
