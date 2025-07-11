@@ -599,8 +599,15 @@ def delete_portfolio(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
 
-    db.delete(portfolio)
-    db.commit()
+    try:
+        db.delete(portfolio)
+        db.commit()
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio deletion failed"
+        ) 
+
 
     return None
 

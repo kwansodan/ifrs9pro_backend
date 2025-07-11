@@ -111,13 +111,13 @@ class Portfolio(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     user = relationship("User", back_populates="portfolios")
-    loans = relationship("Loan", back_populates="portfolio")
-    clients = relationship("Client", back_populates="portfolio")
-    guarantees = relationship("Guarantee", back_populates="portfolio")
-    quality_issues = relationship("QualityIssue", back_populates="portfolio", cascade="all, delete-orphan")
-    reports = relationship("Report", back_populates="portfolio", cascade="all, delete-orphan")
-    staging_results = relationship("StagingResult", back_populates="portfolio", cascade="all, delete-orphan")
-    calculation_results = relationship("CalculationResult", back_populates="portfolio", cascade="all, delete-orphan")
+    loans = relationship("Loan", back_populates="portfolio", passive_deletes=True)
+    clients = relationship("Client", back_populates="portfolio", passive_deletes=True)
+    guarantees = relationship("Guarantee", back_populates="portfolio", passive_deletes=True)
+    quality_issues = relationship("QualityIssue", back_populates="portfolio", passive_deletes=True)
+    reports = relationship("Report", back_populates="portfolio", passive_deletes=True)
+    staging_results = relationship("StagingResult", back_populates="portfolio", passive_deletes=True)
+    calculation_results = relationship("CalculationResult", back_populates="portfolio", passive_deletes=True)
     ecl_staging_config = Column(JSON, nullable=True)  # Store the configuration used for staging
     bog_staging_config = Column(JSON, nullable=True)  # Store the configuration used for staging
 
@@ -157,7 +157,7 @@ class Client(Base):
     __tablename__ = "clients"
 
     id = Column(Integer, primary_key=True, index=True)
-    portfolio_id = Column(Integer, ForeignKey("portfolios.id"), nullable=False)
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete='CASCADE'), nullable=False)
     employee_id = Column(String, nullable=True)
     last_name = Column(String, nullable=True, index=True)
     other_names = Column(String, nullable=True)
@@ -204,7 +204,7 @@ class Loan(Base):
     __tablename__ = "loans"
 
     id = Column(Integer, primary_key=True, index=True)
-    portfolio_id = Column(Integer, ForeignKey("portfolios.id"))
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id",ondelete='CASCADE'))
     loan_no = Column(String, index=True, nullable=True) 
     employee_id = Column(String, nullable=True)
     employee_name = Column(String, nullable=True)
@@ -266,7 +266,7 @@ class Loan(Base):
 class Guarantee(Base):
     __tablename__ = "guarantees"
     id = Column(Integer, primary_key=True, index=True)
-    portfolio_id = Column(Integer, ForeignKey("portfolios.id"), nullable=True)
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete='CASCADE'), nullable=True)
     guarantor = Column(String, nullable=False)
     pledged_amount = Column(Float, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
