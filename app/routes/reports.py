@@ -227,10 +227,14 @@ async def delete_report(
         )
 
     # Delete the report
-    db.delete(report)
-    db.commit()
+    try:
+        db.delete(report)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        db.commit()
+        raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
 
-    return None
 
 
 @router.get(

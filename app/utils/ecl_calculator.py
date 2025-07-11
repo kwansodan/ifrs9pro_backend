@@ -25,32 +25,32 @@ def calculate_effective_interest_rate_lender(loan_amount, administrative_fees, l
             rate -= npv / derivative
             if abs(npv) < 1e-6:
                 return rate
-        return None #failed to converge
+        return 0.00 #failed to converge
 
     if submission_period and maturity_period < report_date: #loans matured before reporting date
         try:
             monthly_rate = irr(cash_flows)
             if monthly_rate is None:
-                return None
+                return 0.00
             annual_rate = monthly_rate * 12
             return round((annual_rate),2)
 
         except (TypeError, ValueError, ZeroDivisionError):
-            return None  # Handle potential errors
+            return 0.00  # Handle potential errors
 
 
 
     elif submission_period and maturity_period > report_date: #loans not yet started
         try:
-            return None
+            return 0.00
 
         except (TypeError, ValueError, ZeroDivisionError):
-            return None  # Handle potential errors
+            return 0.00  # Handle potential errors
 
     elif submission_period <= report_date and maturity_period >= report_date: #current/active loans
         monthly_rate = irr(cash_flows)
         if monthly_rate is None:
-            return None
+            return 0.00
         annual_rate = monthly_rate * 12
         return round((annual_rate),2)
 

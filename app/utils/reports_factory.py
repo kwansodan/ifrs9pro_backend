@@ -55,37 +55,46 @@ def run_and_save_report_task(report_id: int, report_type: str, file_path: str, p
                 bold_format = workbook.add_format({'bold': True})
                 left_format = workbook.add_format({'align': 'left'})
                 bold_left_format = workbook.add_format({'bold': True, 'align': 'left'})
+                italic_format = workbook.add_format({'italic': True})
                 worksheet.write('A1', f"Dalex Finance", bold_format)
                 worksheet.write('A2', f"Detailed IFRS9 ECL report", bold_format)
                 worksheet.write('A3', f"Portfolio: {relevant_portfolio.name}", bold_format)
                 worksheet.write('A4', f"Report date: {date.today().strftime('%Y-%m-%d')}", bold_format)
                 worksheet.write('A5', f"Report extraction date: {date.today().strftime('%Y-%m-%d')}", bold_format)
 
+                worksheet.write('A7', f"Note that ECL calculation results are as at the report run date. ECLs are discounted at the effective interest rate to the calculation run date", italic_format)
+
                 headers = [
-                    "Loan No", "Employee ID", "Employee Name", "Loan Amount", "Theoretical Balance",
+                    "Loan No", "Loan Issue Date", "Deduction Start Period", "Submission Period", "Maturity Period", "Outsanding Loan Balance","Deduction Status", "Employee ID", "Employee Name", "Loan Amount", "Theoretical Balance",
                     "Accumulated Arrears", "NDIA", "Stage", "EAD", "LGD", "EIR", "PD", "ECL"
                 ]
-                start_row=7
+                start_row=8
                 for col, h in enumerate(headers):
-                    worksheet.write(7, col, h, workbook.add_format({'bold': True, 'align': 'left'}))
+                    worksheet.write(8, col, h, workbook.add_format({'bold': True, 'align': 'left'}))
 
                 query = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).yield_per(1000)
                 row_idx = start_row+1
 
                 for row in query:
                     worksheet.write(row_idx, 0, row.loan_no)
-                    worksheet.write(row_idx, 1, row.employee_id)
-                    worksheet.write(row_idx, 2, row.employee_name)
-                    worksheet.write(row_idx, 3, float(row.loan_amount or 0))
-                    worksheet.write(row_idx, 4, row.theoretical_balance)
-                    worksheet.write(row_idx, 5, str(row.accumulated_arrears))
-                    worksheet.write(row_idx, 6, str(row.ndia))
-                    worksheet.write(row_idx, 7, str(row.ifrs9_stage))
-                    worksheet.write(row_idx, 8, str(row.ead))
-                    worksheet.write(row_idx, 9, str(row.lgd))
-                    worksheet.write(row_idx, 10, str(row.eir))
-                    worksheet.write(row_idx, 11, str(row.pd))
-                    worksheet.write(row_idx, 12, str(row.final_ecl))
+                    worksheet.write(row_idx, 1, str(row.loan_issue_date))
+                    worksheet.write(row_idx, 2, str(row.deduction_start_period))
+                    worksheet.write(row_idx, 3, str(row.submission_period))
+                    worksheet.write(row_idx, 4, str(row.maturity_period))
+                    worksheet.write(row_idx, 5, float(row.outstanding_loan_balance or 0))
+                    worksheet.write(row_idx, 6, str(row.deduction_status))
+                    worksheet.write(row_idx, 7, row.employee_id)
+                    worksheet.write(row_idx, 8, row.employee_name)
+                    worksheet.write(row_idx, 9, float(row.loan_amount or 0))
+                    worksheet.write(row_idx, 10, row.theoretical_balance)
+                    worksheet.write(row_idx, 11, str(row.accumulated_arrears))
+                    worksheet.write(row_idx, 12, str(row.ndia))
+                    worksheet.write(row_idx, 13, str(row.ifrs9_stage))
+                    worksheet.write(row_idx, 14, str(row.ead))
+                    worksheet.write(row_idx, 15, str(row.lgd))
+                    worksheet.write(row_idx, 16, str(row.eir))
+                    worksheet.write(row_idx, 17, str(row.pd))
+                    worksheet.write(row_idx, 18, str(row.final_ecl))
                     row_idx += 1
 
             case "local_impairment_detailed_report":
