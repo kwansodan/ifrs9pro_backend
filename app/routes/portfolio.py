@@ -664,6 +664,8 @@ async def ingest_portfolio_data(
         client_data= client_data,
         loan_guarantee_data=loan_guarantee_data if loan_guarantee_data else None,
         loan_collateral_data= loan_collateral_data if loan_collateral_data else None,
+        first_name = current_user.first_name,
+        user_email = current_user.email,
         # db=db
     )
     
