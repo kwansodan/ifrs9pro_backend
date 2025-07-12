@@ -578,38 +578,34 @@ async def update_portfolio(
             detail=f"Failed to update portfolio: {str(e)}"
         )
 
-    
-@router.delete("/{portfolio_id}", status_code=status.HTTP_204_NO_CONTENT)
+
+@router.delete("/{portfolio_id}", status_code=status.HTTP_200_OK)
 def delete_portfolio(
     portfolio_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
-    Delete a specific portfolio by ID.
+    Delete a specific portfolio by ID and return confirmation.
     """
-    portfolio = (
-        db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id)
-        .first()
-    )
+    portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
 
     if not portfolio:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Portfolio not found"
         )
 
     try:
         db.delete(portfolio)
         db.commit()
-
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio deletion failed"
-        ) 
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Portfolio deletion failed: {str(e)}"
+        )
 
-
-    return None
+    return {"detail": "Portfolio deleted successfully"}
 
 
 @router.post("/{portfolio_id}/ingest", status_code=status.HTTP_200_OK)
