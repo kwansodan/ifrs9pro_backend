@@ -45,8 +45,8 @@ class DataSource(str, Enum):
 class ReportTypeEnum(str, Enum):
     ECL_DETAILED_REPORT = "ecl_detailed_report"
     ECL_REPORT_SUMMARISED = "ecl_report_summarised_by_stages"
-    LOCAL_IMPAIRMENT_DETAILS_REPORT = "local_impairment_detailed_report"
-    LOCAL_IMPAIRMENT_REPORT_SUMMARISED = "local_impairment_report_summarised_by_stages"
+    BOG_IMPAIRMENT_DETAILS_REPORT = "BOG_impairment_detailed_report"
+    BOG_IMPAIRMENT_REPORT_SUMMARISED = "BOG_impairmnt_summary_by_stages"
     JOURNALS_REPORT = "journals_report"
 
 

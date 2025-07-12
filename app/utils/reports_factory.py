@@ -97,7 +97,7 @@ def run_and_save_report_task(report_id: int, report_type: str, file_path: str, p
                     worksheet.write(row_idx, 18, str(row.final_ecl))
                     row_idx += 1
 
-            case "local_impairment_detailed_report":
+            case "BOG_impairment_detailed_report":
                 bold_format = workbook.add_format({'bold': True})
                 left_format = workbook.add_format({'align': 'left'})
                 bold_left_format = workbook.add_format({'bold': True, 'align': 'left'})
@@ -161,7 +161,7 @@ def run_and_save_report_task(report_id: int, report_type: str, file_path: str, p
                     worksheet.write(row_idx, 4, round(float(row.outstanding_loan_balance)/float(row.loan_value) * 100,2))
                     row_idx+= 1
 
-            case "local_impairment_report_summarised_by_stages":
+            case "BOG_impairmnt_summary_by_stages":
                 bold_format = workbook.add_format({'bold': True})
                 left_format = workbook.add_format({'align': 'left'})
                 bold_left_format = workbook.add_format({'bold': True, 'align': 'left'})
@@ -260,7 +260,7 @@ def run_and_save_report_task(report_id: int, report_type: str, file_path: str, p
                     row_idx+= 1
 
 
-        workbook.close()
+        
         logger.info(f"[TASK] Excel workbook completed for report_id={report_id}, rows={row_idx}")
 
         # ... upload to blob, update status, etc. ...
@@ -268,7 +268,6 @@ def run_and_save_report_task(report_id: int, report_type: str, file_path: str, p
         from azure.storage.blob import BlobServiceClient
         
         blob_url = upload_file_to_blob(file_path, f"reports/{os.path.basename(file_path)}")
-
 
         db.query(Report).filter(Report.id == report_id).update({
             "status": "success",
@@ -283,6 +282,7 @@ def run_and_save_report_task(report_id: int, report_type: str, file_path: str, p
         db.commit()
 
     finally:
+        workbook.close()
         db.close()
 
 
