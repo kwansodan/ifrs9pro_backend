@@ -178,8 +178,8 @@ def run_and_save_report_task(report_id: int, report_type: str, file_path: str, p
                 for col, h in enumerate(headers):
                     worksheet.write(start_row, col, h, workbook.add_format({'bold': True}))
 
-                query = db.query( Loan.bog_stage.label("stage"), func.sum(Loan.loan_amount).label("loan_value"), func.sum(Loan.ead).label("outstanding_loan_balance"), func.sum(Loan.bog_provision).label("provision"), cast(0.20, Numeric(5, 2)).label("recovery_rate")  # Fixed 20% for all
-                 ) .filter(Loan.portfolio_id == portfolio_id) .group_by(Loan.ifrs9_stage) .order_by(Loan.ifrs9_stage) .all() 
+                query = db.query(Loan.bog_stage.label("stage"), func.sum(Loan.loan_amount).label("loan_value"), func.sum(Loan.ead).label("outstanding_loan_balance"), func.sum(Loan.bog_provision).label("provision"), cast(0.20, Numeric(5, 2)).label("recovery_rate")  # Fixed 20% for all
+                 ) .filter(Loan.portfolio_id == portfolio_id) .group_by(Loan.bog_stage) .order_by(Loan.bog_stage) .all() 
                 row_idx = start_row+1
 
                 for row in query:
@@ -260,7 +260,7 @@ def run_and_save_report_task(report_id: int, report_type: str, file_path: str, p
                     row_idx+= 1
 
 
-        
+        workbook.close()
         logger.info(f"[TASK] Excel workbook completed for report_id={report_id}, rows={row_idx}")
 
         # ... upload to blob, update status, etc. ...
@@ -282,7 +282,7 @@ def run_and_save_report_task(report_id: int, report_type: str, file_path: str, p
         db.commit()
 
     finally:
-        workbook.close()
+        
         db.close()
 
 
