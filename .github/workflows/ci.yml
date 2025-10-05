@@ -23,20 +23,16 @@ jobs:
           curl -sSL https://install.python-poetry.org | python3 -
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - name: 🧰 Configure Poetry
-        run: poetry config virtualenvs.create false
-
-      - name: 🔌 Add poetry-plugin-export
-        run: poetry self add poetry-plugin-export
-
-      - name: Install dependencies
-        run: poetry install --no-root
+      # Use Poetry's venv (default) and install dev/test groups too
+      - name: 📦 Install dependencies (incl. dev/test)
+        run: |
+          poetry --version
+          # If you're using groups like [tool.poetry.group.test.dependencies], keep --with test,dev
+          # If you're on legacy [tool.poetry.dev-dependencies], this still works (no harm).
+          poetry install --no-interaction --no-ansi --with dev,test
 
       - name: 🧪 Run tests with pytest
-        run: pytest
+        run: poetry run pytest -q
 
-      # Optional: Docs build check
-      - name: Build MkDocs documentation
-        run: |
-          pip install mkdocs
-          mkdocs build
+      - name: 📚 Build MkDocs documentation
+        run: poetry run mkdocs build
