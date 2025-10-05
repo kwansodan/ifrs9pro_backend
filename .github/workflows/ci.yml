@@ -1,0 +1,42 @@
+name: CI - PR Checks
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📦 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 📜 Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python3 -
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: 🧰 Configure Poetry
+        run: poetry config virtualenvs.create false
+
+      - name: 🔌 Add poetry-plugin-export
+        run: poetry self add poetry-plugin-export
+
+      - name: Install dependencies
+        run: poetry install --no-root
+
+      - name: 🧪 Run tests with pytest
+        run: pytest
+
+      # Optional: Docs build check
+      - name: Build MkDocs documentation
+        run: |
+          pip install mkdocs
+          mkdocs build
