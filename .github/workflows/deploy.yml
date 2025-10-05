@@ -3,7 +3,10 @@ name: CI/CD to Azure App Service
 on:
   push:
     branches:
-      - main  # Adjust if you're using another branch
+      - main
+  pull_request:
+    branches:
+      - main  # Ensures the workflow runs on PRs targeting `main`
 
 jobs:
   build-and-deploy:
@@ -31,7 +34,12 @@ jobs:
 
       - name: Install dependencies (no root package)
         run: poetry install --no-root
-
+        
+      - name: Run pytest
+        run: |
+          pip install pytest
+          pytest
+          
       - name: 📝 Export requirements.txt
         run: poetry export -f requirements.txt --output requirements.txt --without-hashes
         
@@ -41,10 +49,12 @@ jobs:
       - name: Build MkDocs documentation
         run: mkdocs build
 
-
-      - name: 📤 Deploy to Azure App Service
+      - name: 📤 Deploy to DO App Service
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: azure/webapps-deploy@v3
         with:
-          app-name: "ifrs9pro"  # Update this to your App Service name
+          app-name: "ifrs9pro"
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: "."  # Deploys current working directory
+          package: "."
+
+
