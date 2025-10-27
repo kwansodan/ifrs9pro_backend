@@ -10,7 +10,7 @@ FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL")
 # Mailjet configuration
 MAILJET_API_KEY = os.getenv("MAILJET_API_KEY")
 MAILJET_API_SECRET = os.getenv("MAILJET_API_SECRET")
-MAILJET_SENDER_EMAIL = os.getenv("MAILJET_SENDER_EMAIL", settings.SMTP_FROM)
+MAILJET_SENDER_EMAIL = os.getenv("MAILJET_SENDER_EMAIL")
 
 
 async def send_email(
