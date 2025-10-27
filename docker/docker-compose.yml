@@ -47,26 +47,6 @@ services:
     networks:
       - ifrs9pro_network
 
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: ifrs9pro_pgadmin
-    env_file:
-      - .env.docker
-    environment:
-      - PGADMIN_DEFAULT_EMAIL=admin@ifrs9pro.com
-      - PGADMIN_DEFAULT_PASSWORD=admin123
-      - PGADMIN_CONFIG_SERVER_MODE=False
-    ports:
-      - "5050:80"
-    depends_on:
-      db:
-        condition: service_healthy
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
-    restart: unless-stopped
-    networks:
-      - ifrs9pro_network
-
   minio:
     image: minio/minio:latest
     container_name: ifrs9pro_minio
@@ -92,7 +72,6 @@ services:
 
 volumes:
   postgres_data:
-  pgadmin_data:
   minio_data:
 
 networks:
