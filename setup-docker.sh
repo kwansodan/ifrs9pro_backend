@@ -72,11 +72,22 @@ docker-compose -f "$DOCKER_DIR/docker-compose.yml" up -d
 
 # Wait for database to be ready
 echo "⏳ Waiting for database to be ready..."
-sleep 10
+MAX_RETRIES=10
+for i in $(seq 1 $MAX_RETRIES); do
+  if docker-compose -f "$DOCKER_DIR/docker-compose.yml" exec -T db pg_isready -U ifrs9user -d ifrs9pro_db >/dev/null 2>&1; then
+    echo "✅ Database is ready!"
+    break
+  fi
+  echo "⏳ Waiting for Postgres... ($i/$MAX_RETRIES)"
+  sleep 3
+done
 
 # Run database migrations
 echo "🗄️ Running database migrations..."
-docker-compose -f "$DOCKER_DIR/docker-compose.yml" exec web alembic upgrade head
+if ! docker-compose -f "$DOCKER_DIR/docker-compose.yml" exec web alembic upgrade head; then
+  echo "❌ Alembic migration failed. Please check your migration files or database state."
+  exit 1
+fi
 
 # Check if services are running
 echo "🔍 Checking service status..."

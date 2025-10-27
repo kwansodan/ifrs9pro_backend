@@ -95,4 +95,4 @@ yarl==1.18.3 ; python_version >= "3.12" and python_version < "4.0"
 psutil ; python_version >= "3.12" and python_version < "4.0"
 boto3 ; python_version >= "3.12" and python_version < "4.0"
 aiosmtplib==1.1.6 ; python_version < "3.12" and python_version < "4.0"
-mailjet-rest ; python_version < "3.12" and python_version < "4.0"
+mailjet-rest 
