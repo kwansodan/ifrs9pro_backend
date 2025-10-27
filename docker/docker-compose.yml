@@ -1,0 +1,74 @@
+services:
+  web:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: ifrs9pro_fastapi
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env.docker
+    environment:
+      - SQLALCHEMY_DATABASE_URL=postgresql://ifrs9user:${POSTGRES_PASSWORD}@db:5432/ifrs9pro_db
+      - DEBUG=False
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./reports:/app/reports
+      - ./app/ml_models:/app/app/ml_models
+    restart: unless-stopped
+    networks:
+      - ifrs9pro_network
+
+  db:
+    image: postgres:16-alpine
+    container_name: ifrs9pro_postgres
+    env_file:
+      - .env.docker
+    environment:
+      - POSTGRES_USER=ifrs9user
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=ifrs9pro_db
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5433:5432"  # Avoid conflict with local PostgreSQL
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ifrs9user -d ifrs9pro_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - ifrs9pro_network
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: ifrs9pro_pgadmin
+    env_file:
+      - .env.docker
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@ifrs9pro.com
+      - PGADMIN_DEFAULT_PASSWORD=admin123
+      - PGADMIN_CONFIG_SERVER_MODE=False
+    ports:
+      - "5050:80"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    restart: unless-stopped
+    networks:
+      - ifrs9pro_network
+
+volumes:
+  postgres_data:
+  pgadmin_data:
+
+networks:
+  ifrs9pro_network:
+    driver: bridge
