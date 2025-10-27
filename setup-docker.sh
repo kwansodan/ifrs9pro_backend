@@ -21,9 +21,11 @@ if [ ! -f "$DOCKER_DIR/.env.docker" ]; then
     exit 1
 fi
 
-# Load environment variables from .env.docker
+# Load all environment variables from .env.docker
 echo "📝 Loading environment variables..."
-export $(grep -v '^#' "$DOCKER_DIR/.env.docker" | grep POSTGRES_PASSWORD | xargs)
+set -a
+source "$DOCKER_DIR/.env.docker"
+set +a
 
 # Move to project root
 cd "$PROJECT_ROOT"
@@ -49,7 +51,20 @@ if ! command -v docker-compose &> /dev/null; then
     exit 1
 fi
 
-# Build and start services (using the docker folder)
+# 🧹 Pre-flight cleanup
+echo "🧹 Cleaning up old containers, networks, and volumes..."
+docker rm -f ifrs9pro_postgres ifrs9pro_fastapi ifrs9pro_minio ifrs9pro_pgadmin ifrs9pro_redis 2>/dev/null || true
+docker network prune -f >/dev/null 2>&1 || true
+docker volume prune -f >/dev/null 2>&1 || true
+docker container prune -f >/dev/null 2>&1 || true
+
+# Kill any stray FastAPI/uvicorn processes (just in case)
+if pgrep -f "uvicorn" >/dev/null; then
+    echo "⚠️  Killing rogue uvicorn processes..."
+    sudo pkill -9 -f "uvicorn" 2>/dev/null || true
+fi
+
+# Build and start services
 echo "🏗️ Building and starting services..."
 docker-compose -f "$DOCKER_DIR/docker-compose.yml" down --remove-orphans
 docker-compose -f "$DOCKER_DIR/docker-compose.yml" build --no-cache
@@ -72,7 +87,7 @@ echo ""
 echo "🌐 Your application should be available at:"
 echo "   - FastAPI: http://localhost:8000"
 echo "   - API Docs: http://localhost:8000/docs"
-echo "   - Database: localhost:5432"
+echo "   - MinIO Console: http://localhost:9001"
 echo ""
 echo "📋 Useful commands:"
 echo "   - View logs: docker-compose -f docker/docker-compose.yml logs -f"

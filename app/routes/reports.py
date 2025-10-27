@@ -14,6 +14,8 @@ from typing import List, Optional, Dict, Any
 import base64
 import logging
 from io import BytesIO
+import asyncio
+
 from app.database import get_db
 from app.models import Portfolio, User, Report
 from app.auth.utils import get_current_active_user
@@ -34,9 +36,11 @@ from app.utils.report_generators import (
     generate_journal_report,
     generate_report_excel,  # Changed from generate_report_pdf
 )
-from app.utils.reports_factory import (
-    run_and_save_report_task, generate_sas_url
-    )
+# Use MinIO-based factory only
+from app.utils.minio_reports_factory import (
+    run_and_save_report_task,
+    generate_presigned_url_for_download,
+)
 from app.config import settings
 from app.schemas import (
     ReportTypeEnum,
@@ -54,8 +58,6 @@ from app.schemas import (
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 logger = logging.getLogger(__name__)
-
-
 
 
 @router.post("/{portfolio_id}/generate", status_code=status.HTTP_200_OK)
@@ -89,9 +91,8 @@ async def generate_report(
         db.commit()
         db.refresh(report)
 
-        # Schedule background task
+        # Schedule background task (uses MinIO-backed run_and_save_report_task)
         background_tasks.add_task(run_and_save_report_task, report.id, report_request.report_type, file_path, portfolio_id)
-
 
         return {"message": "Report generation started", "report_id": report.id}
 
@@ -100,8 +101,6 @@ async def generate_report(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error generating report: {str(e)}",
         )
-
-
 
 
 @router.get("/{portfolio_id}/history", response_model=ReportHistoryList)
@@ -236,7 +235,6 @@ async def delete_report(
         raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
 
 
-
 @router.get(
     "/{portfolio_id}/report/{report_id}/download", status_code=status.HTTP_200_OK
 )
@@ -246,7 +244,6 @@ async def download_report_excel(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-   
     portfolio = (
         db.query(Portfolio)
         .filter(Portfolio.id == portfolio_id)
@@ -271,25 +268,24 @@ async def download_report_excel(
         )
 
     try:
+        # generate_presigned_url_for_download may be sync or async in your minio factory.
+        presigned = generate_presigned_url_for_download(report.file_path)
+        if asyncio.iscoroutine(presigned):
+            presigned = await presigned
 
-        return {"download_url": report.file_path}
-
-
-
-
-        
+        return {"download_url": presigned}
 
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error generating Excel report: {str(e)}",
+            detail=f"Error generating download URL: {str(e)}",
         )
 
 
 @router.get("/status/{report_id}")
 def get_report_status(report_id: int, db: Session = Depends(get_db)):
-    status = db.query(Report.status).filter(Report.id == report_id).scalar()
+    status_val = db.query(Report.status).filter(Report.id == report_id).scalar()
 
-    if not status:
+    if not status_val:
         raise HTTPException(status_code=404, detail="Report generated in earlier versions of IFRS9PRO no report status found")
-    return status
+    return status_val
