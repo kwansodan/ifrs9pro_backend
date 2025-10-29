@@ -1,0 +1,79 @@
+services:
+  web:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: ifrs9pro_fastapi
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env.docker
+    environment:
+      - SQLALCHEMY_DATABASE_URL=postgresql://ifrs9user:${POSTGRES_PASSWORD}@db:5432/ifrs9pro_db
+      - DEBUG=False
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./reports:/app/reports
+      - ./app/ml_models:/app/app/ml_models
+    restart: unless-stopped
+    networks:
+      - ifrs9pro_network
+
+  db:
+    image: postgres:16-alpine
+    container_name: ifrs9pro_postgres
+    env_file:
+      - .env.docker
+    environment:
+      - POSTGRES_USER=ifrs9user
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=ifrs9pro_db
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5433:5432"  # Avoid conflict with local PostgreSQL
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ifrs9user -d ifrs9pro_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - ifrs9pro_network
+
+  minio:
+    image: minio/minio:latest
+    container_name: ifrs9pro_minio
+    command: server /data --console-address ":9001"
+    env_file:
+      - .env.docker
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - ifrs9pro_network
+
+volumes:
+  postgres_data:
+  minio_data:
+
+networks:
+  ifrs9pro_network:
+    driver: bridge

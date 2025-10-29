@@ -92,3 +92,7 @@ websockets==15.0.1 ; python_version >= "3.12" and python_version < "4.0"
 xlsx2csv==0.8.4 ; python_version >= "3.12" and python_version < "4.0"
 xlsxwriter==3.2.3 ; python_version >= "3.12" and python_version < "4.0"
 yarl==1.18.3 ; python_version >= "3.12" and python_version < "4.0"
+psutil ; python_version >= "3.12" and python_version < "4.0"
+boto3 ; python_version >= "3.12" and python_version < "4.0"
+aiosmtplib==1.1.6 ; python_version < "3.12" and python_version < "4.0"
+mailjet-rest 

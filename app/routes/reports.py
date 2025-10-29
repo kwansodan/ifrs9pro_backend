@@ -14,6 +14,8 @@ from typing import List, Optional, Dict, Any
 import base64
 import logging
 from io import BytesIO
+import asyncio
+
 from app.database import get_db
 from app.models import Portfolio, User, Report
 from app.auth.utils import get_current_active_user
@@ -100,6 +102,7 @@ async def generate_report(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error generating report: {str(e)}",
         )
+
 
 
 
@@ -282,7 +285,7 @@ async def download_report_excel(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error generating Excel report: {str(e)}",
+            detail=f"Error generating download URL: {str(e)}",
         )
 
 
