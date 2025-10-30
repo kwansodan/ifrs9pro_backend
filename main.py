@@ -40,14 +40,21 @@ async def health_check():
 # Add GZip compression middleware
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-# Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://ifrs9pro.service4gh.com", "http://localhost:5173", "http://localhost:5174","https://ifrs9pro-ui-staging.vercel.app"],
+    allow_origins=[
+        "https://ifrs9pro.service4gh.com",
+        "https://www.ifrs9pro.service4gh.com",
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "https://ifrs9pro-ui-staging.vercel.app",
+        "https://www.ifrs9pro-ui-staging.vercel.app"
+    ],
     allow_credentials=True,
-    allow_methods=["POST", "PUT", "DELETE", "GET"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # Register routers
 app.include_router(auth.router)
