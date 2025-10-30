@@ -1,6 +1,6 @@
 import os
 import logging
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -54,6 +54,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+@app.middleware("http")
+async def log_preflight_requests(request: Request, call_next):
+    if request.method == "OPTIONS":
+        origin = request.headers.get("origin")
+        access_control_req_headers = request.headers.get("access-control-request-headers")
+        logging.info(f"Preflight from {origin} | Access-Control-Request-Headers: {access_control_req_headers}")
+    return await call_next(request)
+
 
 
 # Register routers
