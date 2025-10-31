@@ -1,3 +1,4 @@
-api.do-site.service4gh.com {
-    reverse_proxy backend:8000
+do-site-staging.service4gh.com {
+    reverse_proxy ifrs9pro_fastapi:8000
+    tls you@example.com
 }
