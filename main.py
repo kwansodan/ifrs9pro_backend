@@ -1,6 +1,6 @@
 import os
 import logging
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -40,14 +40,29 @@ async def health_check():
 # Add GZip compression middleware
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-# Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://ifrs9pro.service4gh.com", "http://localhost:5173", "http://localhost:5174","https://ifrs9pro-ui-staging.vercel.app"],
+    allow_origins=[
+        "https://ifrs9pro.service4gh.com",
+        "https://www.ifrs9pro.service4gh.com",
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "https://ifrs9pro-ui-staging.vercel.app",
+        "https://www.ifrs9pro-ui-staging.vercel.app"
+    ],
     allow_credentials=True,
-    allow_methods=["POST", "PUT", "DELETE", "GET"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
+@app.middleware("http")
+async def log_preflight_requests(request: Request, call_next):
+    if request.method == "OPTIONS":
+        origin = request.headers.get("origin")
+        access_control_req_headers = request.headers.get("access-control-request-headers")
+        logging.info(f"Preflight from {origin} | Access-Control-Request-Headers: {access_control_req_headers}")
+    return await call_next(request)
+
+
 
 # Register routers
 app.include_router(auth.router)

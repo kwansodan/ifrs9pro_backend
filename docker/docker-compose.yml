@@ -1,11 +1,13 @@
+version: "3.9"
+
 services:
   web:
     build:
       context: ..
       dockerfile: docker/Dockerfile
     container_name: ifrs9pro_fastapi
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000" # expose internally to the network, not to the host
     env_file:
       - .env.docker
     environment:
@@ -23,6 +25,22 @@ services:
     networks:
       - ifrs9pro_network
 
+  caddy:
+    image: caddy:latest
+    container_name: caddy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+    networks:
+      - ifrs9pro_network
+
   db:
     image: postgres:16-alpine
     container_name: ifrs9pro_postgres
@@ -37,7 +55,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     ports:
-      - "5433:5432"  # Avoid conflict with local PostgreSQL
+      - "5433:5432" # Avoid conflict with local PostgreSQL
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ifrs9user -d ifrs9pro_db"]
       interval: 10s
@@ -73,6 +91,8 @@ services:
 volumes:
   postgres_data:
   minio_data:
+  caddy_data:
+  caddy_config:
 
 networks:
   ifrs9pro_network:
