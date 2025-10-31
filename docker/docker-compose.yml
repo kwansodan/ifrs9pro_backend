@@ -88,22 +88,6 @@ services:
     networks:
       - ifrs9pro_network
 
-  locust:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    container_name: ifrs9pro_locust
-    command: locust -f /app/locustfile.py --host=http://web:8000
-    ports:
-      - "8089:8089"
-    depends_on:
-      web:
-        condition: service_started
-    volumes:
-      - ./locustfile.py:/app/locustfile.py
-    networks:
-      - ifrs9pro_network
-
 volumes:
   postgres_data:
   minio_data:
