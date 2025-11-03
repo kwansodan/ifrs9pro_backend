@@ -88,6 +88,7 @@ async def request_access(
             await send_verification_email(request_data.email, token)
             return {"message": "Verification email sent"}
 
+
     # Create new access request
     token = create_email_verification_token(request_data.email)
     new_request = AccessRequest(

@@ -106,7 +106,7 @@ async def stage_loans_ecl_orm(portfolio_id: int, db: Session) -> Dict[str, Any]:
             "status": "error",
             "error": str(e)
         }
-
+ 
 
 async def stage_loans_local_impairment_orm(portfolio_id: int, db: Session) -> Dict[str, Any]:
     """
