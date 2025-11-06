@@ -1,4 +1,0 @@
-do-site-staging.service4gh.com {
-    reverse_proxy ifrs9pro_fastapi:8000
-    tls admin@ifrs9pro.com
-}
