@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from typing import List, Dict, Optional, Union
 import pandas as pd
 import io
+import json
 from app.database import get_db
 from app.models import Portfolio, User
 from app.auth.utils import get_current_active_user
@@ -611,6 +612,7 @@ def delete_portfolio(
 @router.post("/{portfolio_id}/ingest", status_code=status.HTTP_200_OK)
 async def ingest_portfolio_data(
     portfolio_id: int,
+    mapping_data: Optional[str] = Form(None),
     loan_details: Optional[UploadFile] = File(None),
     client_data: Optional[UploadFile] = File(None),
     loan_guarantee_data: Optional[UploadFile] = File(None),
@@ -652,6 +654,16 @@ async def ingest_portfolio_data(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Missing required files: {', '.join(missing_files)}. Both loan_details and client_data files are required for portfolio ingestion.",
         )
+ # parse optional mapping JSON if provided
+    mapping = None
+    if mapping_data:
+        try:
+            mapping = json.loads(mapping_data)
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="mapping_data must be valid JSON",
+         )
     
     # Process files synchronously
     result = await start_background_ingestion(
@@ -662,6 +674,7 @@ async def ingest_portfolio_data(
         loan_collateral_data= loan_collateral_data if loan_collateral_data else None,
         first_name = current_user.first_name,
         user_email = current_user.email,
+        mapping = mapping
         # db=db
     )
     
