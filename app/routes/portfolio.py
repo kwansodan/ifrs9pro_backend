@@ -102,6 +102,7 @@ from app.utils.background_calculations import (
     process_bog_impairment_calculation_sync
 )
 from app.utils.ecl_calculator import calculate_loss_given_default
+from app.utils.ingest_file_validation import validate_all_uploaded_files
 import os
 
 logger = logging.getLogger(__name__)
@@ -629,6 +630,13 @@ async def ingest_portfolio_data(
     
     The function processes the files synchronously and returns the processing result.
     """
+    # Validate file formats and schema
+    await validate_all_uploaded_files(
+        loan_details,
+        client_data,
+        loan_guarantee_data,
+        loan_collateral_data
+    )
     # Check if portfolio exists and belongs to user
     portfolio = db.query(Portfolio).filter(
         Portfolio.id == portfolio_id
