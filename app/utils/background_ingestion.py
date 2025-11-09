@@ -5,6 +5,7 @@ from fastapi import UploadFile
 from sqlalchemy.orm import Session
 import io
 import random
+import time
 from datetime import datetime, date
 from decimal import Decimal
 
@@ -83,6 +84,7 @@ async def process_portfolio_ingestion_sync(
         
         # Check for and delete existing data for this portfolio
         try:
+            start = time.perf_counter
             logger.info(f"Checking for existing data in portfolio {portfolio_id}")
             
             
@@ -102,8 +104,6 @@ async def process_portfolio_ingestion_sync(
             # Commit the deletions
             db.commit()
             
-            # logger.info(f"Cleared existing data: {loan_count} loans, {client_count} clients, {guarantee_count} guarantees")
-            
             # Log the deletion results but don't add to response
             logger.info(f"The following previously held data in the current portfolio cleared: Loans:{loan_count}, Clients:{client_count}, Loan guarantees:{guarantee_count}, " +
                        f"Quality_issues:{quality_count}, Calculation_results:{calculation_count}, Generated reports:{report_count}")
@@ -111,7 +111,11 @@ async def process_portfolio_ingestion_sync(
         except Exception as e:
             logger.error(f"Error clearing existing data: {str(e)}")
             results["errors"] = results.get("errors", []) + [f"Error clearing existing data: {str(e)}"]
-        
+        end = time.perf_counter()
+        logger.info(f"Data clearing took {end - start:0.4f} seconds")
+
+
+        start = time.perf_counter()
         # Count files to process
         files_to_process = 0
         if loan_details_content:
@@ -124,9 +128,12 @@ async def process_portfolio_ingestion_sync(
             files_to_process += 1
         
         results["total_files"] = files_to_process
-        
+        end = time.perf_counter()
+        logger.info(f"File counting took {end - start:0.4f} seconds")
+
         # Process loan details if provided
         if loan_details_content:
+            start = time.perf_counter()
             try:
                 logger.info(f"Processing loan details for portfolio no {portfolio_id}")
                 
@@ -147,9 +154,12 @@ async def process_portfolio_ingestion_sync(
                 logger.error(f"Error encountered while attempting to clean and store loan details: {str(e)}")
                 results["details"]["loan_details"] = {"error": str(e)}
                 results["errors"] = results.get("errors", []) + [f"Error encountered while attempting to clean and store loan details: {str(e)}"]
+            end = time.perf_counter()
+            logger.info(f"Loan details processing took {end - start:0.4f} seconds")
         
         # Process client data if provided
         if client_data_content:
+            start = time.perf_counter()
             try:
                 logger.info(f"Processing client data for portfolio {portfolio_id}")
                 
@@ -169,9 +179,12 @@ async def process_portfolio_ingestion_sync(
                 logger.error(f"Error processing client data: {str(e)}")
                 results["details"]["client_data"] = {"error": str(e)}
                 results["errors"] = results.get("errors", []) + [f"Error processing client data: {str(e)}"]
-        
+            end = time.perf_counter()
+            logger.info(f"Client data processing took {end - start:0.4f} seconds")
+
         # Process loan guarantee data if provided
         if loan_guarantee_data_content:
+            start = time.perf_counter()
             try:
                 logger.info(f"Processing loan guarantee data for portfolio {portfolio_id}")
                 
@@ -191,9 +204,12 @@ async def process_portfolio_ingestion_sync(
                 logger.error(f"Error processing loan guarantee data: {str(e)}")
                 results["details"]["loan_guarantee_data"] = {"error": str(e)}
                 results["errors"] = results.get("errors", []) + [f"Error processing loan guarantee data: {str(e)}"]
-        
+            end = time.perf_counter()
+            logger.info(f"Loan guarantee data processing took {end - start:0.4f} seconds")
+
         # Process loan collateral data if provided
         if loan_collateral_data_content:
+            start = time.perf_counter()
             try:
                 logger.info(f"Processing loan collateral data for portfolio {portfolio_id}")
                 
@@ -213,8 +229,11 @@ async def process_portfolio_ingestion_sync(
                 logger.error(f"Error processing loan collateral data: {str(e)}")
                 results["details"]["loan_collateral_data"] = {"error": str(e)}
                 results["errors"] = results.get("errors", []) + [f"Error processing loan collateral data: {str(e)}"]
-        
+            end = time.perf_counter()
+            logger.info(f"Loan collateral data processing took {end - start:0.4f} seconds")
+
         # Perform quality checks
+        start = time.perf_counter()
         try:
             logger.info(f"Performing quality checks for portfolio {portfolio_id}")
             
@@ -230,8 +249,11 @@ async def process_portfolio_ingestion_sync(
             logger.error(f"Error running quality checks: {str(e)}")
             results["quality_checks"] = {"error": str(e)}
             results["errors"] = results.get("errors", []) + [f"Error running quality checks: {str(e)}"]
-        
+        end = time.perf_counter()
+        logger.info(f"Quality checks took {end - start:0.4f} seconds")
+
         # Perform loan staging
+        start = time.perf_counter()
         try:
             logger.info(f"Starting loan staging for portfolio {portfolio_id}")
             
@@ -248,7 +270,8 @@ async def process_portfolio_ingestion_sync(
             logger.error(f"Error during loan staging: {str(e)}")
             results["staging"] = {"error": str(e)}
             results["errors"] = results.get("errors", []) + [f"Error during loan staging: {str(e)}"]
-        
+        end = time.perf_counter()
+
         # Final status
         if "errors" in results and results["errors"]:
             results["status"] = "completed_with_errors"

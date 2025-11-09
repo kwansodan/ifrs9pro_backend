@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from fastapi import (
     APIRouter,
     Depends,
@@ -654,7 +655,8 @@ async def ingest_portfolio_data(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Missing required files: {', '.join(missing_files)}. Both loan_details and client_data files are required for portfolio ingestion.",
         )
- # parse optional mapping JSON if provided
+    
+    # parse optional mapping JSON if provided
     mapping = None
     if mapping_data:
         try:
@@ -673,8 +675,7 @@ async def ingest_portfolio_data(
         loan_guarantee_data=loan_guarantee_data if loan_guarantee_data else None,
         loan_collateral_data= loan_collateral_data if loan_collateral_data else None,
         first_name = current_user.first_name,
-        user_email = current_user.email,
-        mapping = mapping
+        user_email = current_user.email
         # db=db
     )
     
