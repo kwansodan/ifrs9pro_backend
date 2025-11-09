@@ -1,30 +1,25 @@
 import os
 from typing import List
 import asyncio
-from azure.communication.email import EmailClient
-from azure.communication.email.aio import EmailClient as AsyncEmailClient
-from azure.core.credentials import AzureKeyCredential
+from maijet_rest import Client
 from app.config import settings
 from urllib.parse import urlencode
 
 FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL")
 
-# Azure Communication Services configuration
-AZURE_COMMUNICATION_CONNECTION_STRING = os.getenv(
-    "AZURE_COMMUNICATION_CONNECTION_STRING"
-)
-AZURE_SENDER_EMAIL = os.getenv("AZURE_SENDER_EMAIL")
+# Mailjet configuration
+MAILJET_API_KEY = os.getenv("MAILJET_API_KEY")
+MAILJET_API_SECRET = os.getenv("MAILJET_API_SECRET")
+MAILJET_SENDER_EMAIL = os.getenv("MAILJET_SENDER_EMAIL")
 
 
 async def send_email(to_email: str, subject: str, body: str, cc_emails: str):
     """
-    Send email using Azure Communication Services.
+    Send email using Mailjet Communication Services.
     """
     try:
         # Create the email client
-        email_client = AsyncEmailClient.from_connection_string(
-            AZURE_COMMUNICATION_CONNECTION_STRING
-        )
+        email_client = Client(auth=(MAILJET_API_KEY, MAILJET_API_SECRET), version='v3.1')
 
         recipients = {"to": [{"address": to_email}]}
         if cc_emails:
@@ -32,7 +27,7 @@ async def send_email(to_email: str, subject: str, body: str, cc_emails: str):
 
         # Create the email message
         message = {
-            "senderAddress": AZURE_SENDER_EMAIL,
+            "senderAddress": MAILJET_SENDER_EMAIL,
             "recipients":recipients,
             "content": {
                 "subject": subject,
@@ -53,7 +48,7 @@ async def send_email(to_email: str, subject: str, body: str, cc_emails: str):
         print(f"Failed to send email: {str(e)}")
         # For development/testing, you may want to fall back to mock implementation
         if settings.DEBUG:
-            print(f"\n----- MOCK EMAIL (Azure send failed) -----")
+            print(f"\n----- MOCK EMAIL (Mailjet send failed) -----")
             print(f"To: {to_email}")
             print(f"Subject: {subject}")
             print(f"Body:\n{body}")
