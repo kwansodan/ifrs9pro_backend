@@ -84,7 +84,7 @@ async def process_portfolio_ingestion_sync(
         
         # Check for and delete existing data for this portfolio
         try:
-            start = time.perf_counter
+            start = time.perf_counter()
             logger.info(f"Checking for existing data in portfolio {portfolio_id}")
             
             

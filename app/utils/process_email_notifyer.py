@@ -1,7 +1,7 @@
 import os
 from typing import List
 import asyncio
-from maijet_rest import Client
+from mailjet_rest import Client
 from app.config import settings
 from urllib.parse import urlencode
 
@@ -19,7 +19,7 @@ async def send_email(to_email: str, subject: str, body: str, cc_emails: str):
     """
     try:
         # Create the email client
-        email_client = Client(auth=(MAILJET_API_KEY, MAILJET_API_SECRET), version='v3.1')
+        email_client = Client(auth=(MAILJET_API_KEY, MAILJET_API_SECRET), version="v3.1")
 
         recipients = {"to": [{"address": to_email}]}
         if cc_emails:
@@ -37,12 +37,9 @@ async def send_email(to_email: str, subject: str, body: str, cc_emails: str):
         }
 
         # Send the email
-        poller = await email_client.begin_send(message)
-        result = await poller.result()
-
+        result = email_client.send.create(data={"Messages": [message]})
         # Close the client
-        await email_client.close()
-
+    
         return True
     except Exception as e:
         print(f"Failed to send email: {str(e)}")

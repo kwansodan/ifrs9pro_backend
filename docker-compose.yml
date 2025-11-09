@@ -16,6 +16,7 @@ services:
       minio:
         condition: service_healthy
     volumes:
+      - .:/app
       - ./reports:/app/reports
       - ./app/ml_models:/app/app/ml_models
     restart: unless-stopped

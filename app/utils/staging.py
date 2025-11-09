@@ -11,6 +11,7 @@ from decimal import Decimal
 
 from app.models import Portfolio, Loan
 from app.schemas import ECLStagingConfig, LocalImpairmentConfig
+from app.utils.validate_bog import validate_and_fix_bog_config
 
 logger = logging.getLogger(__name__)
 
@@ -122,9 +123,17 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, db: Session) -> Di
     .filter(Portfolio.id == portfolio_id)
     .scalar()
 )
+        
+        if not latest_bog_config:
+            logger.error(f"No BOG staging config found for portfolio {portfolio_id}")
+            return {
+                "status": "error",
+                "error": "Missing BOG staging configuration"
+            }
+        # Validate & fix before staging
+        validated_config = validate_and_fix_bog_config(latest_bog_config)
 
-
-        config = latest_bog_config  # Assuming it's a dict
+        config = validated_config 
 
         current_range = config.get("current", {}).get("days_range", "")
         olem_range = config.get("olem", {}).get("days_range", "")
