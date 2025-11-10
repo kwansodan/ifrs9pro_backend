@@ -352,7 +352,6 @@ async def process_bog_impairment_calculation_sync(portfolio_id: int, reporting_d
         "calculation_id": calculation_result.id,
         "portfolio_id": calculation_result.portfolio_id,
         "grand_total_local": safe_float(grand_total_local),
-        "provision_percentage": 0.0,
         "loan_count": loan_count
     }
 

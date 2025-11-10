@@ -21,6 +21,7 @@ from datetime import datetime, timedelta, date
 from pydantic import BaseModel
 from typing import List, Dict, Optional, Union
 import pandas as pd
+import time
 import io
 from app.database import get_db
 from app.models import Portfolio, User
@@ -639,6 +640,7 @@ async def ingest_portfolio_data(
         loan_collateral_data
     )
     '''
+    
     # Check if portfolio exists and belongs to user
     portfolio = db.query(Portfolio).filter(
         Portfolio.id == portfolio_id
@@ -733,7 +735,8 @@ async def ingest_portfolio_data(
             detail=error_message
         )
     
-    return result
+    return results
+    
 
 @router.get("/{portfolio_id}/calculate-ecl")
 async def calculate_ecl_provision(
@@ -788,8 +791,6 @@ async def stage_loans_ecl(
     from app.utils.staging import (stage_loans_ecl_orm)
     await stage_loans_ecl_orm(portfolio.id, db)
     
-
-
 
 @router.post("/{portfolio_id}/stage-loans-local")
 async def stage_loans_local(

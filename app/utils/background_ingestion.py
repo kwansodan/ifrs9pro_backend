@@ -397,4 +397,10 @@ async def start_background_ingestion(
     thread.daemon = True  # Allow the thread to be terminated when the main program exits
     thread.start()
     
-    return task_id
+    return {
+        "task_id": task_id,
+        "message": f"Portfolio {portfolio_id} ingestion started successfully.",
+        "uploaded_files": uploaded_filenames,
+        "status_check_url": f"/tasks/{task_id}/status"
+    }
+

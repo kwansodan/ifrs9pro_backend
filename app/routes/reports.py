@@ -91,8 +91,14 @@ async def generate_report(
         db.commit()
         db.refresh(report)
 
-        # Schedule background task (uses MinIO-backed run_and_save_report_task)
-        background_tasks.add_task(run_and_save_report_task, report.id, report_request.report_type, file_path, portfolio_id)
+        try:
+            # Schedule background task (uses MinIO-backed run_and_save_report_task)
+            background_tasks.add_task(run_and_save_report_task, report.id, report_request.report_type, file_path, portfolio_id)
+        except Exception as e:
+            # Update report status to failed
+            report.status = "failed"
+            db.commit()
+            raise e
 
         return {"message": "Report generation started", "report_id": report.id}
 
@@ -268,7 +274,7 @@ async def download_report_excel(
         )
 
     try:
-        # generate_presigned_url_for_download may be sync or async in your minio factory.
+        # generate_presigned_url_for_download may be sync or async in minio factory.
         presigned = generate_presigned_url_for_download(report.file_path)
         if asyncio.iscoroutine(presigned):
             presigned = await presigned

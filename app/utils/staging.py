@@ -135,11 +135,11 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, db: Session) -> Di
 
         config = validated_config 
 
-        current_range = config.get("current", {}).get("days_range", "")
-        olem_range = config.get("olem", {}).get("days_range", "")
-        substandard_range = config.get("substandard", {}).get("days_range", "")
-        doubtful_range = config.get("doubtful", {}).get("days_range", "")
-        loss_range = config.get("loss", {}).get("days_range", "")
+        current_range = config.get("Current", {}).get("days_range", "")
+        olem_range = config.get("OLEM", {}).get("days_range", "")
+        substandard_range = config.get("Substandard", {}).get("days_range", "")
+        doubtful_range = config.get("Doubtful", {}).get("days_range", "")
+        loss_range = config.get("Loss", {}).get("days_range", "")
        
         logger.info(f"BOG staging ranges: Current {current_range}, Olem: {olem_range}, substandard: {substandard_range}, doubtful: {doubtful_range}, loss: {loss_range}")
 
