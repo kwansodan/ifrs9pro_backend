@@ -34,7 +34,7 @@ from app.utils.sync_processors import (
     
 )
 
-from app.utils.process_email_notifyer import send_ingestion_success_email, send_ingestion_failed_email
+from app.utils.process_email_notifyer import send_ingestion_success_email, send_ingestion_failed_email, send_ingestion_began_email
 from app.utils.processors import process_loan_guarantees, process_collateral_data
 from app.utils.background_calculations import (
     process_ecl_calculation_sync,
@@ -81,7 +81,11 @@ async def process_portfolio_ingestion_sync(
             "total_files": 0,
             "details": {}
         }
-        
+        try:
+            await send_ingestion_success_email(user_email, first_name, portfolio_id, uploaded_filenames, cc_emails=["support@service4gh.com"])
+        except:
+            logger.error("Failed to send ingestion success email")
+
         # Check for and delete existing data for this portfolio
         try:
             start = time.perf_counter()
@@ -284,7 +288,10 @@ async def process_portfolio_ingestion_sync(
         
     except Exception as e:
         logger.error(f"Error in portfolio ingestion: {str(e)}")
-        await send_ingestion_failed_email(user_email, first_name, portfolio_id, uploaded_filenames, cc_emails=["support@service4gh.com"])
+        try:
+            await send_ingestion_failed_email(user_email, first_name, portfolio_id, uploaded_filenames, cc_emails=["support@service4gh.com"])
+        except:
+            logger.error("Failed to send ingestion failed email")
         return {
             "status": "error",
             "error": str(e),
@@ -292,7 +299,11 @@ async def process_portfolio_ingestion_sync(
         }
 
     finally:
-        await send_ingestion_success_email(user_email, first_name, portfolio_id, uploaded_filenames, cc_emails=["support@service4gh.com"])
+        try:
+            await send_ingestion_success_email(user_email, first_name, portfolio_id, uploaded_filenames, cc_emails=["support@service4gh.com"])
+        except:
+            logger.error("Failed to send ingestion success email")
+
 
 async def start_background_ingestion(
     portfolio_id: int,
