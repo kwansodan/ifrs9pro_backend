@@ -82,7 +82,7 @@ async def process_portfolio_ingestion_sync(
             "details": {}
         }
         try:
-            await send_ingestion_success_email(user_email, first_name, portfolio_id, uploaded_filenames, cc_emails=["support@service4gh.com"])
+            await send_ingestion_began_email(user_email, first_name, portfolio_id, uploaded_filenames, cc_emails=["support@service4gh.com"])
         except:
             logger.error("Failed to send ingestion success email")
 
