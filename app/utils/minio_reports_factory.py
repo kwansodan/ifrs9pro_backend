@@ -21,6 +21,7 @@ s3_client = boto3.client(
     config=Config(signature_version="s3v4"),
     region_name="us-east-1"  # arbitrary for MinIO
 )
+MINIO_PUBLIC_ENDPOINT = getattr(settings, "MINIO_PUBLIC_ENDPOINT", settings.MINIO_ENDPOINT)
 
 
 def upload_file_to_minio(file_path: str, object_name: str) -> str:
@@ -35,27 +36,46 @@ def upload_file_to_minio(file_path: str, object_name: str) -> str:
     except Exception:
         s3_client.create_bucket(Bucket=bucket_name)
 
-    # Upload the file
-    s3_client.upload_file(file_path, bucket_name, object_name)
+    try:
+        # Upload the file
+        s3_client.upload_file(file_path, bucket_name, object_name)
+    except boto3.exceptions.S3UploadFailedError as e:
+        logger.error(f"Upload failed: {e}")
+        raise HTTPException(status_code=500, detail="File upload failed")
 
     # Return URL to access file
-    file_url = f"{settings.MINIO_ENDPOINT}/{bucket_name}/{object_name}"
+    file_url = f"{MINIO_PUBLIC_ENDPOINT}/{bucket_name}/{object_name}"
     return file_url
 
 
 def generate_presigned_url(object_name: str, expiry_minutes: int = 10) -> str:
     """
     Generate a pre-signed URL for temporary access to a MinIO object.
-    Equivalent to generate_sas_url in Azure version.
     """
     bucket_name = settings.MINIO_BUCKET_NAME
     expiration = timedelta(minutes=expiry_minutes)
 
+    # Generate the internal presigned URL (using internal hostname)
     url = s3_client.generate_presigned_url(
         "get_object",
         Params={"Bucket": bucket_name, "Key": object_name},
         ExpiresIn=int(expiration.total_seconds())
     )
+    # Log debug info before replacement
+    logger.debug("DEBUG MINIO ENDPOINTS:")
+    logger.debug("  MINIO_ENDPOINT = %s", settings.MINIO_ENDPOINT)
+    logger.debug("  MINIO_PUBLIC_ENDPOINT = %s", settings.MINIO_PUBLIC_ENDPOINT)
+    logger.debug("  Presigned URL (before replace) = %s", url)
+
+    # Fix internal hostname in the generated URL (minio -> localhost)
+    if settings.MINIO_PUBLIC_ENDPOINT and settings.MINIO_PUBLIC_ENDPOINT != settings.MINIO_ENDPOINT:
+        from urllib.parse import urlparse
+
+        internal_host = urlparse(settings.MINIO_ENDPOINT).netloc
+        public_host = urlparse(settings.MINIO_PUBLIC_ENDPOINT).netloc
+
+        url = url.replace(internal_host, public_host)
+    
     return url
 
 
@@ -128,7 +148,7 @@ def run_and_save_report_task(report_id: int, report_type: str, file_path: str, p
                     worksheet.write(row_idx, 18, str(row.final_ecl))
                     row_idx += 1
 
-            case "BOG_impairment_detailed_report":
+            case "BOG_impairement_detailed_report":
                 bold_format = workbook.add_format({'bold': True})
                 left_format = workbook.add_format({'align': 'left'})
                 bold_left_format = workbook.add_format({'bold': True, 'align': 'left'})
@@ -318,7 +338,16 @@ async def generate_presigned_url_for_download(file_url: str, expiry_minutes: int
     """
     # Parse the MinIO URL to extract bucket and object name
     # Format: http://minio:9000/bucket-name/object-key
-    url_parts = file_url.replace(settings.MINIO_ENDPOINT + "/", "").split("/", 1)
+    # Handle both internal and public endpoints gracefully
+    internal_prefix = settings.MINIO_ENDPOINT.rstrip("/") + "/"
+    public_prefix = MINIO_PUBLIC_ENDPOINT.rstrip("/") + "/"
+    if file_url.startswith(internal_prefix):
+        file_url = file_url.replace(internal_prefix, "")
+    elif file_url.startswith(public_prefix):
+        file_url = file_url.replace(public_prefix, "")
+
+    url_parts = file_url.split("/", 1)
+
     
     if len(url_parts) != 2:
         raise ValueError(f"Invalid MinIO URL format: {file_url}")

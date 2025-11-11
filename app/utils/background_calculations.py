@@ -295,7 +295,7 @@ async def process_bog_impairment_calculation_sync(portfolio_id: int, reporting_d
         loss_rate = Decimal(provision_config.get("loss", {}).get("rate", 0))
 
 
-        #fethc all active loans in the portfolio
+        #fetch all active loans in the portfolio
         
         loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).order_by(Loan.id).offset(offset).limit(batch_size).all()
         if not loans:
@@ -352,7 +352,6 @@ async def process_bog_impairment_calculation_sync(portfolio_id: int, reporting_d
         "calculation_id": calculation_result.id,
         "portfolio_id": calculation_result.portfolio_id,
         "grand_total_local": safe_float(grand_total_local),
-        "provision_percentage": 0.0,
         "loan_count": loan_count
     }
 

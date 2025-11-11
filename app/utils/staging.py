@@ -11,6 +11,7 @@ from decimal import Decimal
 
 from app.models import Portfolio, Loan
 from app.schemas import ECLStagingConfig, LocalImpairmentConfig
+from app.utils.validate_bog import validate_and_fix_bog_config
 
 logger = logging.getLogger(__name__)
 
@@ -122,15 +123,23 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, db: Session) -> Di
     .filter(Portfolio.id == portfolio_id)
     .scalar()
 )
+        
+        if not latest_bog_config:
+            logger.error(f"No BOG staging config found for portfolio {portfolio_id}")
+            return {
+                "status": "error",
+                "error": "Missing BOG staging configuration"
+            }
+        # Validate & fix before staging
+        validated_config = validate_and_fix_bog_config(latest_bog_config)
 
+        config = validated_config 
 
-        config = latest_bog_config  # Assuming it's a dict
-
-        current_range = config.get("current", {}).get("days_range", "")
-        olem_range = config.get("olem", {}).get("days_range", "")
-        substandard_range = config.get("substandard", {}).get("days_range", "")
-        doubtful_range = config.get("doubtful", {}).get("days_range", "")
-        loss_range = config.get("loss", {}).get("days_range", "")
+        current_range = config.get("Current", {}).get("days_range", "")
+        olem_range = config.get("OLEM", {}).get("days_range", "")
+        substandard_range = config.get("Substandard", {}).get("days_range", "")
+        doubtful_range = config.get("Doubtful", {}).get("days_range", "")
+        loss_range = config.get("Loss", {}).get("days_range", "")
        
         logger.info(f"BOG staging ranges: Current {current_range}, Olem: {olem_range}, substandard: {substandard_range}, doubtful: {doubtful_range}, loss: {loss_range}")
 
