@@ -12,13 +12,25 @@ from decimal import Decimal
 from app.models import Portfolio, Loan
 from app.schemas import ECLStagingConfig, LocalImpairmentConfig
 from app.utils.validate_bog import validate_and_fix_bog_config
+from app.utils.process_email_notifyer import (
+    send_stage_loans_ecl_started_email,
+    send_stage_loans_ecl_success_email, 
+    send_stage_loans_ecl_failed_email,
+    send_stage_loans_local_started_email,
+    send_stage_loans_local_success_email,
+    send_stage_loans_local_failed_email
+)
 
 logger = logging.getLogger(__name__)
 
-async def stage_loans_ecl_orm(portfolio_id: int, db: Session) -> Dict[str, Any]:
+async def stage_loans_ecl_orm(portfolio_id: int, db: Session, user_email, first_name) -> Dict[str, Any]:
     """
     Implementation of ECL staging using SQLAlchemy ORM for large datasets.
     """
+    try:
+        await send_stage_loans_ecl_started_email(user_email, first_name, portfolio_id, cc_emails=["support@service4gh.com"])
+    except:
+        logger.error("Failed to send loans ecl staging began email")
     try:
         logger.info(f"Starting ECL staging for portfolio {portfolio_id}")
         
@@ -99,20 +111,34 @@ async def stage_loans_ecl_orm(portfolio_id: int, db: Session) -> Dict[str, Any]:
             
             # Log progress
             logger.info(f"Processed {offset} loans out of for ECL staging")
+        try:
+            await send_stage_loans_ecl_success_email(user_email, first_name, portfolio_id, cc_emails=["support@service4gh.com"])
+        except:
+            logger.error("Failed to send loans ecl staging success email")
        
     except Exception as e:
+        try:
+            await send_stage_loans_ecl_failed_email(user_email, first_name, portfolio_id, cc_emails=["support@service4gh.com"])
+        except:
+            logger.error("Failed to send loans ecl staging began email")
         db.rollback()
         logger.error(f"Error in ECL staging: {str(e)}")
         return {
             "status": "error",
             "error": str(e)
         }
+    
  
 
-async def stage_loans_local_impairment_orm(portfolio_id: int, db: Session) -> Dict[str, Any]:
+async def stage_loans_local_impairment_orm(portfolio_id: int, db: Session, user_email, first_name) -> Dict[str, Any]:
     """
     Implementation of ECL staging using SQLAlchemy ORM for large datasets.
     """
+    try:
+        await send_stage_loans_local_started_email(user_email, first_name, portfolio_id, cc_emails=["support@service4gh.com"])
+    except:
+        logger.error("Failed to send loans local staging began email")
+
     try:
         logger.info(f"Starting BOG staging for portfolio {portfolio_id}")
         
@@ -204,8 +230,16 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, db: Session) -> Di
             
             # Log progress
             logger.info(f"Processed {offset} loans out of for BOG staging")
+            try:
+                await send_stage_loans_ecl_success_email(user_email, first_name, portfolio_id, cc_emails=["support@service4gh.com"])
+            except:
+                logger.error("Failed to send loans ecl staging success email")
        
     except Exception as e:
+        try:
+            await send_stage_loans_ecl_failed_email(user_email, first_name, portfolio_id, cc_emails=["support@service4gh.com"])
+        except:
+            logger.error("Failed to send loans ecl staging failed email")
         db.rollback()
         logger.error(f"Error in BOG staging: {str(e)}")
         return {

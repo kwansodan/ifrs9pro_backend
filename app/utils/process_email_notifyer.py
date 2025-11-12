@@ -107,3 +107,292 @@ support@service4gh.com
     """
     return await send_email(user_email, subject, body, cc_emails)
 
+
+# =====================================================
+# ECL CALCULATION EMAILS
+# =====================================================
+
+async def send_calc_ecl_started_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    cc_emails: Optional[List[str]] = None,
+):
+    subject = "ECL Calculation Started"
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    body = f"""
+Hello {first_name},
+
+The Expected Credit Loss (ECL) calculation for your portfolio has started.
+The process is expected to complete in under 30 minutes.
+
+You can monitor progress and later review results here:
+{summary_url}
+
+Thank you,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)
+
+
+async def send_calc_ecl_success_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    cc_emails: Optional[List[str]] = None,
+):
+    subject = "ECL Calculation Completed"
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    body = f"""
+Hello {first_name},
+
+The Expected Credit Loss (ECL) calculation for your portfolio has been completed successfully.
+
+You can review the results here:
+{summary_url}
+
+Thank you,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)
+
+async def send_calc_ecl_failed_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    cc_emails: Optional[List[str]] = None,
+):
+    subject = "ECL Calculation Completed"
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    body = f"""
+Hello {first_name},
+
+The Expected Credit Loss (ECL) calculation for your portfolio has encountered errors. and failed.
+
+You can review the results here:
+{summary_url}
+
+Thank you,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)
+
+# =====================================================
+# LOCAL IMPAIRMENT EMAILS
+# =====================================================
+
+async def send_calc_local_impairment_started_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    cc_emails: Optional[List[str]] = None,
+):
+    subject = "Local Impairment Calculation Started"
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    body = f"""
+Hello {first_name},
+
+The local impairment calculation for your portfolio has started.
+The process is expected to be completed in under 30 minutes
+
+You can monitor progress and later review the results here:
+{summary_url}
+
+Thank you,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)
+
+
+async def send_calc_local_impairment_success_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    cc_emails: Optional[List[str]] = None,
+):
+    subject = "Local Impairment Calculation Completed"
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    body = f"""
+Hello {first_name},
+
+The local impairment calculation for your portfolio has been completed successfully.
+
+You can view the results here:
+{summary_url}
+
+Thank you,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)
+
+
+async def send_calc_local_impairment_failed_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    cc_emails: Optional[List[str]] = None,
+):
+    subject = "Local Impairment Calculation Completed"
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    body = f"""
+Hello {first_name},
+
+The local impairment calculation for your portfolio has encountered errors and failed.
+
+You can view the results here:
+{summary_url}
+
+Thank you,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)
+
+
+
+# =====================================================
+# STAGE LOANS EMAILS (ECL + LOCAL)
+# =====================================================
+
+async def send_stage_loans_ecl_started_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    cc_emails: Optional[List[str]] = None,
+):
+    subject = "Loan Staging for ECL Started"
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    body = f"""
+Hello {first_name},
+
+The loan staging process for Expected Credit Loss (ECL) computation has started.
+The process is expected to be completed under 40 minutes
+
+You can monitor progress and later review the staging results here:
+{summary_url}
+
+Thank you,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)
+
+
+async def send_stage_loans_ecl_success_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    cc_emails: Optional[List[str]] = None,
+):
+    subject = "Loan Staging for ECL Completed"
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    body = f"""
+Hello {first_name},
+
+The loan staging process for Expected Credit Loss (ECL) computation has been completed successfully.
+
+You can review the results here:
+{summary_url}
+
+Thank you,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)
+
+
+async def send_stage_loans_ecl_failed_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    cc_emails: Optional[List[str]] = None,
+):
+    subject = "Loan Staging for ECL Completed"
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    body = f"""
+Hello {first_name},
+
+The loan staging process for Expected Credit Loss (ECL) computation has encountered errors and failed.
+
+You can review the results here:
+{summary_url}
+
+Thank you,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)
+
+
+async def send_stage_loans_local_started_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    cc_emails: Optional[List[str]] = None,
+):
+    subject = "Loan Staging for Local Impairment Started"
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    body = f"""
+Hello {first_name},
+
+The loan staging process for local impairment computation has started.
+The process is expected to be completed under 40 minutes
+You can monitor progress and later review the staging results here:
+{summary_url}
+
+Thank you,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)
+
+
+async def send_stage_loans_local_success_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    cc_emails: Optional[List[str]] = None,
+):
+    subject = "Loan Staging for Local Impairment Completed"
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    body = f"""
+Hello {first_name},
+
+The loan staging process for local impairment computation has been completed successfully.
+
+You can review the results here:
+{summary_url}
+
+Thank you,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)
+
+
+async def send_stage_loans_local_failed_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    cc_emails: Optional[List[str]] = None,
+):
+    subject = "Loan Staging for Local Impairment Completed"
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    body = f"""
+Hello {first_name},
+
+The loan staging process for local impairment computation has encountered errors and failed.
+
+You can review the results here:
+{summary_url}
+
+Thank you,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)

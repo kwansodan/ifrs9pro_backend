@@ -40,6 +40,7 @@ from app.utils.report_generators import (
 from app.utils.minio_reports_factory import (
     run_and_save_report_task,
     generate_presigned_url_for_download,
+    download_report
 )
 from app.config import settings
 from app.schemas import (
@@ -287,6 +288,37 @@ async def download_report_excel(
             detail=f"Error generating download URL: {str(e)}",
         )
 
+@router.get("/download-direct/{report_name}")
+async def download_report_direct(report_name: str):
+    """
+    Download a report file directly from the default MinIO bucket.
+    Example: /reports/download-direct/ecl_detailed_report_bd735f8eb4f641d98b02d0c2396eb9a0.xlsx
+    """
+    bucket_name = "ifrs9pro-reports"  # or settings.MINIO_BUCKET_NAME if configurable
+    object_name = f"reports/{report_name}"
+
+    try:
+        file_data = download_report(bucket_name, object_name)
+        if asyncio.iscoroutine(file_data):
+            file_data = await file_data
+
+        return StreamingResponse(
+            file_data,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={report_name}"}
+        )
+
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Report '{report_name}' not found in bucket '{bucket_name}'"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error downloading report: {str(e)}"
+        )
+    
 
 @router.get("/status/{report_id}")
 def get_report_status(report_id: int, db: Session = Depends(get_db)):

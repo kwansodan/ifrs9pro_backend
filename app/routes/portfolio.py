@@ -767,7 +767,9 @@ async def calculate_ecl_provision(
         return await process_ecl_calculation_sync(
             portfolio_id=portfolio_id,
             reporting_date=reporting_date,
-            db=db
+            db=db, 
+            user_email = current_user.email,
+            first_name = current_user.first_name
         )
     except Exception as e:
         logger.error(f"ECL calculation failed: {str(e)}")
@@ -790,7 +792,12 @@ async def stage_loans_ecl(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
     from app.utils.staging import (stage_loans_ecl_orm)
-    await stage_loans_ecl_orm(portfolio.id, db)
+    await stage_loans_ecl_orm(
+        portfolio.id, 
+        db,
+        user_email = current_user.email,
+        first_name = current_user.first_name
+        )
     
 
 @router.post("/{portfolio_id}/stage-loans-local")
@@ -810,7 +817,12 @@ async def stage_loans_local(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
     from app.utils.staging import (stage_loans_local_impairment_orm)
-    await stage_loans_local_impairment_orm(portfolio.id, db)
+    await stage_loans_local_impairment_orm(
+        portfolio.id, 
+        db,
+        User_email = current_user.email,
+        first_name = current_user.first_name
+        )
     
 
 
@@ -845,7 +857,9 @@ async def calculate_local_provision(
         return await process_bog_impairment_calculation_sync(
             portfolio_id=portfolio_id,
             reporting_date=reporting_date,
-            db=db
+            db=db,
+            user_email = current_user.email,
+            first_name = current_user.first_name
         )
     except Exception as e:
         logger.error(f"Local Impairment calculation failed: {str(e)}")

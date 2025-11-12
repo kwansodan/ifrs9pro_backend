@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, date
 from app.config import settings
 import os
 import logging
+from io import BytesIO
 from sqlalchemy import text, func, case, cast, String, and_, select, Numeric, literal_column, union_all
 from app.database import SessionLocal
 from app.models import Loan, User, Report, Portfolio
@@ -78,6 +79,28 @@ def generate_presigned_url(object_name: str, expiry_minutes: int = 10) -> str:
     
     return url
 
+def download_report(bucket_name: str, object_name: str) -> BytesIO:
+    """
+    Download a file from a MinIO bucket using boto3 and return it as BytesIO.
+    Raises an exception if bucket or object not found.
+    """
+    try:
+        # Check bucket existence
+        s3_client.head_bucket(Bucket=bucket_name)
+    except Exception:
+        raise FileNotFoundError(f"Bucket '{bucket_name}' not found")
+
+    # Download the file into memory
+    try:
+        file_obj = BytesIO()
+        s3_client.download_fileobj(bucket_name, object_name, file_obj)
+        file_obj.seek(0)
+        return file_obj
+    except s3_client.exceptions.NoSuchKey:
+        raise FileNotFoundError(f"Object '{object_name}' not found in bucket '{bucket_name}'")
+    except Exception as e:
+        raise RuntimeError(f"Error downloading '{object_name}' from '{bucket_name}': {str(e)}")
+    
 
 def run_and_save_report_task(report_id: int, report_type: str, file_path: str, portfolio_id: int):
     """
@@ -148,7 +171,7 @@ def run_and_save_report_task(report_id: int, report_type: str, file_path: str, p
                     worksheet.write(row_idx, 18, str(row.final_ecl))
                     row_idx += 1
 
-            case "BOG_impairement_detailed_report":
+            case "BOG_impairment_detailed_report":
                 bold_format = workbook.add_format({'bold': True})
                 left_format = workbook.add_format({'align': 'left'})
                 bold_left_format = workbook.add_format({'bold': True, 'align': 'left'})
@@ -366,3 +389,4 @@ async def generate_presigned_url_for_download(file_url: str, expiry_minutes: int
     )
     
     return presigned_url
+
