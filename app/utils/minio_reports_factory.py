@@ -22,7 +22,16 @@ s3_client = boto3.client(
     config=Config(signature_version="s3v4"),
     region_name="us-east-1"  # arbitrary for MinIO
 )
-MINIO_PUBLIC_ENDPOINT = getattr(settings, "MINIO_PUBLIC_ENDPOINT", settings.MINIO_ENDPOINT)
+MINIO_PUBLIC_ENDPOINT = getattr(settings, "MINIO_PUBLIC_ENDPOINT")
+
+public_s3_client = boto3.client(
+    "s3",
+    endpoint_url=settings.MINIO_PUBLIC_ENDPOINT,  # e.g. "http://localhost:9000"
+    aws_access_key_id=settings.MINIO_ACCESS_KEY,
+    aws_secret_access_key=settings.MINIO_SECRET_KEY,
+    config=Config(signature_version="s3v4"),
+    region_name="us-east-1"  # arbitrary for MinIO
+)
 
 
 def upload_file_to_minio(file_path: str, object_name: str) -> str:
@@ -49,35 +58,17 @@ def upload_file_to_minio(file_path: str, object_name: str) -> str:
     return file_url
 
 
-def generate_presigned_url(object_name: str, expiry_minutes: int = 10) -> str:
-    """
-    Generate a pre-signed URL for temporary access to a MinIO object.
-    """
-    bucket_name = settings.MINIO_BUCKET_NAME
-    expiration = timedelta(minutes=expiry_minutes)
-
-    # Generate the internal presigned URL (using internal hostname)
-    url = s3_client.generate_presigned_url(
+def generate_presigned_url(object_name: str, expiry_minutes: int = 10):
+    print("DEBUG PRESIGNED USING:", public_s3_client.meta.endpoint_url)
+    print("DEBUG INTERNAL:", s3_client.meta.endpoint_url)
+    bucket = settings.MINIO_BUCKET_NAME
+    url = public_s3_client.generate_presigned_url(
         "get_object",
-        Params={"Bucket": bucket_name, "Key": object_name},
-        ExpiresIn=int(expiration.total_seconds())
+        Params={"Bucket": bucket, "Key": object_name},
+        ExpiresIn=expiry_minutes * 60,
     )
-    # Log debug info before replacement
-    logger.debug("DEBUG MINIO ENDPOINTS:")
-    logger.debug("  MINIO_ENDPOINT = %s", settings.MINIO_ENDPOINT)
-    logger.debug("  MINIO_PUBLIC_ENDPOINT = %s", settings.MINIO_PUBLIC_ENDPOINT)
-    logger.debug("  Presigned URL (before replace) = %s", url)
-
-    # Fix internal hostname in the generated URL (minio -> localhost)
-    if settings.MINIO_PUBLIC_ENDPOINT and settings.MINIO_PUBLIC_ENDPOINT != settings.MINIO_ENDPOINT:
-        from urllib.parse import urlparse
-
-        internal_host = urlparse(settings.MINIO_ENDPOINT).netloc
-        public_host = urlparse(settings.MINIO_PUBLIC_ENDPOINT).netloc
-
-        url = url.replace(internal_host, public_host)
-    
     return url
+
 
 def download_report(bucket_name: str, object_name: str) -> BytesIO:
     """

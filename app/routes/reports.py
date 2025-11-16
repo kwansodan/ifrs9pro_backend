@@ -15,6 +15,7 @@ import base64
 import logging
 from io import BytesIO
 import asyncio
+from urllib.parse import urlparse
 
 from app.database import get_db
 from app.models import Portfolio, User, Report
@@ -242,27 +243,18 @@ async def delete_report(
         raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
 
 
-@router.get(
-    "/{portfolio_id}/report/{report_id}/download", status_code=status.HTTP_200_OK
-)
+@router.get("/{portfolio_id}/report/{report_id}/download", status_code=status.HTTP_200_OK)
 async def download_report_excel(
     portfolio_id: int,
     report_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    portfolio = (
-        db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id)
-        .first()
-    )
-
-    if not portfolio:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
-        )
-
-    # Get the report
+    """
+    Fetch report metadata and download the actual file from MinIO.
+    Only uses `report_name` from the report object.
+    """
+    # 1️⃣ Fetch report metadata
     report = (
         db.query(Report)
         .filter(Report.id == report_id, Report.portfolio_id == portfolio_id)
@@ -270,33 +262,14 @@ async def download_report_excel(
     )
 
     if not report:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Report not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
 
-    try:
-        # generate_presigned_url_for_download may be sync or async in minio factory.
-        presigned = generate_presigned_url_for_download(report.file_path)
-        if asyncio.iscoroutine(presigned):
-            presigned = await presigned
-
-        return {"download_url": presigned}
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error generating download URL: {str(e)}",
-        )
-
-@router.get("/download-direct/{report_name}")
-async def download_report_direct(report_name: str):
-    """
-    Download a report file directly from the default MinIO bucket.
-    Example: /reports/download-direct/ecl_detailed_report_bd735f8eb4f641d98b02d0c2396eb9a0.xlsx
-    """
-    bucket_name = "ifrs9pro-reports"  # or settings.MINIO_BUCKET_NAME if configurable
+    # 2️⃣ Extract report_name
+    report_name = report.report_name
+    bucket_name = "ifrs9pro-reports"
     object_name = f"reports/{report_name}"
 
+    # 3️⃣ Download and stream the file
     try:
         file_data = download_report(bucket_name, object_name)
         if asyncio.iscoroutine(file_data):
@@ -318,7 +291,7 @@ async def download_report_direct(report_name: str):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error downloading report: {str(e)}"
         )
-    
+
 
 @router.get("/status/{report_id}")
 def get_report_status(report_id: int, db: Session = Depends(get_db)):
