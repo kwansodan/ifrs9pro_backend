@@ -49,10 +49,6 @@ def upgrade() -> None:
                existing_type=sa.DOUBLE_PRECISION(precision=53),
                type_=sa.Numeric(precision=32, scale=2),
                existing_nullable=True)
-    op.alter_column('loans', 'ecl',
-               existing_type=sa.DOUBLE_PRECISION(precision=53),
-               type_=sa.Numeric(precision=32, scale=2),
-               existing_nullable=True)
     op.alter_column('loans', 'eir',
                existing_type=sa.DOUBLE_PRECISION(precision=53),
                type_=sa.Numeric(precision=32, scale=2),
@@ -96,10 +92,6 @@ def downgrade() -> None:
                type_=sa.DOUBLE_PRECISION(precision=53),
                existing_nullable=True)
     op.alter_column('loans', 'eir',
-               existing_type=sa.Numeric(precision=30, scale=2),
-               type_=sa.DOUBLE_PRECISION(precision=53),
-               existing_nullable=True)
-    op.alter_column('loans', 'ecl',
                existing_type=sa.Numeric(precision=30, scale=2),
                type_=sa.DOUBLE_PRECISION(precision=53),
                existing_nullable=True)

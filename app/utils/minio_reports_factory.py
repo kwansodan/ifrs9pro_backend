@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, date
 from app.config import settings
 import os
 import logging
+from io import BytesIO
 from sqlalchemy import text, func, case, cast, String, and_, select, Numeric, literal_column, union_all
 from app.database import SessionLocal
 from app.models import Loan, User, Report, Portfolio
@@ -16,6 +17,16 @@ logger = logging.getLogger(__name__)
 s3_client = boto3.client(
     "s3",
     endpoint_url=settings.MINIO_ENDPOINT,  # e.g. "http://localhost:9000"
+    aws_access_key_id=settings.MINIO_ACCESS_KEY,
+    aws_secret_access_key=settings.MINIO_SECRET_KEY,
+    config=Config(signature_version="s3v4"),
+    region_name="us-east-1"  # arbitrary for MinIO
+)
+MINIO_PUBLIC_ENDPOINT = getattr(settings, "MINIO_PUBLIC_ENDPOINT")
+
+public_s3_client = boto3.client(
+    "s3",
+    endpoint_url=settings.MINIO_PUBLIC_ENDPOINT,  # e.g. "http://localhost:9000"
     aws_access_key_id=settings.MINIO_ACCESS_KEY,
     aws_secret_access_key=settings.MINIO_SECRET_KEY,
     config=Config(signature_version="s3v4"),
@@ -35,29 +46,52 @@ def upload_file_to_minio(file_path: str, object_name: str) -> str:
     except Exception:
         s3_client.create_bucket(Bucket=bucket_name)
 
-    # Upload the file
-    s3_client.upload_file(file_path, bucket_name, object_name)
+    try:
+        # Upload the file
+        s3_client.upload_file(file_path, bucket_name, object_name)
+    except boto3.exceptions.S3UploadFailedError as e:
+        logger.error(f"Upload failed: {e}")
+        raise HTTPException(status_code=500, detail="File upload failed")
 
     # Return URL to access file
-    file_url = f"{settings.MINIO_ENDPOINT}/{bucket_name}/{object_name}"
+    file_url = f"{MINIO_PUBLIC_ENDPOINT}/{bucket_name}/{object_name}"
     return file_url
 
 
-def generate_presigned_url(object_name: str, expiry_minutes: int = 10) -> str:
-    """
-    Generate a pre-signed URL for temporary access to a MinIO object.
-    Equivalent to generate_sas_url in Azure version.
-    """
-    bucket_name = settings.MINIO_BUCKET_NAME
-    expiration = timedelta(minutes=expiry_minutes)
-
-    url = s3_client.generate_presigned_url(
+def generate_presigned_url(object_name: str, expiry_minutes: int = 10):
+    print("DEBUG PRESIGNED USING:", public_s3_client.meta.endpoint_url)
+    print("DEBUG INTERNAL:", s3_client.meta.endpoint_url)
+    bucket = settings.MINIO_BUCKET_NAME
+    url = public_s3_client.generate_presigned_url(
         "get_object",
-        Params={"Bucket": bucket_name, "Key": object_name},
-        ExpiresIn=int(expiration.total_seconds())
+        Params={"Bucket": bucket, "Key": object_name},
+        ExpiresIn=expiry_minutes * 60,
     )
     return url
 
+
+def download_report(bucket_name: str, object_name: str) -> BytesIO:
+    """
+    Download a file from a MinIO bucket using boto3 and return it as BytesIO.
+    Raises an exception if bucket or object not found.
+    """
+    try:
+        # Check bucket existence
+        s3_client.head_bucket(Bucket=bucket_name)
+    except Exception:
+        raise FileNotFoundError(f"Bucket '{bucket_name}' not found")
+
+    # Download the file into memory
+    try:
+        file_obj = BytesIO()
+        s3_client.download_fileobj(bucket_name, object_name, file_obj)
+        file_obj.seek(0)
+        return file_obj
+    except s3_client.exceptions.NoSuchKey:
+        raise FileNotFoundError(f"Object '{object_name}' not found in bucket '{bucket_name}'")
+    except Exception as e:
+        raise RuntimeError(f"Error downloading '{object_name}' from '{bucket_name}': {str(e)}")
+    
 
 def run_and_save_report_task(report_id: int, report_type: str, file_path: str, portfolio_id: int):
     """
@@ -318,7 +352,16 @@ async def generate_presigned_url_for_download(file_url: str, expiry_minutes: int
     """
     # Parse the MinIO URL to extract bucket and object name
     # Format: http://minio:9000/bucket-name/object-key
-    url_parts = file_url.replace(settings.MINIO_ENDPOINT + "/", "").split("/", 1)
+    # Handle both internal and public endpoints gracefully
+    internal_prefix = settings.MINIO_ENDPOINT.rstrip("/") + "/"
+    public_prefix = MINIO_PUBLIC_ENDPOINT.rstrip("/") + "/"
+    if file_url.startswith(internal_prefix):
+        file_url = file_url.replace(internal_prefix, "")
+    elif file_url.startswith(public_prefix):
+        file_url = file_url.replace(public_prefix, "")
+
+    url_parts = file_url.split("/", 1)
+
     
     if len(url_parts) != 2:
         raise ValueError(f"Invalid MinIO URL format: {file_url}")
@@ -337,3 +380,4 @@ async def generate_presigned_url_for_download(file_url: str, expiry_minutes: int
     )
     
     return presigned_url
+

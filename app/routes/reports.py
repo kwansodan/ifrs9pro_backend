@@ -15,6 +15,7 @@ import base64
 import logging
 from io import BytesIO
 import asyncio
+from urllib.parse import urlparse
 
 from app.database import get_db
 from app.models import Portfolio, User, Report
@@ -269,9 +270,7 @@ async def download_report_excel(
     )
 
     if not report:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Report not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
 
     try:
 
@@ -282,10 +281,15 @@ async def download_report_excel(
 
         
 
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Report '{report_name}' not found in bucket '{bucket_name}'"
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error generating download URL: {str(e)}",
+            detail=f"Error downloading report: {str(e)}"
         )
 
 

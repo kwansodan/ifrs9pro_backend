@@ -205,7 +205,7 @@ class Loan(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     portfolio_id = Column(Integer, ForeignKey("portfolios.id",ondelete='CASCADE'))
-    loan_no = Column(String, index=True, nullable=True) 
+    loan_no = Column(String, index=True, nullable=True)
     employee_id = Column(String, nullable=True)
     employee_name = Column(String, nullable=True)
     employer = Column(String, nullable=True)
@@ -452,7 +452,7 @@ class HelpStatus(str, PyEnum):
     COMPLETED = "completed"
 
 
-    
+
 class Help(Base):
     __tablename__ = "help"
 
@@ -470,7 +470,7 @@ class Help(Base):
 
 
 
-    
+
 class StagingResult(Base):
     """
     Stores the results of loan staging operations, either for local impairment or ECL.
@@ -483,7 +483,7 @@ class StagingResult(Base):
     config = Column(JSON, nullable=False)  # Store the configuration used for staging
     result_summary = Column(JSON, nullable=False)  # Summary statistics of staging
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
+
     # Relationships
     portfolio = relationship("Portfolio", back_populates="staging_results")
 
@@ -503,8 +503,6 @@ class CalculationResult(Base):
     provision_percentage = Column(Numeric(precision=10, scale=4), nullable=False)
     reporting_date = Column(Date, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
+
     # Relationships
     portfolio = relationship("Portfolio", back_populates="calculation_results")
-
-

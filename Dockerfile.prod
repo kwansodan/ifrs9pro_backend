@@ -1,0 +1,80 @@
+# syntax = docker/dockerfile:1
+
+##########################
+# 1) BUILDER STAGE
+##########################
+FROM python:3.12-slim AS builder
+
+# Avoid DNS issues by using direct-IP mirrors
+RUN echo "deb http://151.101.130.132/debian trixie main" > /etc/apt/sources.list && \
+    echo "deb http://151.101.130.132/debian trixie-updates main" >> /etc/apt/sources.list && \
+    echo "deb http://151.101.130.132/debian-security trixie-security main" >> /etc/apt/sources.list
+
+# Install system dependencies needed to build wheels
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set env
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY requirements.txt .
+
+# Build wheels instead of installing inside builder
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
+
+
+
+##########################
+# 2) FINAL RUNTIME STAGE
+##########################
+FROM python:3.12-slim AS runner
+
+# Install only runtime system deps (lighter)
+RUN echo "deb http://151.101.130.132/debian trixie main" > /etc/apt/sources.list && \
+    echo "deb http://151.101.130.132/debian trixie-updates main" >> /etc/apt/sources.list && \
+    echo "deb http://151.101.130.132/debian-security trixie-security main" >> /etc/apt/sources.list
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+
+WORKDIR /app
+
+# Copy only wheels from builder
+COPY --from=builder /wheels /wheels
+
+# Install wheels (much faster, no compilers)
+RUN pip install --no-cache-dir /wheels/*
+
+# Copy app code AFTER installing dependencies (keeps caching fast)
+COPY . .
+
+RUN mkdir -p /app/reports /app/site
+
+EXPOSE 8000
+
+# HEALTHCHECK
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+############################################
+# 🔥 PRODUCTION COMMAND: Gunicorn + Uvicorn
+############################################
+CMD ["gunicorn", "main:app", \
+     "--workers", "4", \
+     "--worker-class", "uvicorn.workers.UvicornWorker", \
+     "--bind", "0.0.0.0:8000", \
+     "--timeout", "120"]

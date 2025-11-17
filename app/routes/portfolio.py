@@ -21,6 +21,7 @@ from datetime import datetime, timedelta, date
 from pydantic import BaseModel
 from typing import List, Dict, Optional, Union
 import pandas as pd
+import time
 import io
 from app.database import get_db
 from app.models import Portfolio, User
@@ -102,6 +103,7 @@ from app.utils.background_calculations import (
     process_bog_impairment_calculation_sync
 )
 from app.utils.ecl_calculator import calculate_loss_given_default
+from app.utils.ingest_file_validation import validate_all_uploaded_files
 import os
 
 logger = logging.getLogger(__name__)
@@ -629,6 +631,16 @@ async def ingest_portfolio_data(
     
     The function processes the files synchronously and returns the processing result.
     """
+    # Validate file formats and schema
+    '''
+    await validate_all_uploaded_files(
+        loan_details,
+        client_data,
+        loan_guarantee_data,
+        loan_collateral_data
+    )
+    '''
+    
     # Check if portfolio exists and belongs to user
     portfolio = db.query(Portfolio).filter(
         Portfolio.id == portfolio_id
@@ -724,6 +736,7 @@ async def ingest_portfolio_data(
         )
     
     return result
+    
 
 @router.get("/{portfolio_id}/calculate-ecl")
 async def calculate_ecl_provision(
@@ -732,6 +745,7 @@ async def calculate_ecl_provision(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    
 
     # Use provided reporting date or default to current date
     if not reporting_date:
@@ -753,7 +767,9 @@ async def calculate_ecl_provision(
         return await process_ecl_calculation_sync(
             portfolio_id=portfolio_id,
             reporting_date=reporting_date,
-            db=db
+            db=db, 
+            user_email = current_user.email,
+            first_name = current_user.first_name
         )
     except Exception as e:
         logger.error(f"ECL calculation failed: {str(e)}")
@@ -776,10 +792,13 @@ async def stage_loans_ecl(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
     from app.utils.staging import (stage_loans_ecl_orm)
-    await stage_loans_ecl_orm(portfolio.id, db)
+    await stage_loans_ecl_orm(
+        portfolio.id, 
+        db,
+        user_email = current_user.email,
+        first_name = current_user.first_name
+        )
     
-
-
 
 @router.post("/{portfolio_id}/stage-loans-local")
 async def stage_loans_local(
@@ -798,7 +817,12 @@ async def stage_loans_local(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
     from app.utils.staging import (stage_loans_local_impairment_orm)
-    await stage_loans_local_impairment_orm(portfolio.id, db)
+    await stage_loans_local_impairment_orm(
+        portfolio.id, 
+        db,
+        user_email = current_user.email,
+        first_name = current_user.first_name
+        )
     
 
 
@@ -833,7 +857,9 @@ async def calculate_local_provision(
         return await process_bog_impairment_calculation_sync(
             portfolio_id=portfolio_id,
             reporting_date=reporting_date,
-            db=db
+            db=db,
+            user_email = current_user.email,
+            first_name = current_user.first_name
         )
     except Exception as e:
         logger.error(f"Local Impairment calculation failed: {str(e)}")

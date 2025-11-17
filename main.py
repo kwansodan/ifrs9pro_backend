@@ -28,6 +28,7 @@ import asyncio
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("app")
 
+
 # Initialize the FastAPI app first
 app = FastAPI()
 

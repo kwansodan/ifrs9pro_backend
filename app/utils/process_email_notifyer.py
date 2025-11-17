@@ -1,59 +1,42 @@
 import os
-from typing import List
-import asyncio
-from azure.communication.email import EmailClient
-from azure.communication.email.aio import EmailClient as AsyncEmailClient
-from azure.core.credentials import AzureKeyCredential
+from typing import List, Optional
+from mailjet_rest import Client
 from app.config import settings
-from urllib.parse import urlencode
+import html
 
 FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL")
-
-# Azure Communication Services configuration
-AZURE_COMMUNICATION_CONNECTION_STRING = os.getenv(
-    "AZURE_COMMUNICATION_CONNECTION_STRING"
-)
-AZURE_SENDER_EMAIL = os.getenv("AZURE_SENDER_EMAIL")
+MAILJET_API_KEY = os.getenv("MAILJET_API_KEY")
+MAILJET_API_SECRET = os.getenv("MAILJET_API_SECRET")
+MAILJET_SENDER_EMAIL = os.getenv("MAILJET_SENDER_EMAIL")
 
 
-async def send_email(to_email: str, subject: str, body: str, cc_emails: str):
+async def send_email(to_email: str, subject: str, body: str, cc_emails: Optional[List[str]] = None):
     """
-    Send email using Azure Communication Services.
+    Send email using Mailjet Communication Services.
     """
     try:
-        # Create the email client
-        email_client = AsyncEmailClient.from_connection_string(
-            AZURE_COMMUNICATION_CONNECTION_STRING
-        )
+        email_client = Client(auth=(MAILJET_API_KEY, MAILJET_API_SECRET), version="v3.1")
 
-        recipients = {"to": [{"address": to_email}]}
-        if cc_emails:
-            recipients["cc"] = [{"address": email} for email in cc_emails]
-
-        # Create the email message
-        message = {
-            "senderAddress": AZURE_SENDER_EMAIL,
-            "recipients":recipients,
-            "content": {
-                "subject": subject,
-                "plainText": body,
-                "html": body.replace("\n", "<br>"),
-            },
+        data = {
+            "Messages": [
+                {
+                    "From": {"Email": MAILJET_SENDER_EMAIL, "Name": "IFRS9Pro Team"},
+                    "To": [{"Email": to_email}],
+                    "Cc": [{"Email": email} for email in cc_emails] if cc_emails else [],
+                    "Subject": subject,
+                    "TextPart": body,
+                    "HTMLPart": html.escape(body).replace("\n", "<br>"),
+                }
+            ]
         }
 
-        # Send the email
-        poller = await email_client.begin_send(message)
-        result = await poller.result()
-
-        # Close the client
-        await email_client.close()
-
+        result = email_client.send.create(data=data)
         return True
+
     except Exception as e:
         print(f"Failed to send email: {str(e)}")
-        # For development/testing, you may want to fall back to mock implementation
         if settings.DEBUG:
-            print(f"\n----- MOCK EMAIL (Azure send failed) -----")
+            print(f"\n----- MOCK EMAIL (Mailjet send failed) -----")
             print(f"To: {to_email}")
             print(f"Subject: {subject}")
             print(f"Body:\n{body}")
@@ -61,17 +44,13 @@ async def send_email(to_email: str, subject: str, body: str, cc_emails: str):
         return False
 
 
-async def send_ingestion_success_email(user_email: str, first_name: str, portfolio_id: int, uploaded_filenames: str, cc_emails: str):
-    """
-    Notify user that their ingestion process has completed successfully.
-    """
-    user_email=user_email
+async def send_ingestion_success_email(user_email: str, first_name: str, portfolio_id: int, uploaded_filenames: str, cc_emails: Optional[List[str]] = None):
     summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
     subject = "Ingestion Completed Successfully"
     body = f"""
 Hello {first_name},
 
-Your data ingestion process (including data quality review and automatic loan staging for the following imports'{uploaded_filenames}' has been completed successfully.
+Your data ingestion process (including data quality review and automatic loan staging) for the following imports '{uploaded_filenames}' has been completed successfully.
 
 You can view the results here:
 {summary_url}
@@ -83,19 +62,334 @@ support@service4gh.com
     return await send_email(user_email, subject, body, cc_emails)
 
 
-async def send_ingestion_failed_email(user_email: str, first_name: str, portfolio_id: int, uploaded_filenames: str, cc_emails: str):
-    """
-    Notify user that their ingestion process has completed successfully.
-    """
-    user_email=user_email
+async def send_ingestion_failed_email(user_email: str, first_name: str, portfolio_id: int, uploaded_filenames: str, cc_emails: Optional[List[str]] = None):
     summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
-    subject = "Ingestion Completed Successfully"
+    subject = "Ingestion Failed"
     body = f"""
 Hello {first_name},
 
-Your data ingestion process (including data quality review and automatic loan staging for the following imports'{uploaded_filenames}' has not been completed successfully.
+Your data ingestion process (including data quality review and automatic loan staging) for the following imports '{uploaded_filenames}' has NOT been completed successfully.
 
-The process failure has also been logged with our support team. Rest assured they will look into it and revert to you ASAP!
+The process failure has been logged with our support team, who will investigate and revert to you ASAP.
+
+Thank you,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)
+
+
+async def send_ingestion_began_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    uploaded_filenames: str,
+    cc_emails: Optional[List[str]] = None,
+):
+    """
+    Notify user that the ingestion process has started and provide an ETA.
+    """
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    subject = "Ingestion Process Started"
+    body = f"""
+Hello {first_name},
+
+Your data ingestion process (including data quality review and automatic loan staging) for the following imports '{uploaded_filenames}' has **begun**.
+
+This process typically completes within about **one hour**, depending on data size and system load.
+
+You can monitor progress and later view results here:
+{summary_url}
+
+Thank you for your patience,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)
+
+
+# =====================================================
+# ECL CALCULATION EMAILS
+# =====================================================
+
+async def send_calc_ecl_started_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    cc_emails: Optional[List[str]] = None,
+):
+    subject = "ECL Calculation Started"
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    body = f"""
+Hello {first_name},
+
+The Expected Credit Loss (ECL) calculation for your portfolio has started.
+The process is expected to complete in under 30 minutes.
+
+You can monitor progress and later review results here:
+{summary_url}
+
+Thank you,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)
+
+
+async def send_calc_ecl_success_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    cc_emails: Optional[List[str]] = None,
+):
+    subject = "ECL Calculation Completed"
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    body = f"""
+Hello {first_name},
+
+The Expected Credit Loss (ECL) calculation for your portfolio has been completed successfully.
+
+You can review the results here:
+{summary_url}
+
+Thank you,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)
+
+async def send_calc_ecl_failed_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    cc_emails: Optional[List[str]] = None,
+):
+    subject = "ECL Calculation Completed"
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    body = f"""
+Hello {first_name},
+
+The Expected Credit Loss (ECL) calculation for your portfolio has encountered errors. and failed.
+
+You can review the results here:
+{summary_url}
+
+Thank you,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)
+
+# =====================================================
+# LOCAL IMPAIRMENT EMAILS
+# =====================================================
+
+async def send_calc_local_impairment_started_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    cc_emails: Optional[List[str]] = None,
+):
+    subject = "Local Impairment Calculation Started"
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    body = f"""
+Hello {first_name},
+
+The local impairment calculation for your portfolio has started.
+The process is expected to be completed in under 30 minutes
+
+You can monitor progress and later review the results here:
+{summary_url}
+
+Thank you,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)
+
+
+async def send_calc_local_impairment_success_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    cc_emails: Optional[List[str]] = None,
+):
+    subject = "Local Impairment Calculation Completed"
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    body = f"""
+Hello {first_name},
+
+The local impairment calculation for your portfolio has been completed successfully.
+
+You can view the results here:
+{summary_url}
+
+Thank you,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)
+
+
+async def send_calc_local_impairment_failed_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    cc_emails: Optional[List[str]] = None,
+):
+    subject = "Local Impairment Calculation Completed"
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    body = f"""
+Hello {first_name},
+
+The local impairment calculation for your portfolio has encountered errors and failed.
+
+You can view the results here:
+{summary_url}
+
+Thank you,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)
+
+
+
+# =====================================================
+# STAGE LOANS EMAILS (ECL + LOCAL)
+# =====================================================
+
+async def send_stage_loans_ecl_started_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    cc_emails: Optional[List[str]] = None,
+):
+    subject = "Loan Staging for ECL Started"
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    body = f"""
+Hello {first_name},
+
+The loan staging process for Expected Credit Loss (ECL) computation has started.
+The process is expected to be completed under 40 minutes
+
+You can monitor progress and later review the staging results here:
+{summary_url}
+
+Thank you,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)
+
+
+async def send_stage_loans_ecl_success_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    cc_emails: Optional[List[str]] = None,
+):
+    subject = "Loan Staging for ECL Completed"
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    body = f"""
+Hello {first_name},
+
+The loan staging process for Expected Credit Loss (ECL) computation has been completed successfully.
+
+You can review the results here:
+{summary_url}
+
+Thank you,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)
+
+
+async def send_stage_loans_ecl_failed_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    cc_emails: Optional[List[str]] = None,
+):
+    subject = "Loan Staging for ECL Completed"
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    body = f"""
+Hello {first_name},
+
+The loan staging process for Expected Credit Loss (ECL) computation has encountered errors and failed.
+
+You can review the results here:
+{summary_url}
+
+Thank you,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)
+
+
+async def send_stage_loans_local_started_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    cc_emails: Optional[List[str]] = None,
+):
+    subject = "Loan Staging for Local Impairment Started"
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    body = f"""
+Hello {first_name},
+
+The loan staging process for local impairment computation has started.
+The process is expected to be completed under 40 minutes
+You can monitor progress and later review the staging results here:
+{summary_url}
+
+Thank you,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)
+
+
+async def send_stage_loans_local_success_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    cc_emails: Optional[List[str]] = None,
+):
+    subject = "Loan Staging for Local Impairment Completed"
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    body = f"""
+Hello {first_name},
+
+The loan staging process for local impairment computation has been completed successfully.
+
+You can review the results here:
+{summary_url}
+
+Thank you,
+IFRS9Pro Team
+support@service4gh.com
+    """
+    return await send_email(user_email, subject, body, cc_emails)
+
+
+async def send_stage_loans_local_failed_email(
+    user_email: str,
+    first_name: str,
+    portfolio_id: int,
+    cc_emails: Optional[List[str]] = None,
+):
+    subject = "Loan Staging for Local Impairment Completed"
+    summary_url = f"{FRONTEND_BASE_URL}/dashboard/portfolio-details/{portfolio_id}"
+    body = f"""
+Hello {first_name},
+
+The loan staging process for local impairment computation has encountered errors and failed.
+
+You can review the results here:
+{summary_url}
 
 Thank you,
 IFRS9Pro Team

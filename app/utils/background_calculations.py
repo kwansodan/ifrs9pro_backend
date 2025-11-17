@@ -19,6 +19,14 @@ from app.utils.ecl_calculator import (
     calculate_exposure_at_default_percentage, calculate_marginal_ecl, is_in_range,
     get_amortization_schedule, get_ecl_by_stage, calculate_effective_interest_rate_lender
 )
+from app.utils.process_email_notifyer import (
+    send_calc_ecl_started_email,
+    send_calc_ecl_success_email,
+    send_calc_ecl_failed_email,
+    send_calc_local_impairment_started_email,
+    send_calc_local_impairment_success_email,
+    send_calc_local_impairment_failed_email,
+)
 from app.calculators.ecl import calculate_probability_of_default
 from app.utils.staging import parse_days_range
 from sqlalchemy import func
@@ -144,98 +152,116 @@ def process_loan_sync(loan_data, selected_dt_str):
         return loan_data.get('id', None)
 
 # --- Main controller for ECL calculations---
-async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, db: Session):
-    selected_dt_str = reporting_date
-    batch_size = 500
-    max_workers = max(1, multiprocessing.cpu_count() - 1)
+async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, db: Session, user_email, first_name):
+    try:
+        try:
+            await send_calc_ecl_started_email(user_email, first_name, portfolio_id, cc_emails=["support@service4gh.com"])
+        except:
+            logger.error("Failed to send ecl calculation began email")
 
-    updates = []
-    processed_count = 0
-    loan_count = 0
-    grand_total_ecl = 0
+        selected_dt_str = reporting_date
+        batch_size = 500
+        max_workers = max(1, multiprocessing.cpu_count() - 1)
 
-    executor = ProcessPoolExecutor(max_workers=max_workers)
+        updates = []
+        processed_count = 0
+        loan_count = 0
+        grand_total_ecl = 0
 
-    # Manual batching variables
-    offset = 0
+        executor = ProcessPoolExecutor(max_workers=max_workers)
 
-    # Fetch first loan separately to get portfolio_id
-    first_loan = db.query(Loan).order_by(Loan.id).filter(Loan.portfolio_id == portfolio_id).first()
-    if not first_loan:
-        return {"error": "No loans found."}
-    portfolio_id = first_loan.portfolio_id
+        # Manual batching variables
+        offset = 0
 
-    while True:
-        loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).order_by(Loan.id).offset(offset).limit(batch_size).all()
-        if not loans:
-            break  # No more loans to process
-        
-        
-        tasks = []
+        # Fetch first loan separately to get portfolio_id
+        first_loan = db.query(Loan).order_by(Loan.id).filter(Loan.portfolio_id == portfolio_id).first()
+        if not first_loan:
+            return {"error": "No loans found."}
+        portfolio_id = first_loan.portfolio_id
 
-        for loan in loans:
-                
-            pd_value = calculate_probability_of_default(
-            employee_id=loan.employee_id,
-            outstanding_loan_balance=loan.outstanding_loan_balance,
-            start_date=loan.deduction_start_period,
-            selected_dt=selected_dt_str,
-            end_date=loan.maturity_period,
-            arrears=loan.accumulated_arrears,
-            db=db
+        while True:
+            loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).order_by(Loan.id).offset(offset).limit(batch_size).all()
+            if not loans:
+                break  # No more loans to process
+            
+            
+            tasks = []
+
+            for loan in loans:
+                    
+                pd_value = calculate_probability_of_default(
+                employee_id=loan.employee_id,
+                outstanding_loan_balance=loan.outstanding_loan_balance,
+                start_date=loan.deduction_start_period,
+                selected_dt=selected_dt_str,
+                end_date=loan.maturity_period,
+                arrears=loan.accumulated_arrears,
+                db=db
+            )
+                loan_data = {
+                    "id": loan.id,
+                    "loan_amount": loan.loan_amount,
+                    "loan_term": loan.loan_term,
+                    "accumulated_arrears": loan.accumulated_arrears,
+                    "deduction_start_period": loan.deduction_start_period,
+                    "monthly_installment": loan.monthly_installment,
+                    "administrative_fees": loan.administrative_fees,
+                    "ifrs9_stage": loan.ifrs9_stage,
+                    "pd_value": pd_value,
+                    "submission_period": loan.submission_period,
+                    "maturity_period": loan.maturity_period,
+                    
+                }
+                task = asyncio.get_running_loop().run_in_executor(executor, process_loan_sync, loan_data, selected_dt_str)
+                tasks.append(task)
+
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for res in results:
+                if isinstance(res, tuple) and res[1] is not None:
+                    loan_id, loan_fields = res
+                    db.query(Loan).filter(Loan.id == loan_id).update(loan_fields)
+                    loan_count += 1
+                    grand_total_ecl += loan_fields.get('final_ecl', 0.0)
+
+            db.commit()
+            processed_count += len(loans)
+            print(f"Processed and saved {processed_count} loans...")
+
+            offset += batch_size  # Move to next batch
+
+        # Save CalculationResult
+        calculation_result = CalculationResult(
+            portfolio_id=portfolio_id,
+            calculation_type="ecl",
+            total_provision=grand_total_ecl,
+            provision_percentage=0.0,
+            reporting_date=datetime.now().date(),
+            config={},
+            result_summary={}
         )
-            loan_data = {
-                "id": loan.id,
-                "loan_amount": loan.loan_amount,
-                "loan_term": loan.loan_term,
-                "accumulated_arrears": loan.accumulated_arrears,
-                "deduction_start_period": loan.deduction_start_period,
-                "monthly_installment": loan.monthly_installment,
-                "administrative_fees": loan.administrative_fees,
-                "ifrs9_stage": loan.ifrs9_stage,
-                "pd_value": pd_value,
-                "submission_period": loan.submission_period,
-                "maturity_period": loan.maturity_period,
-                
-            }
-            task = asyncio.get_running_loop().run_in_executor(executor, process_loan_sync, loan_data, selected_dt_str)
-            tasks.append(task)
-
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        for res in results:
-            if isinstance(res, tuple) and res[1] is not None:
-                loan_id, loan_fields = res
-                db.query(Loan).filter(Loan.id == loan_id).update(loan_fields)
-                loan_count += 1
-                grand_total_ecl += loan_fields.get('final_ecl', 0.0)
-
+        db.add(calculation_result)
         db.commit()
-        processed_count += len(loans)
-        print(f"Processed and saved {processed_count} loans...")
 
-        offset += batch_size  # Move to next batch
+        try:
+            await send_calc_ecl_success_email(user_email, first_name, portfolio_id, cc_emails=["support@service4gh.com"])
+        except:
+            logger.error("Failed to send ecl calculation success email")
 
-    # Save CalculationResult
-    calculation_result = CalculationResult(
-        portfolio_id=portfolio_id,
-        calculation_type="ecl",
-        total_provision=grand_total_ecl,
-        provision_percentage=0.0,
-        reporting_date=datetime.now().date(),
-        config={},
-        result_summary={}
-    )
-    db.add(calculation_result)
-    db.commit()
+        return {
+            "calculation_id": calculation_result.id,
+            "portfolio_id": calculation_result.portfolio_id,
+            "grand_total_ecl": safe_float(grand_total_ecl),
+            "provision_percentage": 0.0,
+            "loan_count": loan_count
+        }
+    except Exception as e:
+        logger.error(f"Failed to process ecl calculation. Error{e}")
+        try:
+            await send_calc_ecl_failed_email(user_email, first_name, portfolio_id, cc_emails=["support@service4gh.com"])
+        except:
+            logger.error("Failed to send ecl failed email")
 
-    return {
-        "calculation_id": calculation_result.id,
-        "portfolio_id": calculation_result.portfolio_id,
-        "grand_total_ecl": safe_float(grand_total_ecl),
-        "provision_percentage": 0.0,
-        "loan_count": loan_count
-    }
 # --- Move process_loan to pure sync ---
 def process_loan_local_sync(loan_data, relevant_prov_rate, selected_dt_str):
     try:
@@ -256,105 +282,120 @@ def process_loan_local_sync(loan_data, relevant_prov_rate, selected_dt_str):
         return loan_data.get('id', None)
 
 # --- Main controller for Local impairment calculations---
-async def process_bog_impairment_calculation_sync(portfolio_id: int, reporting_date: str, db: Session):
-    selected_dt_str = reporting_date
-    batch_size = 500
-    max_workers = max(1, multiprocessing.cpu_count() - 1)   # You can tune this depending on your CPU power
-
-    updates = []
-    processed_count = 0
-    loan_count = 0
-    grand_total_local = 0
-    portfolio_id = portfolio_id
-    executor = ProcessPoolExecutor(max_workers=max_workers)
-
-    # Manual batching variables
-    offset = 0
-
-    # Fetch first loan separately to get portfolio_id
-    first_loan = first_loan = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).order_by(Loan.id).first()
-    if not first_loan:
-        return {"error": "No loans found."}
+async def process_bog_impairment_calculation_sync(portfolio_id: int, reporting_date: str, db: Session, user_email, first_name):
+    try:
+        await send_calc_local_impairment_started_email(user_email, first_name, portfolio_id, cc_emails=["support@service4gh.com"])
+    except:
+        logger.error("Failed to send local impairment calculation began email")
     
-    while True:
-        #Fetch BOG staging/impairment rules for portlio
-        latest_bog_config = (
-    db.query(Portfolio.bog_staging_config)
-    .filter(Portfolio.id == portfolio_id)
-    .scalar()
-)
-        if not latest_bog_config:
-            return {"error": "No BOG staging rules found. Update BOG staging rules."}
-        # Get provision rates from config
-        provision_config = latest_bog_config or {}  # Access like attribute
+    try:
+        selected_dt_str = reporting_date
+        batch_size = 500
+        max_workers = max(1, multiprocessing.cpu_count() - 1)   # You can tune this depending on your CPU power
 
-        current_rate = Decimal(provision_config.get("current", {}).get("rate", 0))
-        olem_rate = Decimal(provision_config.get("olem", {}).get("rate", 0))
-        substandard_rate = Decimal(provision_config.get("substandard", {}).get("rate", 0))
-        doubtful_rate = Decimal(provision_config.get("doubtful", {}).get("rate", 0))
-        loss_rate = Decimal(provision_config.get("loss", {}).get("rate", 0))
+        updates = []
+        processed_count = 0
+        loan_count = 0
+        grand_total_local = 0
+        portfolio_id = portfolio_id
+        executor = ProcessPoolExecutor(max_workers=max_workers)
 
+        # Manual batching variables
+        offset = 0
 
-        #fethc all active loans in the portfolio
+        # Fetch first loan separately to get portfolio_id
+        first_loan = first_loan = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).order_by(Loan.id).first()
+        if not first_loan:
+            return {"error": "No loans found."}
         
-        loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).order_by(Loan.id).offset(offset).limit(batch_size).all()
-        if not loans:
-            break  # No more loans to process
-
-        tasks = []
-
-        for loan in loans:
-            loan_data = {
-                "id": loan.id,
-                "ead": loan.ead,
-                "bog_stage": loan.bog_stage,
-            }
-
-            if loan_data.get('bog_stage'):
-                stage_key = (loan_data.get('bog_stage') or '').lower()
-                relevant_prov_rate = Decimal(provision_config.get(stage_key, {}).get('rate', 0))
-
-            else:
-                relevant_prov_rate = Decimal(0)
-
-            task = asyncio.get_running_loop().run_in_executor(executor, process_loan_local_sync, loan_data, relevant_prov_rate,selected_dt_str)
-            tasks.append(task)
-
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        for res in results:
-            if isinstance(res, tuple) and res[1] is not None:
-                loan_id, loan_fields = res
-                db.query(Loan).filter(Loan.id == loan_id).update(loan_fields)
-                loan_count += 1
-                grand_total_local += loan_fields.get('bog_provision', 0.0)
-
-        db.commit()
-        processed_count += len(loans)
-        print(f"Processed and saved {processed_count} loans...")
-
-        offset += batch_size  # Move to next batch
-
-    # Save CalculationResult
-    calculation_result = CalculationResult(
-        portfolio_id=portfolio_id,
-        calculation_type="local_impairment",
-        total_provision=grand_total_local,
-        provision_percentage=0.0,
-        reporting_date=datetime.now().date(),
-        config={},
-        result_summary={}
+        while True:
+            #Fetch BOG staging/impairment rules for portlio
+            latest_bog_config = (
+        db.query(Portfolio.bog_staging_config)
+        .filter(Portfolio.id == portfolio_id)
+        .scalar()
     )
-    db.add(calculation_result)
-    db.commit()
+            if not latest_bog_config:
+                return {"error": "No BOG staging rules found. Update BOG staging rules."}
+            # Get provision rates from config
+            provision_config = latest_bog_config or {}  # Access like attribute
 
-    return {
-        "calculation_id": calculation_result.id,
-        "portfolio_id": calculation_result.portfolio_id,
-        "grand_total_local": safe_float(grand_total_local),
-        "provision_percentage": 0.0,
-        "loan_count": loan_count
-    }
+            current_rate = Decimal(provision_config.get("current", {}).get("rate", 0))
+            olem_rate = Decimal(provision_config.get("olem", {}).get("rate", 0))
+            substandard_rate = Decimal(provision_config.get("substandard", {}).get("rate", 0))
+            doubtful_rate = Decimal(provision_config.get("doubtful", {}).get("rate", 0))
+            loss_rate = Decimal(provision_config.get("loss", {}).get("rate", 0))
+
+
+            #fetch all active loans in the portfolio
+            
+            loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).order_by(Loan.id).offset(offset).limit(batch_size).all()
+            if not loans:
+                break  # No more loans to process
+
+            tasks = []
+
+            for loan in loans:
+                loan_data = {
+                    "id": loan.id,
+                    "ead": loan.ead,
+                    "bog_stage": loan.bog_stage,
+                }
+
+                if loan_data.get('bog_stage'):
+                    stage_key = (loan_data.get('bog_stage') or '').lower()
+                    relevant_prov_rate = Decimal(provision_config.get(stage_key, {}).get('rate', 0))
+
+                else:
+                    relevant_prov_rate = Decimal(0)
+
+                task = asyncio.get_running_loop().run_in_executor(executor, process_loan_local_sync, loan_data, relevant_prov_rate,selected_dt_str)
+                tasks.append(task)
+
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for res in results:
+                if isinstance(res, tuple) and res[1] is not None:
+                    loan_id, loan_fields = res
+                    db.query(Loan).filter(Loan.id == loan_id).update(loan_fields)
+                    loan_count += 1
+                    grand_total_local += loan_fields.get('bog_provision', 0.0)
+
+            db.commit()
+            processed_count += len(loans)
+            print(f"Processed and saved {processed_count} loans...")
+
+            offset += batch_size  # Move to next batch
+
+        # Save CalculationResult
+        calculation_result = CalculationResult(
+            portfolio_id=portfolio_id,
+            calculation_type="local_impairment",
+            total_provision=grand_total_local,
+            provision_percentage=0.0,
+            reporting_date=datetime.now().date(),
+            config={},
+            result_summary={}
+        )
+        db.add(calculation_result)
+        db.commit()
+        try:
+            await send_calc_local_impairment_success_email(user_email, first_name, portfolio_id, cc_emails=["support@service4gh.com"])
+        except:
+            logger.error("Failed to send local impairment success email")
+
+        return {
+            "calculation_id": calculation_result.id,
+            "portfolio_id": calculation_result.portfolio_id,
+            "grand_total_local": safe_float(grand_total_local),
+            "loan_count": loan_count
+        }
+    except Exception as e:
+        logger.error(f"Local impairment calculation failed: {e}")
+        try:
+            await send_calc_local_impairment_failed_email(user_email, first_name, portfolio_id, cc_emails=["support@service4gh.com"])
+        except:
+            logger.error("Failed to send local impairment calculation failed email")
 
 # async def process_local_impairment_calculation(
 #     task_id: str,
