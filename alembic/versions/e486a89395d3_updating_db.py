@@ -8,7 +8,7 @@ Create Date: 2025-04-29 13:45:03.456838
 from typing import Sequence, Union
 
 from alembic import op
-import sqlalchemy as sa
+import sqlalchemy as sa, inspect
 
 
 # revision identifiers, used by Alembic.
@@ -70,7 +70,11 @@ def upgrade() -> None:
                existing_type=sa.NUMERIC(precision=32, scale=2),
                type_=sa.Numeric(precision=38, scale=2),
                existing_nullable=True)
-    op.drop_column('loans', 'ecl')
+    conn = op.get_bind()
+    inspector = inspect(conn)
+    columns = [col['name'] for col in inspector.get_columns('loans')]
+    if 'ecl' in columns:
+        op.drop_column('loans', 'ecl')
     # ### end Alembic commands ###
 
 
@@ -126,5 +130,9 @@ def downgrade() -> None:
                existing_type=sa.Numeric(precision=18, scale=2),
                type_=sa.NUMERIC(precision=32, scale=2),
                existing_nullable=True)
-    op.drop_column('loans', 'calculation_date')
+    conn = op.get_bind()
+    inspector = inspect(conn)
+    columns = [col['name'] for col in inspector.get_columns('loans')]
+    if 'ecl' in columns:
+        op.drop_column('loans', 'ecl')
     # ### end Alembic commands ###
