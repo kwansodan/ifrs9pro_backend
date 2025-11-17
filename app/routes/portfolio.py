@@ -820,7 +820,7 @@ async def stage_loans_local(
     await stage_loans_local_impairment_orm(
         portfolio.id, 
         db,
-        User_email = current_user.email,
+        user_email = current_user.email,
         first_name = current_user.first_name
         )
     

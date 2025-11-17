@@ -7,6 +7,8 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from typing import Dict, Any, List, Tuple
 from sqlalchemy import func
+from typing import Optional
+
 from decimal import Decimal
 
 from app.models import Portfolio, Loan
@@ -131,139 +133,158 @@ async def stage_loans_ecl_orm(portfolio_id: int, db: Session, user_email, first_
  
 
 async def stage_loans_local_impairment_orm(portfolio_id: int, db: Session, user_email, first_name) -> Dict[str, Any]:
-    """
-    Implementation of ECL staging using SQLAlchemy ORM for large datasets.
-    """
+
     try:
-        await send_stage_loans_local_started_email(user_email, first_name, portfolio_id, cc_emails=["support@service4gh.com"])
+        await send_stage_loans_local_started_email(
+            user_email, first_name, portfolio_id, 
+            cc_emails=["support@service4gh.com"]
+        )
     except:
         logger.error("Failed to send loans local staging began email")
 
     try:
         logger.info(f"Starting BOG staging for portfolio {portfolio_id}")
-        
-     # Fetch BOG staging config from DB
-        
+
+        # Fetch config
         latest_bog_config = (
-    db.query(Portfolio.bog_staging_config)
-    .filter(Portfolio.id == portfolio_id)
-    .scalar()
-)
-        
+            db.query(Portfolio.bog_staging_config)
+            .filter(Portfolio.id == portfolio_id)
+            .scalar()
+        )
+
         if not latest_bog_config:
             logger.error(f"No BOG staging config found for portfolio {portfolio_id}")
-            return {
-                "status": "error",
-                "error": "Missing BOG staging configuration"
-            }
-        # Validate & fix before staging
+            return {"status": "error", "error": "Missing BOG staging configuration"}
+
+        # Validate & normalize keys to lowercase
         validated_config = validate_and_fix_bog_config(latest_bog_config)
+        config = {k.lower(): v for k, v in validated_config.items()}
 
-        config = validated_config 
+        # Extract ranges safely
+        current_range = config.get("current", {}).get("days_range", "")
+        olem_range = config.get("olem", {}).get("days_range", "")
+        sub_range = config.get("substandard", {}).get("days_range", "")
+        doubtful_range = config.get("doubtful", {}).get("days_range", "")
+        loss_range = config.get("loss", {}).get("days_range", "")
 
-        current_range = config.get("Current", {}).get("days_range", "")
-        olem_range = config.get("OLEM", {}).get("days_range", "")
-        substandard_range = config.get("Substandard", {}).get("days_range", "")
-        doubtful_range = config.get("Doubtful", {}).get("days_range", "")
-        loss_range = config.get("Loss", {}).get("days_range", "")
-       
-        logger.info(f"BOG staging ranges: Current {current_range}, Olem: {olem_range}, substandard: {substandard_range}, doubtful: {doubtful_range}, loss: {loss_range}")
+        logger.info(
+            f"BOG staging ranges: "
+            f"Current {current_range}, Olem {olem_range}, "
+            f"Substandard {sub_range}, Doubtful {doubtful_range}, Loss {loss_range}"
+        )
 
-
-
-        # Extract min and max days for each stage
+        # Parse into min-max
         current_min, current_max = parse_days_range(current_range)
         olem_min, olem_max = parse_days_range(olem_range)
-        substandard_min, substandard_max = parse_days_range(substandard_range)
+        sub_min, sub_max = parse_days_range(sub_range)
         doubtful_min, doubtful_max = parse_days_range(doubtful_range)
         loss_min, loss_max = parse_days_range(loss_range)
-        
-        
+
         timestamp = datetime.now()
-        
-        # Use batch processing to reduce memory usage
+
         batch_size = 500
         offset = 0
-        
-        
+
         while True:
-            # Get a batch of loans
-            loan_batch = db.query(Loan).filter(
-                Loan.portfolio_id == portfolio_id
-            ).order_by(Loan.id).offset(offset).limit(batch_size).all()
-            
-            # If no more loans, break the loop
+            loan_batch = (
+                db.query(Loan)
+                .filter(Loan.portfolio_id == portfolio_id)
+                .order_by(Loan.id)
+                .offset(offset)
+                .limit(batch_size)
+                .all()
+            )
+
             if not loan_batch:
                 break
-                
-            # Process each loan in the batch
-            for loan in loan_batch:
-                # Get the ndia value (days past due)
-                ndia = loan.ndia if loan.ndia is not None else 0
 
-                # Determine the stage based on ndia
+            for loan in loan_batch:
+                ndia = loan.ndia or 0
+
+                # Assign stage
                 if ndia >= loss_min:
                     loan.bog_stage = "Loss"
 
-                    
                 elif ndia >= doubtful_min and (doubtful_max is None or ndia < doubtful_max):
                     loan.bog_stage = "Doubtful"
 
-                elif ndia >= substandard_min and (substandard_max is None or ndia < substandard_max):
-                    loan.bog_stage = "substandard"
-                    
+                elif ndia >= sub_min and (sub_max is None or ndia < sub_max):
+                    loan.bog_stage = "Substandard"
+
                 elif ndia >= olem_min and (olem_max is None or ndia < olem_max):
-                    loan.bog_stage = "Olem"    
-                    
+                    loan.bog_stage = "OLEM"
+
                 else:
                     loan.bog_stage = "Current"
-                    
-                
-                # Update the last staged timestamp
+
                 loan.last_staged_at = timestamp
-            
-            # Commit changes for this batch
+
             db.commit()
-            
-            # Update offset for next batch
             offset += batch_size
-            
-            # Log progress
-            logger.info(f"Processed {offset} loans out of for BOG staging")
-            try:
-                await send_stage_loans_ecl_success_email(user_email, first_name, portfolio_id, cc_emails=["support@service4gh.com"])
-            except:
-                logger.error("Failed to send loans ecl staging success email")
-       
-    except Exception as e:
+
+            logger.info(f"Processed {offset} loans for BOG staging")
+
+        # Send success email ONCE
         try:
-            await send_stage_loans_ecl_failed_email(user_email, first_name, portfolio_id, cc_emails=["support@service4gh.com"])
+            await send_stage_loans_ecl_success_email(
+                user_email, first_name, portfolio_id, 
+                cc_emails=["support@service4gh.com"]
+            )
+        except:
+            logger.error("Failed to send loans ecl staging success email")
+
+    except Exception as e:
+        db.rollback()
+        try:
+            await send_stage_loans_ecl_failed_email(
+                user_email, first_name, portfolio_id, 
+                cc_emails=["support@service4gh.com"]
+            )
         except:
             logger.error("Failed to send loans ecl staging failed email")
-        db.rollback()
-        logger.error(f"Error in BOG staging: {str(e)}")
-        return {
-            "status": "error",
-            "error": str(e)
-        }
 
-def parse_days_range(days_range: str) -> Tuple[int, int]:
+        logger.error(f"Error in BOG staging: {str(e)}")
+        return {"status": "error", "error": str(e)}
+
+    return {"status": "success", "message": "BOG staging completed"}
+
+
+def parse_days_range(days_range: str) -> Tuple[int, Optional[int]]:
     """
-    Parse a days range string like "0-30" or "90+" into min and max values.
-    Returns a tuple of (min_days, max_days) where max_days is None for unbounded ranges.
+    Parse a days range string like "0-30" or "90+" into (min_days, max_days).
+    max_days = None for open-ended ranges such as "360+".
     """
-    if not days_range:
-        return (0, None)
-    
+
+    if not days_range or not isinstance(days_range, str):
+        raise ValueError(f"Days range is empty or invalid: {days_range}")
+
+    days_range = days_range.strip().replace(" ", "")  # remove all spaces
+
+    # Handle open-ended ranges like "360+"
     if days_range.endswith("+"):
-        min_days = int(days_range[:-1])
-        max_days = None
-    else:
-        parts = days_range.split("-")
-        if len(parts) != 2:
-            raise ValueError(f"Invalid days range format: {days_range}")
-        
-        min_days = int(parts[0])
-        max_days = int(parts[1])
-    
-    return (min_days, max_days)
+        value = days_range[:-1]
+        if not value.isdigit():
+            raise ValueError(f"Invalid open-ended days range: {days_range}")
+        return int(value), None
+
+    # Standard range "min-max"
+    if "-" not in days_range:
+        raise ValueError(f"Missing '-' in days range: {days_range}")
+
+    parts = days_range.split("-")
+    if len(parts) != 2:
+        raise ValueError(f"Incorrect format (too many '-'): {days_range}")
+
+    min_part, max_part = parts[0], parts[1]
+
+    if not min_part.isdigit() or not max_part.isdigit():
+        raise ValueError(f"Non-numeric values in days range: {days_range}")
+
+    min_days = int(min_part)
+    max_days = int(max_part)
+
+    if min_days > max_days:
+        raise ValueError(f"Min days cannot exceed max days: {days_range}")
+
+    return min_days, max_days
+
