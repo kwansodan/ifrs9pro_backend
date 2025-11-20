@@ -495,80 +495,54 @@ async def update_portfolio(
     Returns the complete portfolio details using the optimized get_portfolio function.
     """
     try:
-        # Get only the portfolio itself
-        portfolio = (
-            db.query(Portfolio)
-            .filter(Portfolio.id == portfolio_id)
-            .with_for_update()
-            .first()
-        )
+        # Lock portfolio row for update
+        portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).with_for_update().first()
 
         if not portfolio:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
             )
 
-        
-        
-        # Update basic portfolio fields
+        # --- Update basic fields ---
         update_data = portfolio_update.dict(exclude_unset=True)
 
-        # Convert enum values to strings
+        # Convert enums to strings
         for field in ["asset_type", "customer_type", "funding_source", "data_source"]:
-            if field in update_data and update_data[field]:
+            if field in update_data and update_data[field] is not None:
                 update_data[field] = update_data[field].value
 
-        # Update fields
+        # Apply updates
         for key, value in update_data.items():
-            setattr(portfolio, key, value)
-            
-        # Commit the basic update immediately
+            # Skip staging configs here; they are handled separately
+            if key not in ["ecl_staging_config", "bog_staging_config"]:
+                setattr(portfolio, key, value)
+
+        # Commit basic field updates
         db.commit()
         logger.info(f"Portfolio {portfolio_id} basic fields updated successfully")
-        
-        # Check if the portfolio has any data
-        has_data = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).limit(1).count() > 0
-        
-        # Extract configs for processing
-        ecl_staging_config = portfolio_update.ecl_staging_config 
-        bog_staging_config = portfolio_update.bog_staging_config
-                # Process ECL staging config if provided
-        if "ecl_staging_config" in portfolio_update:
-            ecl_staging_config = portfolio_update.ecl_staging_config
-            if ecl_staging_config:
-                if "ecl_staging_config" in ecl_staging_config:
-                    if ecl_staging_config["ecl_staging_config"]:
-                        # If config is provided, serialize it
-                        ecl_staging_config["ecl_staging_config"] = ecl_staging_config["ecl_staging_config"].model_dump()
-                    else:
-                        # If config is None, set it to None
-                        ecl_staging_config["ecl_staging_config"] = None
 
-                    # Update the database
-                    portfolio.ecl_staging_config = ecl_staging_config["ecl_staging_config"]
-                    db.commit()
+        # --- Check if portfolio has any loan data ---
+        has_data = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).first() is not None
 
-        if "bog_staging_config" in portfolio_update:
-            bog_staging_config = portfolio_update.bog_staging_config
-            if bog_staging_config:
-                if "bog_staging_config" in bog_staging_config:
-                    if bog_staging_config["bog_staging_config"]:
-                        # If config is provided, serialize it
-                        bog_staging_config["bog_staging_config"] = bog_staging_config["bog_staging_config"].model_dump()
-                    else:
-                        # If config is None, set it to None
-                        bog_staging_config["bog_staging_config"] = None
+        # --- Update ECL staging config if provided ---
+        if portfolio_update.ecl_staging_config is not None:
+            ecl_config = portfolio_update.ecl_staging_config
+            # Serialize model to dict if it exists
+            portfolio.ecl_staging_config = ecl_config.model_dump() if ecl_config else None
+            db.commit()
+            logger.info(f"Portfolio {portfolio_id} ECL staging config updated")
 
-                    # Update the database
-                    portfolio.bog_staging_config = bog_staging_config["bog_staging_config"]
-                    db.commit()
+        # --- Update BOG staging config if provided ---
+        if portfolio_update.bog_staging_config is not None:
+            bog_config = portfolio_update.bog_staging_config
+            portfolio.bog_staging_config = bog_config.model_dump() if bog_config else None
+            db.commit()
+            logger.info(f"Portfolio {portfolio_id} BOG staging config updated")
 
-                # Continue with other operations
-        
-        # Use the optimized get_portfolio function to return the complete portfolio data
+        # --- Return complete portfolio ---
         return await get_portfolio(
-            portfolio_id=portfolio_id, 
-            db=db, 
+            portfolio_id=portfolio_id,
+            db=db,
             current_user=current_user
         )
 
