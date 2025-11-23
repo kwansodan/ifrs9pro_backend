@@ -444,7 +444,7 @@ async def get_portfolio(
             asset_type=portfolio.asset_type,
             customer_type=portfolio.customer_type,
             funding_source=portfolio.funding_source,
-            # data_source=portfolio.data_source,
+            data_source=portfolio.data_source,
             repayment_source=portfolio.repayment_source,
             ecl_staging_config=portfolio.ecl_staging_config,
             bog_staging_config=portfolio.bog_staging_config,
