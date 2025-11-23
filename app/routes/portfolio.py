@@ -449,9 +449,9 @@ async def get_portfolio(
             ecl_staging_config=portfolio.ecl_staging_config,
             bog_staging_config=portfolio.bog_staging_config,
 
-            # credit_risk_reserve=portfolio.credit_risk_reserve,
-            # loan_assets=portfolio.loan_assets,
-            # ecl_impairment_account=portfolio.ecl_impairment_account,
+            credit_risk_reserve=portfolio.credit_risk_reserve,
+            loan_assets=portfolio.loan_assets,
+            ecl_impairment_account=portfolio.ecl_impairment_account,
             has_ingested_data=has_ingested_data,
             has_calculated_ecl=has_calculated_ecl,
             has_calculated_local_impairment=has_calculated_local_impairment,
