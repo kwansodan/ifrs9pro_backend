@@ -55,7 +55,7 @@ from app.utils.quality_checks import create_quality_issues_if_needed, create_and
 from sqlalchemy.inspection import inspect as sqlalchemy_inspect
 from sqlalchemy.exc import NoInspectionAvailable
 from pydantic import BaseModel
-
+from app.schemas import IngestPayload  
 
 logger = logging.getLogger(__name__)
 
@@ -102,15 +102,6 @@ async def process_portfolio_ingestion_sync(
     }
 
     try:
-        # Send ingestion start email
-        try:
-            await send_ingestion_began_email(
-                user_email, first_name, portfolio_id, uploaded_filenames,
-                cc_emails=["support@service4gh.com"]
-            )
-        except Exception as e:
-            logger.error(f"Failed to send ingestion start email: {str(e)}")
-
         # ---------- Clear existing portfolio data ----------
         try:
             start = time.perf_counter()
@@ -373,19 +364,27 @@ async def start_background_ingestion(
     }
 
 
-def fetch_excel_from_minio(payload: dict, db: Session):
+async def fetch_excel_from_minio(payload: IngestPayload, db: Session, user_email, first_name, portfolio_id):
     """
-    Processes ingestion of cleaned Excel files from MinIO:
+    Processes ingestion of cleaned Excel files from MinIO using Pydantic payload:
     - Validates payload
-    - Downloads file from MinIO
+    - Downloads files from MinIO
     - Parses Excel
-    - Renames columns using mapping
+    - Applies column mappings
     - Deletes original MinIO files
     - Returns dictionary of cleaned DataFrames
     """
+    logger.info(f"Fetching excel data from minio to begin processing")
+    # Send ingestion start email
+    try:
+        await send_ingestion_began_email(
+            user_email, first_name, portfolio_id,
+            cc_emails=["support@service4gh.com"]
+        )
+    except Exception as e:
+        logger.error(f"Failed to send ingestion start email: {str(e)}")
 
-    files = payload.get("files", [])
-    if not files:
+    if not payload.files:
         raise HTTPException(status_code=400, detail="No file mappings provided")
 
     dataframes = {
@@ -398,16 +397,22 @@ def fetch_excel_from_minio(payload: dict, db: Session):
     FILE_KEY_MAPPING = dataframes.keys()
     BUCKET_NAME = settings.MINIO_BUCKET_NAME
 
-    for file_info in files:
-        file_type = file_info.get("type")
+    for file_info in payload.files:
+        file_type = file_info.type
         if file_type not in FILE_KEY_MAPPING:
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid file type: {file_type}. Must be one of {list(FILE_KEY_MAPPING)}"
             )
 
-        file_key = file_info.get("object_name")
-        mapping = file_info.get("mapping", {})
+        file_key = file_info.object_name
+        mapping = file_info.mapping or {}
+
+        if not file_key:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File object_name missing for {file_type}"
+            )
 
         # --------- Download from MinIO ----------
         try:
@@ -433,7 +438,7 @@ def fetch_excel_from_minio(payload: dict, db: Session):
         if mapping:
             df.rename(columns=mapping, inplace=True)
 
-        # --------- (Optional) Save as temp file ----------
+        # --------- Optional: Save as temp file ----------
         with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
             df.to_excel(tmp.name, index=False)
 
@@ -450,10 +455,11 @@ def fetch_excel_from_minio(payload: dict, db: Session):
             )
 
     # --------- Validate required files ----------
-    if dataframes["loan_details"] is None or dataframes["loan_details"].empty:
-        raise HTTPException(status_code=400, detail="loan_details is required and cannot be empty")
-
-    if dataframes["client_data"] is None or dataframes["client_data"].empty:
-        raise HTTPException(status_code=400, detail="client_data is required and cannot be empty")
+    for required_file in ["loan_details", "client_data"]:
+        if dataframes[required_file] is None or dataframes[required_file].empty:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{required_file} is required and cannot be empty"
+            )
 
     return dataframes

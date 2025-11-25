@@ -29,20 +29,31 @@ async def stage_loans_ecl_orm(portfolio_id: int, db: Session, user_email, first_
     """
     Implementation of ECL staging using SQLAlchemy ORM for large datasets.
     """
+
+    # ----------------------------
+    # SEND "PROCESS BEGAN" EMAIL
+    # ----------------------------
     try:
-        await send_stage_loans_ecl_started_email(user_email, first_name, portfolio_id, cc_emails=["support@service4gh.com"])
-    except:
-        logger.error("Failed to send loans ecl staging began email")
+        await send_stage_loans_ecl_started_email(
+            user_email, 
+            first_name, 
+            portfolio_id,
+            cc_emails=["support@service4gh.com"]
+        )
+    except Exception as e:
+        logger.error(f"Failed to send ECL staging began email: {e}")
+
     try:
         logger.info(f"Starting ECL staging for portfolio {portfolio_id}")
-        
-     # Fetch ECL staging config from DB
-        latest_ecl_config = (
-    db.query(Portfolio.ecl_staging_config)
-    .filter(Portfolio.id == portfolio_id)
-    .scalar()
-)
 
+        # ------------------------------------
+        # FETCH & VALIDATE CONFIG
+        # ------------------------------------
+        latest_ecl_config = (
+            db.query(Portfolio.ecl_staging_config)
+            .filter(Portfolio.id == portfolio_id)
+            .scalar()
+        )
 
         if not latest_ecl_config:
             logger.error(f"No ECL staging config found for portfolio {portfolio_id}")
@@ -50,102 +61,129 @@ async def stage_loans_ecl_orm(portfolio_id: int, db: Session, user_email, first_
                 "status": "error",
                 "error": "Missing ECL staging configuration"
             }
-            
-        config = latest_ecl_config  # Assuming it's a dict
+
+        config = latest_ecl_config
 
         stage_1_range = config.get("stage_1", {}).get("days_range", "")
         stage_2_range = config.get("stage_2", {}).get("days_range", "")
         stage_3_range = config.get("stage_3", {}).get("days_range", "")
-       
-        logger.info(f"ECL staging ranges: Stage 1: {stage_1_range}, Stage 2: {stage_2_range}, Stage 3: {stage_3_range}")
 
+        logger.info(
+            f"ECL staging ranges: "
+            f"Stage 1: {stage_1_range}, "
+            f"Stage 2: {stage_2_range}, "
+            f"Stage 3: {stage_3_range}"
+        )
 
-
-        # Extract min and max days for each stage
         stage_1_min, stage_1_max = parse_days_range(stage_1_range)
         stage_2_min, stage_2_max = parse_days_range(stage_2_range)
         stage_3_min, stage_3_max = parse_days_range(stage_3_range)
-        
-        logger.info(f"Parsed day ranges: Stage 1: {stage_1_min}-{stage_1_max}, Stage 2: {stage_2_min}-{stage_2_max}, Stage 3: {stage_3_min}-{stage_3_max}")
-        
-        stage_balances = {1: 0.0, 2: 0.0, 3: 0.0}
+
+        logger.info(
+            f"Parsed day ranges: "
+            f"Stage 1: {stage_1_min}-{stage_1_max}, "
+            f"Stage 2: {stage_2_min}-{stage_2_max}, "
+            f"Stage 3: {stage_3_min}-{stage_3_max}"
+        )
+
         timestamp = datetime.now()
-        
-        # Use batch processing to reduce memory usage
+
+        # ------------------------------------
+        # BATCH PROCESSING
+        # ------------------------------------
         batch_size = 500
         offset = 0
-        
-        
+
         while True:
-            # Get a batch of loans
-            loan_batch = db.query(Loan).filter(
-                Loan.portfolio_id == portfolio_id
-            ).order_by(Loan.id).offset(offset).limit(batch_size).all()
-            
-            # If no more loans, break the loop
+
+            loan_batch = (
+                db.query(Loan)
+                .filter(Loan.portfolio_id == portfolio_id)
+                .order_by(Loan.id)
+                .offset(offset)
+                .limit(batch_size)
+                .all()
+            )
+
             if not loan_batch:
                 break
-                
-            # Process each loan in the batch
-            for loan in loan_batch:
-                # Get the ndia value (days past due)
-                ndia = loan.ndia if loan.ndia is not None else 0
 
-                # Determine the stage based on ndia
+            for loan in loan_batch:
+                ndia = loan.ndia or 0
+
                 if ndia >= stage_3_min:
                     loan.ifrs9_stage = "Stage 3"
-                    
                 elif ndia >= stage_2_min and (stage_2_max is None or ndia < stage_2_max):
                     loan.ifrs9_stage = "Stage 2"
-                    
                 else:
                     loan.ifrs9_stage = "Stage 1"
-                    
-                
-                # Update the last staged timestamp
+
                 loan.last_staged_at = timestamp
-            
-            # Commit changes for this batch
+
             db.commit()
-            
-            # Update offset for next batch
             offset += batch_size
-            
-            # Log progress
-            logger.info(f"Processed {offset} loans out of for ECL staging")
+
+            logger.info(f"Processed {offset} loans for ECL staging.")
+
+        # ------------------------------------
+        # SEND SUCCESS EMAIL (ONLY IF NO ERROR)
+        # ------------------------------------
         try:
-            await send_stage_loans_ecl_success_email(user_email, first_name, portfolio_id, cc_emails=["support@service4gh.com"])
-        except:
-            logger.error("Failed to send loans ecl staging success email")
-       
+            await send_stage_loans_ecl_success_email(
+                user_email, 
+                first_name, 
+                portfolio_id,
+                cc_emails=["support@service4gh.com"]
+            )
+        except Exception as e:
+            logger.error(f"Failed to send ECL staging success email: {e}")
+
+        return {"status": "success", "message": "ECL staging completed successfully"}
+
     except Exception as e:
-        try:
-            await send_stage_loans_ecl_failed_email(user_email, first_name, portfolio_id, cc_emails=["support@service4gh.com"])
-        except:
-            logger.error("Failed to send loans ecl staging began email")
         db.rollback()
         logger.error(f"Error in ECL staging: {str(e)}")
-        return {
-            "status": "error",
-            "error": str(e)
-        }
+
+        # ------------------------------------
+        # SEND FAILED EMAIL (ONLY ON ERROR)
+        # ------------------------------------
+        try:
+            await send_stage_loans_ecl_failed_email(
+                user_email,
+                first_name,
+                portfolio_id,
+                cc_emails=["support@service4gh.com"]
+            )
+        except Exception as e2:
+            logger.error(f"Failed to send ECL staging failed email: {e2}")
+
+        return {"status": "error", "error": str(e)}
     
  
 
-async def stage_loans_local_impairment_orm(portfolio_id: int, db: Session, user_email, first_name) -> Dict[str, Any]:
+async def stage_loans_local_impairment_orm(
+    portfolio_id: int, db: Session, user_email, first_name
+) -> Dict[str, Any]:
 
+    # ----------------------------
+    # SEND "STARTED" EMAIL
+    # ----------------------------
     try:
         await send_stage_loans_local_started_email(
-            user_email, first_name, portfolio_id, 
+            user_email,
+            first_name,
+            portfolio_id,
             cc_emails=["support@service4gh.com"]
         )
-    except:
-        logger.error("Failed to send loans local staging began email")
+    except Exception as e:
+        logger.error(f"Failed to send loans local staging began email: {e}")
 
     try:
         logger.info(f"Starting BOG staging for portfolio {portfolio_id}")
 
-        # Fetch config
+        # ----------------------------
+        # FETCH CONFIG
+        # ----------------------------
         latest_bog_config = (
             db.query(Portfolio.bog_staging_config)
             .filter(Portfolio.id == portfolio_id)
@@ -160,7 +198,7 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, db: Session, user_
         validated_config = validate_and_fix_bog_config(latest_bog_config)
         config = {k.lower(): v for k, v in validated_config.items()}
 
-        # Extract ranges safely
+        # These keys MUST exist: current, olem, substandard, doubtful, loss
         current_range = config.get("current", {}).get("days_range", "")
         olem_range = config.get("olem", {}).get("days_range", "")
         sub_range = config.get("substandard", {}).get("days_range", "")
@@ -168,12 +206,15 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, db: Session, user_
         loss_range = config.get("loss", {}).get("days_range", "")
 
         logger.info(
-            f"BOG staging ranges: "
-            f"Current {current_range}, Olem {olem_range}, "
-            f"Substandard {sub_range}, Doubtful {doubtful_range}, Loss {loss_range}"
+            f"BOG staging ranges:"
+            f" Current {current_range},"
+            f" OLEM {olem_range},"
+            f" Substandard {sub_range},"
+            f" Doubtful {doubtful_range},"
+            f" Loss {loss_range}"
         )
 
-        # Parse into min-max
+        # Parse ranges
         current_min, current_max = parse_days_range(current_range)
         olem_min, olem_max = parse_days_range(olem_range)
         sub_min, sub_max = parse_days_range(sub_range)
@@ -182,6 +223,9 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, db: Session, user_
 
         timestamp = datetime.now()
 
+        # ----------------------------
+        # BATCH PROCESSING
+        # ----------------------------
         batch_size = 500
         offset = 0
 
@@ -201,7 +245,7 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, db: Session, user_
             for loan in loan_batch:
                 ndia = loan.ndia or 0
 
-                # Assign stage
+                # Assign BOG stage
                 if ndia >= loss_min:
                     loan.bog_stage = "Loss"
 
@@ -224,29 +268,39 @@ async def stage_loans_local_impairment_orm(portfolio_id: int, db: Session, user_
 
             logger.info(f"Processed {offset} loans for BOG staging")
 
-        # Send success email ONCE
+        # ----------------------------
+        # SEND SUCCESS EMAIL (ONLY IF NO ERROR)
+        # ----------------------------
         try:
-            await send_stage_loans_ecl_success_email(
-                user_email, first_name, portfolio_id, 
+            await send_stage_loans_local_success_email(
+                user_email,
+                first_name,
+                portfolio_id,
                 cc_emails=["support@service4gh.com"]
             )
-        except:
-            logger.error("Failed to send loans ecl staging success email")
+        except Exception as e:
+            logger.error(f"Failed to send loans local staging success email: {e}")
+
+        return {"status": "success", "message": "BOG staging completed"}
 
     except Exception as e:
         db.rollback()
+        logger.error(f"Error in BOG staging: {str(e)}")
+
+        # ----------------------------
+        # SEND FAILED EMAIL ON ERROR
+        # ----------------------------
         try:
-            await send_stage_loans_ecl_failed_email(
-                user_email, first_name, portfolio_id, 
+            await send_stage_loans_local_failed_email(
+                user_email,
+                first_name,
+                portfolio_id,
                 cc_emails=["support@service4gh.com"]
             )
-        except:
-            logger.error("Failed to send loans ecl staging failed email")
+        except Exception as e2:
+            logger.error(f"Failed to send loans local staging failed email: {e2}")
 
-        logger.error(f"Error in BOG staging: {str(e)}")
         return {"status": "error", "error": str(e)}
-
-    return {"status": "success", "message": "BOG staging completed"}
 
 
 def parse_days_range(days_range: str) -> Tuple[int, Optional[int]]:

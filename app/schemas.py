@@ -947,11 +947,9 @@ class IngestAndSaveResponse(BaseModel):
     message: str
 
 class FileMapping(BaseModel):
-    type: str
-    object_name: str
-    mapping: Dict[str, str]  # Maps Excel column -> Model column
+    type: str = Field(..., description="Type of the file, e.g., loan_details, client_data")
+    object_name: str = Field(..., description="MinIO object key / file path")
+    mapping: Dict[str, str] = Field(..., description="Excel column to model column mapping")
 
-
-class PortfolioMappingPayload(BaseModel):
-    portfolio_id: int
-    files: List[FileMapping]
+class IngestPayload(BaseModel):
+    files: List[FileMapping] = Field(..., description="List of files to ingest with mappings")

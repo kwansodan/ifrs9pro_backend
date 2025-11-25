@@ -485,7 +485,8 @@ async def process_client_data(client_data, portfolio_id, db):
 async def process_loan_guarantees(loan_guarantee_data, portfolio_id, db):
     """Process loan guarantees file using Polars for high-performance data processing."""
     try:
-        content = loan_guarantee_data.read()
+        if loan_guarantee_data.empty:
+            return {"status": "success", "rows_processed": 0, "filename": "in-memory-dataframe"}
         
         # Target column names (lowercase for matching)
         target_columns = {
@@ -507,7 +508,7 @@ async def process_loan_guarantees(loan_guarantee_data, portfolio_id, db):
         existing_guarantees = {(loan_no, guarantor_name): guarantor_id for loan_no, guarantor_name, guarantor_id in result}
         
         # Read Excel file with Polars
-        df = pl.read_excel(io.BytesIO(content))
+        df = pl.from_pandas(loan_guarantee_data)
         
         # Create a mapping of actual column names to our target column names
         case_insensitive_mapping = {}
@@ -652,7 +653,8 @@ async def process_loan_guarantees(loan_guarantee_data, portfolio_id, db):
 async def process_collateral_data(collateral_data, portfolio_id, db):
     """Process loan collateral (securities) data using optimized bulk operations with Polars."""
     try:
-        content = collateral_data.read()
+        if collateral_data.empty:
+            return {"status": "success", "rows_processed": 0, "filename": "in-memory-dataframe"}
         
         # Target column names (lowercase for matching)
         target_columns = {
@@ -674,7 +676,7 @@ async def process_collateral_data(collateral_data, portfolio_id, db):
         existing_securities = {(loan_no, security_type, security_description): security_id for loan_no, security_type, security_description, security_id in result}
         
         # Read Excel file with Polars
-        df = pl.read_excel(io.BytesIO(content))
+        df = pl.from_pandas(collateral_data)
         
         # Create a mapping of actual column names to our target column names
         case_insensitive_mapping = {}

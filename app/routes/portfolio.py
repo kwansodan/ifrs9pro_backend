@@ -92,7 +92,7 @@ from app.schemas import (
     CustomerSummaryModel,
     PortfolioLatestResults,
     IngestAndSaveResponse,
-    PortfolioMappingPayload
+    IngestPayload
 
 
 )
@@ -646,7 +646,7 @@ async def accept_portfolio_data(
 @router.post("/{portfolio_id}/ingest", status_code=status.HTTP_200_OK)
 async def ingest_portfolio_data(
     portfolio_id: int,
-    payload: dict,
+    payload: IngestPayload,  # Use Pydantic model here
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -658,17 +658,32 @@ async def ingest_portfolio_data(
     - Deleting the original files from MinIO
     - Passing cleaned DataFrames into ingestion pipeline
     """
+    
+    # Fetch and process Excel files from MinIO
+    try:
+        dataframes = await fetch_excel_from_minio(
+            payload=payload,  # convert Pydantic model to dict
+            db=db,
+            portfolio_id=portfolio_id,
+            first_name=current_user.first_name,
+            user_email=current_user.email
+        )
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Fetching data from minio for ingestion failed {e}"
+        )
 
-    dataframes = fetch_excel_from_minio(payload, db, )
-
-    # --------- Validate required files ----------
+    # Validate required files
     if dataframes["loan_details"] is None or dataframes["loan_details"].empty:
         raise HTTPException(status_code=400, detail="loan_details is required and cannot be empty")
 
     if dataframes["client_data"] is None or dataframes["client_data"].empty:
         raise HTTPException(status_code=400, detail="client_data is required and cannot be empty")
 
-    # --------- Pass to ingestion pipeline ----------
+    # Pass to ingestion pipeline
     try:
         result = await start_background_ingestion(
             portfolio_id=portfolio_id,
@@ -683,10 +698,9 @@ async def ingest_portfolio_data(
         return {"status": "success", "result": result}
     except Exception as e:
         raise HTTPException(
-                status_code=500,
-                detail=f"Portfolio ingestion failed {e}"
-            )
-
+            status_code=500,
+            detail=f"Portfolio ingestion failed {e}"
+        )
 
 
 @router.get("/{portfolio_id}/calculate-ecl")
