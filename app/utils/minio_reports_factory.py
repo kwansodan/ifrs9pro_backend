@@ -2,16 +2,26 @@ import boto3
 from botocore.client import Config
 from datetime import datetime, timedelta, date
 from app.config import settings
-import os
+import io
+import uuid
+import pandas as pd
 import logging
 from io import BytesIO
 from sqlalchemy import text, func, case, cast, String, and_, select, Numeric, literal_column, union_all
 from app.database import SessionLocal
-from app.models import Loan, User, Report, Portfolio
+from app.models import Loan, User, Report, Portfolio, Client
+from app.schemas import LoanGuaranteeColumns, CollateralColumns
 from sqlalchemy.orm import Session
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
+import os
+import shutil
+from typing import Optional, Dict
+from app.utils.mapping_utils import get_model_columns
+
+
 
 logger = logging.getLogger(__name__)
+
 
 # Initialize the MinIO (S3-compatible) client
 s3_client = boto3.client(
@@ -56,6 +66,99 @@ def upload_file_to_minio(file_path: str, object_name: str) -> str:
     # Return URL to access file
     file_url = f"{MINIO_PUBLIC_ENDPOINT}/{bucket_name}/{object_name}"
     return file_url
+
+def upload_and_extract_columns(
+    portfolio_id: int,
+    uploadfile: UploadFile,
+    key: str,
+    model
+) -> dict:
+    """
+    Uploads file to MinIO, extracts Excel column headers,
+    and returns metadata including file_id and model columns.
+    """
+
+    if uploadfile is None:
+        return None
+
+    # Generate unique file ID
+    file_id = str(uuid.uuid4())
+    ext_filename = f"{file_id}_{uploadfile.filename}"
+
+    # Object path in MinIO
+    object_name = f"portfolio/{portfolio_id}/{key}/{ext_filename}"
+
+    # Temporary storage
+    tmp_path = f"/tmp/{file_id}_{uploadfile.filename}"
+
+    # Save temp file
+    with open(tmp_path, "wb") as buffer:
+        shutil.copyfileobj(uploadfile.file, buffer)
+
+    # Upload to MinIO
+    file_url = upload_file_to_minio(tmp_path, object_name)
+
+    # Load Excel to extract headers
+    try:
+        df = pd.read_excel(tmp_path)
+        excel_columns = df.columns.tolist()
+    except Exception as e:
+        raise HTTPException(400, f"Invalid Excel for {key}: {e}")
+
+    # Delete local temp file
+    os.remove(tmp_path)
+
+    # SQLAlchemy model columns
+    model_columns = get_model_columns(model)
+
+    return {
+        "file_id": file_id,
+        "file_url": file_url,
+        "object_name": object_name,
+        "excel_columns": excel_columns,
+        "model_columns": model_columns,
+    }
+
+def upload_multiple_files_to_minio(
+    portfolio_id: int,
+    loan_details: Optional[UploadFile],
+    client_data: Optional[UploadFile],
+    loan_guarantee_data: Optional[UploadFile],
+    loan_collateral_data: Optional[UploadFile],
+) -> Dict[str, Optional[dict]]:
+
+    MODEL_MAP = {
+        "loan_details": Loan,
+        "client_data": Client,                   
+        "loan_guarantee_data": LoanGuaranteeColumns,
+        "loan_collateral_data": CollateralColumns,
+    }
+
+    file_map = {
+        "loan_details": loan_details,
+        "client_data": client_data,
+        "loan_guarantee_data": loan_guarantee_data,
+        "loan_collateral_data": loan_collateral_data,
+    }
+
+    results = {}
+
+    for key, uploadfile in file_map.items():
+        model_class = MODEL_MAP[key]
+
+        if uploadfile is None:
+            results[key] = None
+            continue
+
+        # Upload + extract + return details
+        results[key] = upload_and_extract_columns(
+            portfolio_id=portfolio_id,
+            uploadfile=uploadfile,
+            key=key,
+            model=model_class,
+        )
+
+    return results
 
 
 def generate_presigned_url(object_name: str, expiry_minutes: int = 10):
