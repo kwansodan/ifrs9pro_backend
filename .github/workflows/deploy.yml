@@ -1,53 +1,33 @@
-name: CI/CD to Azure App Service
+name: Deploy to DigitalOcean Droplet (Staging)
 
 on:
   push:
     branches:
-      - main
- 
+      - staging   
 
 jobs:
-  build-and-deploy:
+  deploy:
+    name: Deploy to DO Droplet
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📦 Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v3
 
-      - name: 🐍 Set up Python
-        uses: actions/setup-python@v5
+      - name: Add SSH key
+        uses: webfactory/ssh-agent@v0.7.0
         with:
-          python-version: '3.12'
+          ssh-private-key: ${{ secrets.DROPLET_SSH_KEY }}
 
-      - name: 📜 Install Poetry
+      - name: Ensure known_hosts contains droplet
         run: |
-          curl -sSL https://install.python-poetry.org | python3 -
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          ssh-keyscan -H ${{ secrets.DROPLET_HOST }} >> ~/.ssh/known_hosts
 
-      - name: 🧰 Configure Poetry (no venvs in CI)
-        run: poetry config virtualenvs.create false
-
-      - name: 🔌 Add poetry-plugin-export
-        run: poetry self add poetry-plugin-export
-
-      - name: Install dependencies (no root package)
-        run: poetry install --no-root
-          
-      - name: 📝 Export requirements.txt
-        run: poetry export -f requirements.txt --output requirements.txt --without-hashes
-        
-      - name: Install MkDocs
-        run: pip install mkdocs
-
-      - name: Build MkDocs documentation
-        run: mkdocs build
-
-      - name: 📤 Deploy to DO App Service
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        uses: azure/webapps-deploy@v3
-        with:
-          app-name: "ifrs9pro"
-          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: "."
-
-
+      - name: Deploy to Droplet
+        run: |
+          ssh ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }} "
+            cd /root/ifrs9pro_backend_fresh || exit 1
+            git pull origin main
+            chmod +x setup-staging.sh
+            ./setup-staging.sh
+          "

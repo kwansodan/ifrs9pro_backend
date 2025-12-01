@@ -1,4 +1,5 @@
 site_name: IFRS9Pro Docs
+site_url: https://Cjyyaotse.github.io/ifrs9pro_backend/
 
 theme:
   name: mkdocs
@@ -12,8 +13,9 @@ nav:
 
   - Usage Guide:
       - Users and authentication: authentication.md
-      # - Dashboard: dashboard.md
+      - Dashboard: dashboard.md
       - Portfolios: portfolios.md
-      # - Feedback: feedback.md
+      - Feedback: feedback.md
+
 
 
