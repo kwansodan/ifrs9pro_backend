@@ -29,8 +29,10 @@ async def process_loan_details_sync(file_content, portfolio_id, db):
 
     try:
         # Read and preprocess Excel data (assumed done earlier)
-        df = pl.read_excel(file_content)
-        logger.info(f"Successfully read uploaded excel file for loan details. {df.height} rows identified")
+        
+        # file_content is a pandas DataFrame
+        df = pl.from_pandas(file_content)
+        logger.info(f"Successfully converted pandas DataFrame to polars DataFrame. {df.height} rows identified")
 
         # Function for normalizing columns: strip whitespace, lowercase, remove periods
         def normalize_column(col: str) -> str:
@@ -426,15 +428,9 @@ async def process_client_data_sync(file_content, portfolio_id, db):
         }
         
         # Read file content as Excel file
-        try:
-            # Read Excel file
-            if isinstance(file_content, io.BytesIO):
-                content = file_content
-            else:
-                content = io.BytesIO(file_content)
-                
+        try:    
             # Read with polars
-            df = pl.read_excel(content)
+            df = pl.from_pandas(file_content)
             string_cols = ["phone number", "client phone no.", "phone no.", "client phone number"]
             for col in string_cols:
                 if col in df.columns:

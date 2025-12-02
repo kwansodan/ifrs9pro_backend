@@ -1,53 +1,62 @@
-name: CI/CD to Azure App Service
+name: Deploy Docker Compose
 
 on:
   push:
     branches:
+      - staging
       - main
- 
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📦 Checkout code
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: 🐍 Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: 📜 Install Poetry
+      # Choose environment
+      - name: Set target environment
+        id: env
         run: |
-          curl -sSL https://install.python-poetry.org | python3 -
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          if [[ "${{ github.ref }}" == "refs/heads/staging" ]]; then
+            echo "host=${{ secrets.STAGING_HOST }}" >> $GITHUB_OUTPUT
+            echo "compose_file=docker-compose.staging.yml" >> $GITHUB_OUTPUT
+            echo "env_name=Staging" >> $GITHUB_OUTPUT
+          else
+            echo "host=${{ secrets.PROD_HOST }}" >> $GITHUB_OUTPUT
+            echo "compose_file=docker-compose.prod.yml" >> $GITHUB_OUTPUT
+            echo "env_name=Production" >> $GITHUB_OUTPUT
+          fi
 
-      - name: 🧰 Configure Poetry (no venvs in CI)
-        run: poetry config virtualenvs.create false
-
-      - name: 🔌 Add poetry-plugin-export
-        run: poetry self add poetry-plugin-export
-
-      - name: Install dependencies (no root package)
-        run: poetry install --no-root
-          
-      - name: 📝 Export requirements.txt
-        run: poetry export -f requirements.txt --output requirements.txt --without-hashes
-        
-      - name: Install MkDocs
-        run: pip install mkdocs
-
-      - name: Build MkDocs documentation
-        run: mkdocs build
-
-      - name: 📤 Deploy to DO App Service
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        uses: azure/webapps-deploy@v3
+      # Fixed SSH key installation (this is the important fix)
+      - name: Install SSH key
+        uses: shimataro/ssh-key-action@v2
         with:
-          app-name: "ifrs9pro"
-          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: "."
+          key: ${{ secrets.SSH_PRIVATE_KEY }}           # ← correct name
+          known_hosts: unnecessary                     # ← we add it manually below
 
+      # Add droplet to known_hosts (prevents host verification prompt)
+      - name: Add droplet to known_hosts
+        run: ssh-keyscan -H ${{ steps.env.outputs.host }} >> ~/.ssh/known_hosts
 
+      # Copy files
+      - name: Copy compose files and .env
+        run: |
+          scp docker-compose.yml \
+              docker-compose.staging.yml \
+              docker-compose.prod.yml \
+              .env \
+              ${{ secrets.SSH_USER }}@${{ steps.env.outputs.host }}:/home/${{ secrets.SSH_USER }}/myapp/
+
+      # Deploy
+      - name: Deploy to ${{ steps.env.outputs.env_name }}
+        run: |
+          ssh ${{ secrets.SSH_USER }}@${{ steps.env.outputs.host }} << EOF
+            cd /home/${{ secrets.SSH_USER }}/myapp
+
+            docker compose pull
+            docker compose -f docker-compose.yml -f ${{ steps.env.outputs.compose_file }} up -d --remove-orphans
+            docker image prune -f
+
+            echo "Deployed to ${{ steps.env.outputs.env_name }} at $(date)"
+          EOF

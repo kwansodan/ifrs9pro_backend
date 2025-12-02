@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import tempfile
 from fastapi import (
     APIRouter,
     Depends,
@@ -16,6 +17,8 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import text, func, case, cast, String, and_, select
 import numpy as np
 import math
+import boto3
+from botocore.client import Config
 from decimal import Decimal
 from datetime import datetime, timedelta, date
 from pydantic import BaseModel
@@ -25,6 +28,7 @@ import time
 import io
 from app.database import get_db
 from app.models import Portfolio, User
+from app.config import settings
 from app.auth.utils import get_current_active_user
 from app.calculators.ecl import (
     calculate_exposure_at_default_percentage,
@@ -87,14 +91,18 @@ from app.schemas import (
     OverviewModel,
     CustomerSummaryModel,
     PortfolioLatestResults,
+    IngestAndSaveResponse,
+    IngestPayload
 
 
 )
+
 from app.auth.utils import get_current_active_user
 from app.utils.quality_checks import create_quality_issues_if_needed
 from app.utils.background_processors import process_loan_details_with_progress as process_loan_details, process_client_data_with_progress as process_client_data
 from app.utils.background_ingestion import (
     start_background_ingestion,
+    fetch_excel_from_minio,
     process_portfolio_ingestion_sync
 )
 from app.utils.staging import parse_days_range
@@ -104,7 +112,14 @@ from app.utils.background_calculations import (
 )
 from app.utils.ecl_calculator import calculate_loss_given_default
 from app.utils.ingest_file_validation import validate_all_uploaded_files
+from app.utils.minio_reports_factory import upload_multiple_files_to_minio
 import os
+
+from app.utils.minio_reports_factory import s3_client, public_s3_client
+from app.config import settings
+import pandas as pd
+from io import BytesIO
+import time
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/portfolios", tags=["portfolios"])
@@ -586,9 +601,12 @@ def delete_portfolio(
 
     return {"detail": "Portfolio deleted successfully"}
 
-
-@router.post("/{portfolio_id}/ingest", status_code=status.HTTP_200_OK)
-async def ingest_portfolio_data(
+@router.post(
+    "/{portfolio_id}/ingest/save",
+    response_model=IngestAndSaveResponse,
+    status_code=status.HTTP_200_OK
+)
+async def accept_portfolio_data(
     portfolio_id: int,
     loan_details: Optional[UploadFile] = File(None),
     client_data: Optional[UploadFile] = File(None),
@@ -598,122 +616,92 @@ async def ingest_portfolio_data(
     current_user: User = Depends(get_current_active_user),
 ):
     """
-    Ingest Excel files containing portfolio data and automatically perform both types of staging.
-    
-    Accepts up to four Excel files:
-    - loan_details: Primary loan information (required)
-    - client_data: Customer information (required)
-    - loan_guarantee_data: Information about loan guarantees (optional)
-    - loan_collateral_data: Information about loan collateral (optional)
-    
-    The function processes the files synchronously and returns the processing result.
+    Upload Excel files to MinIO, auto-extract headers, and return:
+    - file_id
+    - file_url
+    - object_name
+    - extracted excel headers
+    - ORM model columns mapped for each file
     """
-    # Validate file formats and schema
-    '''
-    await validate_all_uploaded_files(
-        loan_details,
-        client_data,
-        loan_guarantee_data,
-        loan_collateral_data
+    try:
+        logger.info(f"Uploading excel documents to minio for portfolio {portfolio_id}")
+        uploaded_files = upload_multiple_files_to_minio(
+            portfolio_id=portfolio_id,
+            loan_details=loan_details,
+            client_data=client_data,
+            loan_guarantee_data=loan_guarantee_data,
+            loan_collateral_data=loan_collateral_data,
+        )
+    except Exception as e:
+        logger.error(f"Error uploading excel documents to minio {str(e)}")
+
+    # Return response via Pydantic model
+    return IngestAndSaveResponse(
+        portfolio_id=portfolio_id,
+        uploaded_files=uploaded_files,
+        message="Files uploaded successfully, headers extracted."
     )
-    '''
+
+
+@router.post("/{portfolio_id}/ingest", status_code=status.HTTP_200_OK)
+async def ingest_portfolio_data(
+    portfolio_id: int,
+    payload: IngestPayload,  # Use Pydantic model here
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Ingest cleaned Excel files from MinIO by:
+    - Receiving mapping + file info from frontend
+    - Fetching files from MinIO
+    - Applying header mapping
+    - Deleting the original files from MinIO
+    - Passing cleaned DataFrames into ingestion pipeline
+    """
     
-    # Check if portfolio exists and belongs to user
-    portfolio = db.query(Portfolio).filter(
-        Portfolio.id == portfolio_id
-    ).first()
-    
-    if not portfolio:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Portfolio with ID {portfolio_id} not found or does not belong to you",
+    # Fetch and process Excel files from MinIO
+    try:
+        dataframes = await fetch_excel_from_minio(
+            payload=payload,  # convert Pydantic model to dict
+            db=db,
+            portfolio_id=portfolio_id,
+            first_name=current_user.first_name,
+            user_email=current_user.email
         )
-    
-    # Check if both required files are provided
-    if not loan_details or not client_data:
-        missing_files = []
-        if not loan_details:
-            missing_files.append("loan_details")
-        if not client_data:
-            missing_files.append("client_data")
-            
+    except HTTPException as e:
+        raise e
+    except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Missing required files: {', '.join(missing_files)}. Both loan_details and client_data files are required for portfolio ingestion.",
+            status_code=500,
+            detail=f"Fetching data from minio for ingestion failed {e}"
         )
-    
-    # Process files synchronously
-    result = await start_background_ingestion(
-        portfolio_id= portfolio_id,
-        loan_details= loan_details,
-        client_data= client_data,
-        loan_guarantee_data=loan_guarantee_data if loan_guarantee_data else None,
-        loan_collateral_data= loan_collateral_data if loan_collateral_data else None,
-        first_name = current_user.first_name,
-        user_email = current_user.email,
-        # db=db
-    )
-    
-    # Check for errors in any component of the result
-    if "details" in result:
-        # Check loan details
-        if "loan_details" in result["details"] and "error" in result["details"]["loan_details"]:
-            error_message = result["details"]["loan_details"]["error"]
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=error_message
-            )
-        
-        # Check client data
-        if "client_data" in result["details"] and "error" in result["details"]["client_data"]:
-            error_message = result["details"]["client_data"]["error"]
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=error_message
-            )
-        
-        # Check loan guarantee data
-        if "loan_guarantee_data" in result["details"] and "error" in result["details"]["loan_guarantee_data"]:
-            error_message = result["details"]["loan_guarantee_data"]["error"]
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=error_message
-            )
-        
-        # Check loan collateral data
-        if "loan_collateral_data" in result["details"] and "error" in result["details"]["loan_collateral_data"]:
-            error_message = result["details"]["loan_collateral_data"]["error"]
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=error_message
-            )
-    
-    # Check for errors in quality checks
-    if "quality_checks" in result and "error" in result["quality_checks"]:
-        error_message = result["quality_checks"]["error"]
+
+    # Validate required files
+    if dataframes["loan_details"] is None or dataframes["loan_details"].empty:
+        raise HTTPException(status_code=400, detail="loan_details is required and cannot be empty")
+
+    if dataframes["client_data"] is None or dataframes["client_data"].empty:
+        raise HTTPException(status_code=400, detail="client_data is required and cannot be empty")
+
+    # Pass to ingestion pipeline
+    try:
+        result = await start_background_ingestion(
+            portfolio_id=portfolio_id,
+            loan_details=dataframes["loan_details"],
+            client_data=dataframes["client_data"],
+            loan_guarantee_data=dataframes["loan_guarantee_data"],
+            loan_collateral_data=dataframes["loan_collateral_data"],
+            first_name=current_user.first_name,
+            user_email=current_user.email,
+        )
+
+        return {"status": "success", "result": result}
+    except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Error in quality checks: {error_message}"
+            status_code=500,
+            detail=f"Portfolio ingestion failed {e}"
         )
-    
-    # Check for errors in staging
-    if "staging" in result and "error" in result["staging"]:
-        error_message = result["staging"]["error"]
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Error in staging: {error_message}"
-        )
-    
-    # Check for general errors
-    if "error" in result:
-        error_message = result["error"]
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=error_message
-        )
-    
-    return result
-    
+
 
 @router.get("/{portfolio_id}/calculate-ecl")
 async def calculate_ecl_provision(

@@ -1,10 +1,13 @@
 import asyncio
 import logging
 from typing import Optional, Dict, Any, List
-from fastapi import UploadFile
+from fastapi import UploadFile, HTTPException
 from sqlalchemy.orm import Session
 import io
+import tempfile
+from io import BytesIO
 import random
+import pandas as pd
 import time
 from datetime import datetime, date
 from decimal import Decimal
@@ -46,250 +49,222 @@ from app.utils.staging import (
     stage_loans_ecl_orm, 
     stage_loans_local_impairment_orm
 )
+from app.config import settings
+from app.utils.minio_reports_factory import s3_client
 from app.utils.quality_checks import create_quality_issues_if_needed, create_and_save_quality_issues
+from sqlalchemy.inspection import inspect as sqlalchemy_inspect
+from sqlalchemy.exc import NoInspectionAvailable
+from pydantic import BaseModel
+from app.schemas import IngestPayload  
 
 logger = logging.getLogger(__name__)
+
+
+def get_model_columns(model):
+    # If user passed a Pydantic model, get fields from schema
+    if isinstance(model, type) and issubclass(model, BaseModel):
+        return list(model.__fields__.keys())
+
+    # Otherwise treat as SQLAlchemy model
+    try:
+        mapper = sqlalchemy_inspect(model)
+        return mapper.columns.keys()
+    except NoInspectionAvailable:
+        raise ValueError(f"Model {model} is not SQLAlchemy or Pydantic")
+
 
 
 async def process_portfolio_ingestion_sync(
     task_id: str,
     portfolio_id: int,
-    loan_details_content: bytes = None,
-    loan_details_filename: str = None,
-    client_data_content: bytes = None,
-    client_data_filename: str = None,
-    loan_guarantee_data_content: bytes = None,
-    loan_guarantee_data_filename: str = None,
-    loan_collateral_data_content: bytes = None,
-    loan_collateral_data_filename: str = None,
+    loan_details_content: pd.DataFrame = None,
+    client_data_content: pd.DataFrame = None,
+    loan_guarantee_content: pd.DataFrame = None,
+    loan_collateral_data_content: pd.DataFrame = None,
     db: Session = None,
-    first_name:str = None,
-    user_email:str = None,
-    uploaded_filenames:str = None,
+    first_name: str = None,
+    user_email: str = None,
+    uploaded_filenames: str = None,
 ) -> Dict[str, Any]:
     """
-    Process portfolio data ingestion synchronously.
+    Process portfolio data ingestion synchronously using pandas DataFrames.
     
-    This function orchestrates the processing of multiple data files for a portfolio
-    and returns the results directly.
+    Sends:
+        - start email when ingestion begins
+        - fail email if any error occurs
+        - success email only after the entire process completes without errors
     """
-    try:
-        # Initialize result tracking
-        results = {
-            "portfolio_id": portfolio_id,
-            "files_processed": 0,
-            "total_files": 0,
-            "details": {}
-        }
-        try:
-            await send_ingestion_began_email(user_email, first_name, portfolio_id, uploaded_filenames, cc_emails=["support@service4gh.com"])
-        except:
-            logger.error("Failed to send ingestion success email")
+    results = {
+        "portfolio_id": portfolio_id,
+        "files_processed": 0,
+        "total_files": 0,
+        "details": {}
+    }
 
-        # Check for and delete existing data for this portfolio
+    try:
+        # ---------- Clear existing portfolio data ----------
         try:
             start = time.perf_counter()
             logger.info(f"Checking for existing data in portfolio {portfolio_id}")
-            
-            
-            # First delete staging results and calculation results
-            
-            calculation_count = db.query(CalculationResult).filter(CalculationResult.portfolio_id == portfolio_id).delete()
-            
-            # Delete quality issues
-            quality_count = db.query(QualityIssue).filter(QualityIssue.portfolio_id == portfolio_id).delete()
-            
-            # Delete loans, guarantees, and clients
-            loan_count = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).delete()
-            guarantee_count = db.query(Guarantee).filter(Guarantee.portfolio_id == portfolio_id).delete()
-            client_count = db.query(Client).filter(Client.portfolio_id == portfolio_id).delete()
-            report_count = db.query(Report).filter(Report.portfolio_id == portfolio_id).delete()
-            
-            # Commit the deletions
+
+            calculation_count = db.query(CalculationResult).filter(
+                CalculationResult.portfolio_id == portfolio_id
+            ).delete()
+            quality_count = db.query(QualityIssue).filter(
+                QualityIssue.portfolio_id == portfolio_id
+            ).delete()
+            loan_count = db.query(Loan).filter(
+                Loan.portfolio_id == portfolio_id
+            ).delete()
+            guarantee_count = db.query(Guarantee).filter(
+                Guarantee.portfolio_id == portfolio_id
+            ).delete()
+            client_count = db.query(Client).filter(
+                Client.portfolio_id == portfolio_id
+            ).delete()
+            report_count = db.query(Report).filter(
+                Report.portfolio_id == portfolio_id
+            ).delete()
+
             db.commit()
-            
-            # Log the deletion results but don't add to response
-            logger.info(f"The following previously held data in the current portfolio cleared: Loans:{loan_count}, Clients:{client_count}, Loan guarantees:{guarantee_count}, " +
-                       f"Quality_issues:{quality_count}, Calculation_results:{calculation_count}, Generated reports:{report_count}")
-            
+
+            logger.info(
+                f"Cleared existing data: Loans:{loan_count}, Clients:{client_count}, "
+                f"Guarantees:{guarantee_count}, Quality Issues:{quality_count}, "
+                f"Calculation Results:{calculation_count}, Reports:{report_count}"
+            )
         except Exception as e:
             logger.error(f"Error clearing existing data: {str(e)}")
-            results["errors"] = results.get("errors", []) + [f"Error clearing existing data: {str(e)}"]
+            results.setdefault("errors", []).append(f"Error clearing existing data: {str(e)}")
         end = time.perf_counter()
         logger.info(f"Data clearing took {end - start:0.4f} seconds")
 
-
-        start = time.perf_counter()
-        # Count files to process
-        files_to_process = 0
-        if loan_details_content:
-            files_to_process += 1
-        if client_data_content:
-            files_to_process += 1
-        if loan_guarantee_data_content:
-            files_to_process += 1
-        if loan_collateral_data_content:
-            files_to_process += 1
-        
+        # ---------- Count files ----------
+        files_to_process = sum(
+            df is not None for df in [
+                loan_details_content, client_data_content,
+                loan_guarantee_content, loan_collateral_data_content
+            ]
+        )
         results["total_files"] = files_to_process
-        end = time.perf_counter()
-        logger.info(f"File counting took {end - start:0.4f} seconds")
+        logger.info(f"Total files to process: {files_to_process}")
 
-        # Process loan details if provided
-        if loan_details_content:
+        # ---------- Process loan details ----------
+        if loan_details_content is not None:
             start = time.perf_counter()
             try:
-                logger.info(f"Processing loan details for portfolio no {portfolio_id}")
-                
-                # Create BytesIO object from content
-                loan_details_io = io.BytesIO(loan_details_content)
-                
-                # Process the loan details
-                loan_results = await process_loan_details_sync(loan_details_io, portfolio_id, db)
-
-
-                # Add results to the overall results
+                logger.info(f"Processing loan details for portfolio {portfolio_id}")
+                loan_results = await process_loan_details_sync(loan_details_content, portfolio_id, db)
                 results["details"]["loan_details"] = loan_results
                 results["files_processed"] += 1
-                
-                logger.info(f"Successfully cleaned and stored {loan_results.get('processed', 0)} loan records")
-                
+                logger.info(f"Processed {loan_results.get('processed', 0)} loan records")
             except Exception as e:
-                logger.error(f"Error encountered while attempting to clean and store loan details: {str(e)}")
+                logger.error(f"Error processing loan details: {str(e)}")
                 results["details"]["loan_details"] = {"error": str(e)}
-                results["errors"] = results.get("errors", []) + [f"Error encountered while attempting to clean and store loan details: {str(e)}"]
+                results.setdefault("errors", []).append(f"Error processing loan details: {str(e)}")
             end = time.perf_counter()
             logger.info(f"Loan details processing took {end - start:0.4f} seconds")
-        
-        # Process client data if provided
-        if client_data_content:
+
+        # ---------- Process client data ----------
+        if client_data_content is not None:
             start = time.perf_counter()
             try:
                 logger.info(f"Processing client data for portfolio {portfolio_id}")
-                
-                # Create BytesIO object from content
-                client_data_io = io.BytesIO(client_data_content)
-                
-                # Process the client data
-                client_results = await process_client_data_sync(client_data_io, portfolio_id, db)
-                
-                # Add results to the overall results
+                client_results = await process_client_data_sync(client_data_content, portfolio_id, db)
                 results["details"]["client_data"] = client_results
                 results["files_processed"] += 1
-                
                 logger.info(f"Processed {client_results.get('processed', 0)} client records")
-                
             except Exception as e:
                 logger.error(f"Error processing client data: {str(e)}")
                 results["details"]["client_data"] = {"error": str(e)}
-                results["errors"] = results.get("errors", []) + [f"Error processing client data: {str(e)}"]
+                results.setdefault("errors", []).append(f"Error processing client data: {str(e)}")
             end = time.perf_counter()
             logger.info(f"Client data processing took {end - start:0.4f} seconds")
 
-        # Process loan guarantee data if provided
-        if loan_guarantee_data_content:
+        # ---------- Process loan guarantee data ----------
+        if loan_guarantee_content is not None:
             start = time.perf_counter()
             try:
                 logger.info(f"Processing loan guarantee data for portfolio {portfolio_id}")
-                
-                # Create BytesIO object from content
-                loan_guarantee_data_io = io.BytesIO(loan_guarantee_data_content)
-                
-                # Process the loan guarantee data
-                guarantee_results=await process_loan_guarantees(io.BytesIO(loan_guarantee_data_content), portfolio_id=portfolio_id, db=db)
-                
-                # Add results to the overall results
+                guarantee_results = await process_loan_guarantees(loan_guarantee_content, portfolio_id, db)
                 results["details"]["loan_guarantee_data"] = guarantee_results
                 results["files_processed"] += 1
-                
                 logger.info(f"Processed {guarantee_results.get('processed', 0)} guarantee records")
-                
             except Exception as e:
                 logger.error(f"Error processing loan guarantee data: {str(e)}")
                 results["details"]["loan_guarantee_data"] = {"error": str(e)}
-                results["errors"] = results.get("errors", []) + [f"Error processing loan guarantee data: {str(e)}"]
+                results.setdefault("errors", []).append(f"Error processing loan guarantee data: {str(e)}")
             end = time.perf_counter()
-            logger.info(f"Loan guarantee data processing took {end - start:0.4f} seconds")
+            logger.info(f"Loan guarantee processing took {end - start:0.4f} seconds")
 
-        # Process loan collateral data if provided
-        if loan_collateral_data_content:
+        # ---------- Process loan collateral data ----------
+        if loan_collateral_data_content is not None:
             start = time.perf_counter()
             try:
                 logger.info(f"Processing loan collateral data for portfolio {portfolio_id}")
-                
-                # Create BytesIO object from content
-                loan_collateral_data_io = io.BytesIO(loan_collateral_data_content)
-                
-                # Process the loan collateral data
-                collateral_results = await process_collateral_data(loan_collateral_data_io, portfolio_id, db)
-                
-                # Add results to the overall results
+                collateral_results = await process_collateral_data(loan_collateral_data_content, portfolio_id, db)
                 results["details"]["loan_collateral_data"] = collateral_results
                 results["files_processed"] += 1
-                
                 logger.info(f"Processed {collateral_results.get('processed', 0)} collateral records")
-                
             except Exception as e:
                 logger.error(f"Error processing loan collateral data: {str(e)}")
                 results["details"]["loan_collateral_data"] = {"error": str(e)}
-                results["errors"] = results.get("errors", []) + [f"Error processing loan collateral data: {str(e)}"]
+                results.setdefault("errors", []).append(f"Error processing loan collateral data: {str(e)}")
             end = time.perf_counter()
-            logger.info(f"Loan collateral data processing took {end - start:0.4f} seconds")
+            logger.info(f"Loan collateral processing took {end - start:0.4f} seconds")
 
-        # Perform quality checks
+        # ---------- Quality checks ----------
         start = time.perf_counter()
         try:
             logger.info(f"Performing quality checks for portfolio {portfolio_id}")
-            
-            # Run quality checks
             quality_results = run_quality_checks_sync(portfolio_id, db)
-            
-            # Add results to the overall results
             results["quality_checks"] = quality_results
-            
             logger.info(f"Found {quality_results.get('total_issues', 0)} quality issues")
-            
         except Exception as e:
             logger.error(f"Error running quality checks: {str(e)}")
             results["quality_checks"] = {"error": str(e)}
-            results["errors"] = results.get("errors", []) + [f"Error running quality checks: {str(e)}"]
+            results.setdefault("errors", []).append(f"Error running quality checks: {str(e)}")
         end = time.perf_counter()
         logger.info(f"Quality checks took {end - start:0.4f} seconds")
 
-        # Perform loan staging
+        # ---------- Loan staging ----------
         start = time.perf_counter()
         try:
             logger.info(f"Starting loan staging for portfolio {portfolio_id}")
-            
-            # Get the current date as the reporting date
-            reporting_date = date.today()
-
-            await stage_loans_ecl_orm(portfolio_id, db)
-            await stage_loans_local_impairment_orm(portfolio_id, db)
-
+            await stage_loans_ecl_orm(portfolio_id, db, user_email=user_email, first_name=first_name)
+            await stage_loans_local_impairment_orm(portfolio_id, db, user_email=user_email, first_name=first_name)
             db.commit()
             logger.info(f"Successfully completed staging for portfolio {portfolio_id}")
-             
         except Exception as e:
             logger.error(f"Error during loan staging: {str(e)}")
             results["staging"] = {"error": str(e)}
-            results["errors"] = results.get("errors", []) + [f"Error during loan staging: {str(e)}"]
+            results.setdefault("errors", []).append(f"Error during loan staging: {str(e)}")
         end = time.perf_counter()
 
-        # Final status
-        if "errors" in results and results["errors"]:
+        # ---------- Final status & emails ----------
+        if results.get("errors"):
             results["status"] = "completed_with_errors"
+            try:
+                await send_ingestion_failed_email(user_email, first_name, portfolio_id, uploaded_filenames,
+                                                  cc_emails=["support@service4gh.com"])
+            except:
+                logger.error("Failed to send ingestion failed email")
         else:
             results["status"] = "completed"
-        
+            try:
+                await send_ingestion_success_email(user_email, first_name, portfolio_id, uploaded_filenames,
+                                                   cc_emails=["support@service4gh.com"])
+            except:
+                logger.error("Failed to send ingestion success email")
+
         logger.info(f"Portfolio ingestion completed with status: {results['status']}")
-        
         return results
-        
+
     except Exception as e:
         logger.error(f"Error in portfolio ingestion: {str(e)}")
         try:
-            await send_ingestion_failed_email(user_email, first_name, portfolio_id, uploaded_filenames, cc_emails=["support@service4gh.com"])
+            await send_ingestion_failed_email(user_email, first_name, portfolio_id, uploaded_filenames,
+                                              cc_emails=["support@service4gh.com"])
         except:
             logger.error("Failed to send ingestion failed email")
         return {
@@ -298,27 +273,20 @@ async def process_portfolio_ingestion_sync(
             "portfolio_id": portfolio_id
         }
 
-    finally:
-        try:
-            await send_ingestion_success_email(user_email, first_name, portfolio_id, uploaded_filenames, cc_emails=["support@service4gh.com"])
-        except:
-            logger.error("Failed to send ingestion success email")
-
-
 async def start_background_ingestion(
     portfolio_id: int,
-    loan_details: Optional[UploadFile] = None,
-    client_data: Optional[UploadFile] = None,
-    loan_guarantee_data: Optional[UploadFile] = None,
-    loan_collateral_data: Optional[UploadFile] = None,
+    loan_details: Optional[pd.DataFrame] = None,
+    client_data: Optional[pd.DataFrame] = None,
+    loan_guarantee_data: Optional[pd.DataFrame] = None,
+    loan_collateral_data: Optional[pd.DataFrame] = None,
     db: Session = None,
     first_name: str = None,
     user_email: str = None,
-) -> str:
+) -> dict:
     """
-    Start a background task for portfolio data ingestion.
-    
-    Returns the task ID that can be used to track progress.
+    Start a background task for portfolio data ingestion using pandas DataFrames.
+
+    Returns a dict containing the task ID and status info.
     """
     # Create a new task
     task_id = get_task_manager().create_task(
@@ -327,46 +295,32 @@ async def start_background_ingestion(
     )
     import threading
 
-    # Read file contents immediately to prevent file closure issues
-    loan_details_content = None
-    loan_details_filename = None
-    client_data_content = None
-    client_data_filename = None
-    loan_guarantee_data_content = None
-    loan_guarantee_data_filename = None
-    loan_collateral_data_content = None
-    loan_collateral_data_filename = None
-    
-    uploaded_filenames = []
-    if loan_details:
-        loan_details_content = await loan_details.read()
-        loan_details_filename = loan_details.filename
-        uploaded_filenames.append(loan_details_filename)
-    
-    if client_data:
-        client_data_content = await client_data.read()
-        client_data_filename = client_data.filename
-        uploaded_filenames.append(client_data_filename)
-    
-    if loan_guarantee_data:
-        loan_guarantee_data_content = await loan_guarantee_data.read()
-        loan_guarantee_data_filename = loan_guarantee_data.filename
-        uploaded_filenames.append(loan_guarantee_data_filename)
-    
-    if loan_collateral_data:
-        loan_collateral_data_content = await loan_collateral_data.read()
-        loan_collateral_data_filename = loan_collateral_data.filename
-        uploaded_filenames.append(loan_collateral_data_filename)
-    
-    # Define a function to run the background task in a separate thread
+    # Use the DataFrames directly, no need to read file bytes
+    uploaded_names = []
+    loan_details_content = loan_details
+    if loan_details_content is not None and not loan_details_content.empty:
+        uploaded_names.append("loan_details")
+
+    client_data_content = client_data
+    if client_data_content is not None and not client_data_content.empty:
+        uploaded_names.append("client_data")
+
+    loan_guarantee_data_content = loan_guarantee_data
+    if loan_guarantee_data_content is not None and not loan_guarantee_data_content.empty:
+        uploaded_names.append("loan_guarantee_data")
+
+    loan_collateral_data_content = loan_collateral_data
+    if loan_collateral_data_content is not None and not loan_collateral_data_content.empty:
+        uploaded_names.append("loan_collateral_data")
+
+    # Function to run the background task in a separate thread
     def run_task_in_thread():
-        # Create a new event loop for this thread
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        
+
         # Create a new database session for this thread
         thread_db = SessionLocal()
-        
+
         try:
             # Run the background task in this thread's event loop
             loop.run_until_complete(
@@ -375,43 +329,137 @@ async def start_background_ingestion(
                     process_portfolio_ingestion_sync,
                     portfolio_id=portfolio_id,
                     loan_details_content=loan_details_content,
-                    loan_details_filename=loan_details_filename,
                     client_data_content=client_data_content,
-                    client_data_filename=client_data_filename,
-                    loan_guarantee_data_content=loan_guarantee_data_content,
-                    loan_guarantee_data_filename=loan_guarantee_data_filename,
+                    loan_guarantee_content=loan_guarantee_data_content,
                     loan_collateral_data_content=loan_collateral_data_content,
-                    loan_collateral_data_filename=loan_collateral_data_filename,
                     db=thread_db,
                     first_name=first_name,
                     user_email=user_email,
-                    uploaded_filenames=uploaded_filenames
+                    uploaded_filenames=uploaded_names
                 )
             )
-            
-            # Properly await any pending notifications before closing the loop
+
+            # Await any remaining tasks in the loop
             pending = asyncio.all_tasks(loop)
             if pending:
                 loop.run_until_complete(asyncio.gather(*pending))
-                
+
         except Exception as e:
             logger.exception(f"Error in background task thread: {e}")
             get_task_manager().mark_as_failed(task_id, str(e))
         finally:
-            
-            # Close the database session
             thread_db.close()
             loop.close()
-    
-    # Start the task in a separate thread
+
+    # Start the thread
     thread = threading.Thread(target=run_task_in_thread)
-    thread.daemon = True  # Allow the thread to be terminated when the main program exits
+    thread.daemon = True
     thread.start()
-    
+
     return {
         "task_id": task_id,
         "message": f"Portfolio {portfolio_id} ingestion started successfully.",
-        "uploaded_files": uploaded_filenames,
+        "uploaded_dataframes": uploaded_names,
         "status_check_url": f"/tasks/{task_id}/status"
     }
 
+
+async def fetch_excel_from_minio(payload: IngestPayload, db: Session, user_email, first_name, portfolio_id):
+    """
+    Processes ingestion of cleaned Excel files from MinIO using Pydantic payload:
+    - Validates payload
+    - Downloads files from MinIO
+    - Parses Excel
+    - Applies column mappings
+    - Deletes original MinIO files
+    - Returns dictionary of cleaned DataFrames
+    """
+    logger.info(f"Fetching excel data from minio to begin processing")
+    # Send ingestion start email
+    try:
+        await send_ingestion_began_email(
+            user_email, first_name, portfolio_id,
+            cc_emails=["support@service4gh.com"]
+        )
+    except Exception as e:
+        logger.error(f"Failed to send ingestion start email: {str(e)}")
+
+    if not payload.files:
+        raise HTTPException(status_code=400, detail="No file mappings provided")
+
+    dataframes = {
+        "loan_details": None,
+        "client_data": None,
+        "loan_guarantee_data": None,
+        "loan_collateral_data": None,
+    }
+
+    FILE_KEY_MAPPING = dataframes.keys()
+    BUCKET_NAME = settings.MINIO_BUCKET_NAME
+
+    for file_info in payload.files:
+        file_type = file_info.type
+        if file_type not in FILE_KEY_MAPPING:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid file type: {file_type}. Must be one of {list(FILE_KEY_MAPPING)}"
+            )
+
+        file_key = file_info.object_name
+        mapping = file_info.mapping or {}
+
+        if not file_key:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File object_name missing for {file_type}"
+            )
+
+        # --------- Download from MinIO ----------
+        try:
+            obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=file_key)
+            file_bytes = obj["Body"].read()
+            obj["Body"].close()
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to download {file_key} from MinIO: {e}"
+            )
+
+        # --------- Load Excel ----------
+        try:
+            df = pd.read_excel(BytesIO(file_bytes))
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to parse Excel file {file_key}: {e}"
+            )
+
+        # --------- Apply mapping ----------
+        if mapping:
+            df.rename(columns=mapping, inplace=True)
+
+        # --------- Optional: Save as temp file ----------
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+            df.to_excel(tmp.name, index=False)
+
+        # --------- Store DataFrame ----------
+        dataframes[file_type] = df
+
+        # --------- Delete original file ----------
+        try:
+            s3_client.delete_object(Bucket=BUCKET_NAME, Key=file_key)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to delete original file {file_key}: {e}"
+            )
+
+    # --------- Validate required files ----------
+    for required_file in ["loan_details", "client_data"]:
+        if dataframes[required_file] is None or dataframes[required_file].empty:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{required_file} is required and cannot be empty"
+            )
+
+    return dataframes

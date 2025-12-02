@@ -873,3 +873,83 @@ class PortfolioWithSummaryResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class ColumnMappingBase(BaseModel):
+    """Base class for all column mapping configurations"""
+    class Config:
+        from_attributes = True
+        # Allows using dict-like access if needed
+        extra = "forbid"  # optional: prevent unknown fields
+
+
+class LoanGuaranteeColumns(ColumnMappingBase):
+    loan_no: str = "loan no."
+    guarantor_name: str = "guarantor name"
+    guarantor_phone: str = "guarantor phone"
+    guarantor_address: str = "guarantor address"
+    guarantor_id: str = "guarantor id"
+    relationship: str = "relationship"
+    guarantee_amount: str = "guarantee amount"
+
+
+class CollateralColumns(ColumnMappingBase):
+    loan_no: str = "loan no."
+    security_type: str = "security type"
+    security_description: str = "security description"
+    security_value: str = "security value"
+    valuation_date: str = "valuation date"
+    location: str = "location"
+    registration_details: str = "registration details"
+    ownership: str = "ownership"
+
+class UploadedFileBase(BaseModel):
+    file_id: str
+    file_url: str
+    object_name: str
+    excel_columns: List[str]
+    model_columns: List[str]
+
+
+class LoanDetailsFile(UploadedFileBase):
+    pass
+
+
+class ClientDataFile(UploadedFileBase):
+    pass
+
+
+class LoanGuaranteeDataFile(BaseModel):
+    file_id: str
+    file_url: str
+    object_name: str
+    excel_columns: List[str]
+    model_columns: List[str]
+
+
+class LoanCollateralDataFile(BaseModel):
+    file_id: str
+    file_url: str
+    object_name: str
+    excel_columns: List[str]
+    model_columns: List[str]
+
+
+class UploadedFiles(BaseModel):
+    loan_details: Optional[LoanDetailsFile]
+    client_data: Optional[ClientDataFile]
+    loan_guarantee_data: Optional[LoanGuaranteeDataFile]
+    loan_collateral_data: Optional[LoanCollateralDataFile]
+
+
+class IngestAndSaveResponse(BaseModel):
+    portfolio_id: int
+    uploaded_files: UploadedFiles
+    message: str
+
+class FileMapping(BaseModel):
+    type: str = Field(..., description="Type of the file, e.g., loan_details, client_data")
+    object_name: str = Field(..., description="MinIO object key / file path")
+    mapping: Dict[str, str] = Field(..., description="Excel column to model column mapping")
+
+class IngestPayload(BaseModel):
+    files: List[FileMapping] = Field(..., description="List of files to ingest with mappings")

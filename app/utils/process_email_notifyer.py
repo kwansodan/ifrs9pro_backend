@@ -83,7 +83,6 @@ async def send_ingestion_began_email(
     user_email: str,
     first_name: str,
     portfolio_id: int,
-    uploaded_filenames: str,
     cc_emails: Optional[List[str]] = None,
 ):
     """
@@ -94,7 +93,7 @@ async def send_ingestion_began_email(
     body = f"""
 Hello {first_name},
 
-Your data ingestion process (including data quality review and automatic loan staging) for the following imports '{uploaded_filenames}' has **begun**.
+Your data ingestion process (including data quality review and automatic loan staging) for the following imports has **begun**.
 
 This process typically completes within about **one hour**, depending on data size and system load.
 
