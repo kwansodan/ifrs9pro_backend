@@ -9,57 +9,54 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: ${{ github.ref_name }}  # helps with protected secrets if needed
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Determine target host and env
-        id: target
+      # Choose environment
+      - name: Set target environment
+        id: env
         run: |
           if [[ "${{ github.ref }}" == "refs/heads/staging" ]]; then
             echo "host=${{ secrets.STAGING_HOST }}" >> $GITHUB_OUTPUT
-            echo "env_file=.env.staging" >> $GITHUB_OUTPUT
-            echo "environment=staging" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "compose_file=docker-compose.staging.yml" >> $GITHUB_OUTPUT
+            echo "env_name=Staging" >> $GITHUB_OUTPUT
+          else
             echo "host=${{ secrets.PROD_HOST }}" >> $GITHUB_OUTPUT
-            echo "env_file=.env.production" >> $GITHUB_OUTPUT
-            echo "environment=production" >> $GITHUB_OUTPUT
+            echo "compose_file=docker-compose.prod.yml" >> $GITHUB_OUTPUT
+            echo "env_name=Production" >> $GITHUB_OUTPUT
           fi
 
-      - name: Install SSH Key
+      # Fixed SSH key installation (this is the important fix)
+      - name: Install SSH key
         uses: shimataro/ssh-key-action@v2
         with:
-          private-key: ${{ secrets.SSH_PRIVATE_KEY }}
-          known-hosts: unnecessary
+          key: ${{ secrets.SSH_PRIVATE_KEY }}           # ← correct name
+          known_hosts: unnecessary                     # ← we add it manually below
 
-      - name: Add known hosts
+      # Add droplet to known_hosts (prevents host verification prompt)
+      - name: Add droplet to known_hosts
+        run: ssh-keyscan -H ${{ steps.env.outputs.host }} >> ~/.ssh/known_hosts
+
+      # Copy files
+      - name: Copy compose files and .env
         run: |
-          ssh-keyscan -H ${{ steps.target.outputs.host }} >> ~/.ssh/known_hosts
+          scp docker-compose.yml \
+              docker-compose.staging.yml \
+              docker-compose.prod.yml \
+              .env \
+              ${{ secrets.SSH_USER }}@${{ steps.env.outputs.host }}:/home/${{ secrets.SSH_USER }}/myapp/
 
-      - name: Copy docker-compose and env file via SCP
+      # Deploy
+      - name: Deploy to ${{ steps.env.outputs.env_name }}
         run: |
-          scp -r docker-compose.yml docker-compose.prod.yml .env* ${{ secrets.SSH_USER }}@${{ steps.target.outputs.host }}:/root/myapp/
-          # Adjust path above if you use a different folder
+          ssh ${{ secrets.SSH_USER }}@${{ steps.env.outputs.host }} << EOF
+            cd /home/${{ secrets.SSH_USER }}/myapp
 
-      - name: Deploy to Droplet via SSH
-        run: |
-          ssh ${{ secrets.SSH_USER }}@${{ steps.target.outputs.host }} << 'EOF'
-            cd /root/myapp
-
-            # Pull latest images
             docker compose pull
+            docker compose -f docker-compose.yml -f ${{ steps.env.outputs.compose_file }} up -d --remove-orphans
+            docker image prune -f
 
-            # Bring up (or restart) containers
-            if [[ "${{ steps.target.outputs.environment }}" == "production" ]] && [[ -f docker-compose.prod.yml ]]; then
-              docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans
-            else
-              docker compose up -d --remove-orphans
-            fi
-
-            # Optional: prune old images to save space
-            docker image prune -af
-
-            echo "Deployment to ${{ steps.target.outputs.environment }} complete!"
+            echo "Deployed to ${{ steps.env.outputs.env_name }} at $(date)"
           EOF
