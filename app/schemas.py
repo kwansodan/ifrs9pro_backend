@@ -812,7 +812,7 @@ class PortfolioResponseBase(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
     ecl_staging_config: Optional[ECLStagingConfig] = None
-    local_impairment_config: Optional[LocalImpairmentConfig] = None
+    bog_staging_config: Optional[LocalImpairmentConfig] = None
     
     class Config:
         from_attributes = True
@@ -850,11 +850,13 @@ class PortfolioWithSummaryResponse(BaseModel):
     asset_type: Optional[str] = None
     customer_type: Optional[str] = None
     funding_source: Optional[str] = None
-    # data_source: Optional[str] = None
+    data_source: Optional[str] = None
     repayment_source: Optional[bool] = None
-    # credit_risk_reserve: Optional[str] = None
-    # loan_assets: Optional[str] = None
-    # ecl_impairment_account: Optional[str] = None
+    ecl_staging_config: Optional[ECLStagingConfig] = None
+    bog_staging_config: Optional[LocalImpairmentConfig] = None
+    credit_risk_reserve: Optional[str] = None
+    loan_assets: Optional[str] = None
+    ecl_impairment_account: Optional[str] = None
     has_ingested_data: bool
     has_calculated_ecl: bool 
     has_calculated_local_impairment: bool
