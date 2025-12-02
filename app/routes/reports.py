@@ -37,9 +37,12 @@ from app.utils.report_generators import (
     generate_journal_report,
     generate_report_excel,  # Changed from generate_report_pdf
 )
-from app.utils.reports_factory import (
-    run_and_save_report_task, generate_sas_url
-    )
+# Use MinIO-based factory only
+from app.utils.minio_reports_factory import (
+    run_and_save_report_task,
+    generate_presigned_url_for_download,
+    download_report
+)
 from app.config import settings
 from app.schemas import (
     ReportTypeEnum,
@@ -57,8 +60,6 @@ from app.schemas import (
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 logger = logging.getLogger(__name__)
-
-
 
 
 @router.post("/{portfolio_id}/generate", status_code=status.HTTP_200_OK)
@@ -92,9 +93,14 @@ async def generate_report(
         db.commit()
         db.refresh(report)
 
-        # Schedule background task
-        background_tasks.add_task(run_and_save_report_task, report.id, report_request.report_type, file_path, portfolio_id)
-
+        try:
+            # Schedule background task (uses MinIO-backed run_and_save_report_task)
+            background_tasks.add_task(run_and_save_report_task, report.id, report_request.report_type, file_path, portfolio_id)
+        except Exception as e:
+            # Update report status to failed
+            report.status = "failed"
+            db.commit()
+            raise e
 
         return {"message": "Report generation started", "report_id": report.id}
 
@@ -103,9 +109,6 @@ async def generate_report(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error generating report: {str(e)}",
         )
-
-
-
 
 
 @router.get("/{portfolio_id}/history", response_model=ReportHistoryList)
@@ -240,29 +243,18 @@ async def delete_report(
         raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
 
 
-
-@router.get(
-    "/{portfolio_id}/report/{report_id}/download", status_code=status.HTTP_200_OK
-)
+@router.get("/{portfolio_id}/report/{report_id}/download", status_code=status.HTTP_200_OK)
 async def download_report_excel(
     portfolio_id: int,
     report_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-   
-    portfolio = (
-        db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id)
-        .first()
-    )
-
-    if not portfolio:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
-        )
-
-    # Get the report
+    """
+    Fetch report metadata and download the actual file from MinIO.
+    Only uses `report_name` from the report object.
+    """
+    # 1️⃣ Fetch report metadata
     report = (
         db.query(Report)
         .filter(Report.id == report_id, Report.portfolio_id == portfolio_id)
@@ -272,14 +264,22 @@ async def download_report_excel(
     if not report:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
 
+    # 2️⃣ Extract report_name
+    report_name = report.report_name
+    bucket_name = "ifrs9pro-reports"
+    object_name = f"reports/{report_name}"
+
+    # 3️⃣ Download and stream the file
     try:
+        file_data = download_report(bucket_name, object_name)
+        if asyncio.iscoroutine(file_data):
+            file_data = await file_data
 
-        return {"download_url": report.file_path}
-
-
-
-
-        
+        return StreamingResponse(
+            file_data,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={report_name}"}
+        )
 
     except FileNotFoundError:
         raise HTTPException(
@@ -295,8 +295,8 @@ async def download_report_excel(
 
 @router.get("/status/{report_id}")
 def get_report_status(report_id: int, db: Session = Depends(get_db)):
-    status = db.query(Report.status).filter(Report.id == report_id).scalar()
+    status_val = db.query(Report.status).filter(Report.id == report_id).scalar()
 
-    if not status:
+    if not status_val:
         raise HTTPException(status_code=404, detail="Report generated in earlier versions of IFRS9PRO no report status found")
-    return status
+    return status_val
