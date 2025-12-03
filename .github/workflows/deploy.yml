@@ -1,4 +1,4 @@
-name: Deploy Docker Compose
+name: CI/CD Deploy (Basic)
 
 on:
   push:
@@ -11,52 +11,48 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      # 1️⃣ Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Needed for full git history
 
-      # Choose environment
-      - name: Set target environment
-        id: env
+      # 2️⃣ Start SSH agent
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DROPLET_SSH_KEY }}
+
+      # 3️⃣ Determine which script to run
+      - name: Set deployment variables
+        id: vars
         run: |
-          if [[ "${{ github.ref }}" == "refs/heads/staging" ]]; then
-            echo "host=${{ secrets.STAGING_HOST }}" >> $GITHUB_OUTPUT
-            echo "compose_file=docker-compose.staging.yml" >> $GITHUB_OUTPUT
-            echo "env_name=Staging" >> $GITHUB_OUTPUT
+          BRANCH="${GITHUB_REF##*/}"
+          if [ "$BRANCH" = "staging" ]; then
+            echo "HOST=${{ secrets.STAGING_DROPLET_HOST }}" >> $GITHUB_OUTPUT
+            echo "SCRIPT=setup-docker.sh" >> $GITHUB_OUTPUT
+          elif [ "$BRANCH" = "main" ]; then
+            echo "HOST=${{ secrets.PROD_DROPLET_HOST }}" >> $GITHUB_OUTPUT
+            echo "SCRIPT=setup_prod.sh" >> $GITHUB_OUTPUT
           else
-            echo "host=${{ secrets.PROD_HOST }}" >> $GITHUB_OUTPUT
-            echo "compose_file=docker-compose.prod.yml" >> $GITHUB_OUTPUT
-            echo "env_name=Production" >> $GITHUB_OUTPUT
+            echo "Branch $BRANCH not deployable. Exiting."
+            exit 0
           fi
 
-      # Fixed SSH key installation (this is the important fix)
-      - name: Install SSH key
-        uses: shimataro/ssh-key-action@v2
-        with:
-          key: ${{ secrets.SSH_PRIVATE_KEY }}           # ← correct name
-          known_hosts: unnecessary                     # ← we add it manually below
-
-      # Add droplet to known_hosts (prevents host verification prompt)
-      - name: Add droplet to known_hosts
-        run: ssh-keyscan -H ${{ steps.env.outputs.host }} >> ~/.ssh/known_hosts
-
-      # Copy files
-      - name: Copy compose files and .env
+      # 4️⃣ Deploy via SSH
+      - name: Run deploy script on droplet
+        env:
+          DROPLET_USER: ${{ secrets.DROPLET_USER }}
+          HOST: ${{ steps.vars.outputs.HOST }}
+          SCRIPT: ${{ steps.vars.outputs.SCRIPT }}
+          REMOTE_PATH: /root/ifrs9pro_backend
         run: |
-          scp docker-compose.yml \
-              docker-compose.staging.yml \
-              docker-compose.prod.yml \
-              .env \
-              ${{ secrets.SSH_USER }}@${{ steps.env.outputs.host }}:/home/${{ secrets.SSH_USER }}/myapp/
-
-      # Deploy
-      - name: Deploy to ${{ steps.env.outputs.env_name }}
-        run: |
-          ssh ${{ secrets.SSH_USER }}@${{ steps.env.outputs.host }} << EOF
-            cd /home/${{ secrets.SSH_USER }}/myapp
-
-            docker compose pull
-            docker compose -f docker-compose.yml -f ${{ steps.env.outputs.compose_file }} up -d --remove-orphans
-            docker image prune -f
-
-            echo "Deployed to ${{ steps.env.outputs.env_name }} at $(date)"
+          echo "Deploying $SCRIPT to $HOST"
+          ssh -o StrictHostKeyChecking=no $DROPLET_USER@$HOST "REMOTE_PATH='$REMOTE_PATH' SCRIPT='$SCRIPT' bash -s" << 'EOF'
+            set -euo pipefail
+            cd "$REMOTE_PATH" || { echo "Remote path not found: $REMOTE_PATH"; exit 1; }
+            chmod +x "$SCRIPT" || true
+            echo "Running $SCRIPT..."
+            ./"$SCRIPT"
+            echo "✅ Deployment completed successfully."
           EOF
