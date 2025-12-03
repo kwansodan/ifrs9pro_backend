@@ -46,7 +46,7 @@ dc() {
 
 # ----------------- Save current commit hash -----------------
 cd "$PROJECT_ROOT"
-PREV_COMMIT=$(git rev-parse HEAD)
+PREV_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
 echo "🔹 Current commit: $PREV_COMMIT (for rollback)"
 
 # ----------------- Prepare directories -----------------
@@ -59,10 +59,16 @@ deploy() {
     dc down --remove-orphans --timeout 30 || true
 
     echo "🏗️ Building production images..."
-    dc build --no-cache
+    if ! dc build --no-cache; then
+        echo "❌ Build failed!"
+        return 1
+    fi
 
     echo "📦 Starting production containers..."
-    dc up -d
+    if ! dc up -d; then
+        echo "❌ Failed to start containers!"
+        return 1
+    fi
 
     echo "⏳ Waiting for PostgreSQL..."
     MAX_RETRIES=30
@@ -80,18 +86,55 @@ deploy() {
         return 1
     fi
 
-    echo "🗄️ Running Alembic migrations..."
-    if dc exec -T web alembic current >/dev/null 2>&1; then
-        echo "🔹 Alembic already initialized, upgrading..."
+    # Additional wait for web container to be ready
+    echo "⏳ Waiting for web container..."
+    sleep 5
+
+    echo "🗄️ Checking database migration state..."
+    
+    # Check if alembic_version table exists
+    if dc exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'alembic_version');" | grep -q 't'; then
+        echo "🔹 Alembic version table exists, checking current revision..."
+        
+        # Try to get current revision
+        if dc exec -T web alembic current 2>&1 | grep -q "head"; then
+            echo "✅ Database already at head revision"
+        else
+            echo "🔹 Database needs migration..."
+            if ! dc exec -T web alembic upgrade head; then
+                echo "❌ Migration failed"
+                dc logs web
+                return 1
+            fi
+        fi
     else
-        echo "🔹 Fresh DB detected, stamping + upgrading..."
-        dc exec -T web alembic stamp head || true
+        # Fresh database - check if tables exist
+        if dc exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'access_requests');" | grep -q 't'; then
+            echo "🔹 Tables exist but no Alembic tracking. Stamping current state..."
+            dc exec -T web alembic stamp head || {
+                echo "❌ Failed to stamp database"
+                return 1
+            }
+        else
+            echo "🔹 Fresh database detected. Running initial migration..."
+            if ! dc exec -T web alembic upgrade head; then
+                echo "❌ Initial migration failed"
+                dc logs web
+                return 1
+            fi
+        fi
     fi
 
-    if ! dc exec -T web alembic upgrade head; then
-        echo "❌ Migration failed"
-        dc logs web
-        return 1
+    echo "✅ Database migrations complete"
+    
+    # Health check
+    echo "🏥 Running health check..."
+    sleep 3
+    if dc exec -T web curl -f http://localhost:8000/health >/dev/null 2>&1 || \
+       dc exec -T web wget -q --spider http://localhost:8000/health >/dev/null 2>&1; then
+        echo "✅ Health check passed"
+    else
+        echo "⚠️ Health check failed, but continuing (service might need more time)"
     fi
 
     return 0
@@ -101,17 +144,28 @@ deploy() {
 if deploy; then
     echo "🎉 Deployment successful!"
 else
-    echo "⚠️ Deployment failed! Rolling back to previous commit $PREV_COMMIT..."
-    git reset --hard "$PREV_COMMIT"
+    echo "⚠️ Deployment failed! Rolling back..."
+    
+    if [[ "$PREV_COMMIT" != "unknown" ]]; then
+        echo "🔄 Restoring to commit $PREV_COMMIT..."
+        git reset --hard "$PREV_COMMIT"
+    fi
+    
+    echo "🛑 Stopping failed containers..."
     dc down --remove-orphans --timeout 30 || true
-    dc up -d
+    
+    echo "♻️ Attempting to restart previous version..."
+    dc up -d || true
+    
     echo "🔹 Rollback complete."
+    dc ps
     exit 1
 fi
 
 # ----------------- Summary -----------------
 echo ""
 echo "🎉 IFRS9 PRO – PRODUCTION DEPLOYMENT COMPLETE!"
+echo ""
 dc ps
 echo ""
 echo "🌐 Access endpoints:"
@@ -120,7 +174,9 @@ echo "   • API Docs:           https://YOUR_DOMAIN/docs"
 echo "   • MinIO Console:      https://MINIO_DOMAIN"
 echo ""
 echo "📋 Useful commands:"
-echo "   • Logs:               dc logs -f"
-echo "   • Restart:            dc restart"
-echo "   • Stop:               dc down"
-echo "   • DB Shell:           dc exec db psql -U $POSTGRES_USER -d $POSTGRES_DB"
+echo "   • Logs:               docker compose -f $COMPOSE_FILE logs -f"
+echo "   • Restart:            docker compose -f $COMPOSE_FILE restart"
+echo "   • Stop:               docker compose -f $COMPOSE_FILE down"
+echo "   • DB Shell:           docker compose -f $COMPOSE_FILE exec db psql -U $POSTGRES_USER -d $POSTGRES_DB"
+echo ""
+echo "✅ Deployment completed at $(date)"
