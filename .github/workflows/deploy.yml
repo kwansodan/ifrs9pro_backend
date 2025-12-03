@@ -1,4 +1,4 @@
-name: Deploy Docker Compose
+name: CI/CD Deploy (staging / production)
 
 on:
   push:
@@ -9,54 +9,96 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: production
 
     steps:
-      - name: Checkout code
+      - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # Choose environment
-      - name: Set target environment
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.8.1
+        with:
+          ssh-private-key: ${{ secrets.DROPLET_SSH_KEY }}
+
+      - name: Determine environment & targets
         id: env
         run: |
-          if [[ "${{ github.ref }}" == "refs/heads/staging" ]]; then
-            echo "host=${{ secrets.STAGING_HOST }}" >> $GITHUB_OUTPUT
-            echo "compose_file=docker-compose.staging.yml" >> $GITHUB_OUTPUT
-            echo "env_name=Staging" >> $GITHUB_OUTPUT
-          else
-            echo "host=${{ secrets.PROD_HOST }}" >> $GITHUB_OUTPUT
+          BRANCH="${GITHUB_REF##*/}"
+          if [ "$BRANCH" = "staging" ]; then
+            echo "host=${{ secrets.STAGING_DROPLET_HOST }}" >> $GITHUB_OUTPUT
+            echo "branch=staging" >> $GITHUB_OUTPUT
+            echo "script=setup-docker.sh" >> $GITHUB_OUTPUT
+            echo "compose_file=docker-compose.yml" >> $GITHUB_OUTPUT
+          elif [ "$BRANCH" = "main" ]; then
+            echo "host=${{ secrets.PROD_DROPLET_HOST }}" >> $GITHUB_OUTPUT
+            echo "branch=main" >> $GITHUB_OUTPUT
+            echo "script=setup_prod.sh" >> $GITHUB_OUTPUT
             echo "compose_file=docker-compose.prod.yml" >> $GITHUB_OUTPUT
-            echo "env_name=Production" >> $GITHUB_OUTPUT
+          else
+            echo "Not a deployable branch ($BRANCH). Exiting."
+            exit 0
           fi
 
-      # Fixed SSH key installation (this is the important fix)
-      - name: Install SSH key
-        uses: shimataro/ssh-key-action@v2
-        with:
-          key: ${{ secrets.SSH_PRIVATE_KEY }}           # ← correct name
-          known_hosts: unnecessary                     # ← we add it manually below
-
-      # Add droplet to known_hosts (prevents host verification prompt)
-      - name: Add droplet to known_hosts
-        run: ssh-keyscan -H ${{ steps.env.outputs.host }} >> ~/.ssh/known_hosts
-
-      # Copy files
-      - name: Copy compose files and .env
+      - name: Deploy to target droplet (SSH + rollback)
+        env:
+          DROPLET_USER: ${{ secrets.DROPLET_USER }}
         run: |
-          scp docker-compose.yml \
-              docker-compose.staging.yml \
-              docker-compose.prod.yml \
-              .env \
-              ${{ secrets.SSH_USER }}@${{ steps.env.outputs.host }}:/home/${{ secrets.SSH_USER }}/myapp/
+          HOST="${{ steps.env.outputs.host }}"
+          BRANCH="${{ steps.env.outputs.branch }}"
+          SCRIPT="${{ steps.env.outputs.script }}"
+          COMPOSE_FILE="${{ steps.env.outputs.compose_file }}"
+          USER="${DROPLET_USER}"
+          # Change this if your project lives elsewhere on the droplet:
+          REMOTE_PATH="/root/ifrs9pro_backend"
 
-      # Deploy
-      - name: Deploy to ${{ steps.env.outputs.env_name }}
-        run: |
-          ssh ${{ secrets.SSH_USER }}@${{ steps.env.outputs.host }} << EOF
-            cd /home/${{ secrets.SSH_USER }}/myapp
+          echo "Deploying branch '$BRANCH' to $HOST (remote path: $REMOTE_PATH) using script '$SCRIPT'"
 
-            docker compose pull
-            docker compose -f docker-compose.yml -f ${{ steps.env.outputs.compose_file }} up -d --remove-orphans
-            docker image prune -f
+          ssh -o StrictHostKeyChecking=no ${USER}@${HOST} << EOF
+set -euo pipefail
 
-            echo "Deployed to ${{ steps.env.outputs.env_name }} at $(date)"
-          EOF
+echo "==> Entering \${REMOTE_PATH}"
+cd "${REMOTE_PATH}" || { echo "Remote project path not found: ${REMOTE_PATH}"; exit 1; }
+
+echo "==> Saving current commit (for rollback)..."
+PREV_COMMIT=\$(git rev-parse HEAD)
+echo "Previous commit: \$PREV_COMMIT"
+
+echo "==> Fetching and updating to origin/${BRANCH}..."
+git fetch --all --prune
+git reset --hard origin/${BRANCH}
+
+# Make sure scripts are executable
+chmod +x "${SCRIPT}" || true
+
+# Rollback function called on any error
+rollback() {
+  echo ">>> Deployment failed — attempting rollback to \$PREV_COMMIT"
+  set +e
+  git reset --hard "\$PREV_COMMIT" || echo "Failed to reset to previous commit"
+  echo "Bringing services back up (best-effort)..."
+  if command -v docker >/dev/null 2>&1; then
+    # try docker compose with plugin, fallback to docker-compose if needed
+    if docker compose version >/dev/null 2>&1; then
+      docker compose -f "${COMPOSE_FILE}" -p ifrs9pro up -d --build || true
+    else
+      docker-compose -f "${COMPOSE_FILE}" -p ifrs9pro up -d --build || true
+    fi
+  fi
+  echo "Rollback complete."
+  exit 1
+}
+
+trap rollback ERR
+
+echo "==> Running ${SCRIPT} ..."
+# run the script that performs the build / migrations / startup
+./${SCRIPT}
+
+# If we reach here, success — cancel the trap
+trap - ERR
+
+echo "✅ Deployment script finished successfully."
+
+EOF

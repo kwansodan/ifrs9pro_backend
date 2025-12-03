@@ -2,12 +2,11 @@
 set -euo pipefail
 
 # ============================================================
-# IFRS9 Pro – Production Deployment Script
+# IFRS9 Pro – Production Deployment Script with Rollback
 # Uses Dockerfile.prod and docker-compose.prod.yml
-# Safe to re-run. Does not delete volumes. Runs migrations.
 # ============================================================
 
-echo "🚀 Deploying IFRS9 Pro – PRODUCTION MODE"
+echo "🚀 Deploying IFRS9 Pro – PRODUCTION MODE (with rollback)"
 
 # ----------------- Paths -----------------
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,7 +35,7 @@ if ! docker compose version >/dev/null 2>&1 && ! command -v docker-compose >/dev
     exit 1
 fi
 
-# Wrapper
+# ----------------- Docker Compose wrapper -----------------
 dc() {
     if docker compose version >/dev/null 2>&1; then
         docker compose -f "$COMPOSE_FILE" -p ifrs9pro "$@"
@@ -45,66 +44,75 @@ dc() {
     fi
 }
 
+# ----------------- Save current commit hash -----------------
+cd "$PROJECT_ROOT"
+PREV_COMMIT=$(git rev-parse HEAD)
+echo "🔹 Current commit: $PREV_COMMIT (for rollback)"
+
 # ----------------- Prepare directories -----------------
-echo "📁 Creating persistent directories..."
 mkdir -p reports logs app/ml_models
 chmod 755 reports logs app/ml_models
 
-# ----------------- Stop current containers (safe) -----------------
-echo "🛑 Stopping running services WITHOUT deleting data..."
-dc down --remove-orphans --timeout 30 || true
+# ----------------- Deployment function -----------------
+deploy() {
+    echo "🛑 Stopping running services (safe)..."
+    dc down --remove-orphans --timeout 30 || true
 
-# ----------------- Rebuild & Start -----------------
-echo "🏗️ Building production images..."
-dc build --no-cache
+    echo "🏗️ Building production images..."
+    dc build --no-cache
 
-echo "📦 Starting production containers..."
-dc up -d
+    echo "📦 Starting production containers..."
+    dc up -d
 
-# ----------------- Wait for PostgreSQL -----------------
-echo "⏳ Waiting for PostgreSQL..."
-MAX_RETRIES=30
-
-for i in $(seq 1 $MAX_RETRIES); do
-    if dc exec -T db pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; then
-        echo "✅ PostgreSQL is ready."
-        break
+    echo "⏳ Waiting for PostgreSQL..."
+    MAX_RETRIES=30
+    for i in $(seq 1 $MAX_RETRIES); do
+        if dc exec -T db pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; then
+            echo "✅ PostgreSQL is ready."
+            break
+        fi
+        echo "   Attempt $i/$MAX_RETRIES – retrying in 2s..."
+        sleep 2
+    done
+    if [[ "$i" -eq $MAX_RETRIES ]]; then
+        echo "❌ PostgreSQL failed to start in time."
+        dc logs db
+        return 1
     fi
-    echo "   Attempt $i/$MAX_RETRIES – retrying in 2s..."
-    sleep 2
-done
 
-if [[ "$i" -eq "$MAX_RETRIES" ]]; then
-    echo "❌ PostgreSQL failed to start in time. Logs:"
-    dc logs db
-    exit 1
-fi
+    echo "🗄️ Running Alembic migrations..."
+    if dc exec -T web alembic current >/dev/null 2>&1; then
+        echo "🔹 Alembic already initialized, upgrading..."
+    else
+        echo "🔹 Fresh DB detected, stamping + upgrading..."
+        dc exec -T web alembic stamp head || true
+    fi
 
-# ----------------- Run Alembic migrations -----------------
-echo "🗄️ Running Alembic migrations..."
+    if ! dc exec -T web alembic upgrade head; then
+        echo "❌ Migration failed"
+        dc logs web
+        return 1
+    fi
 
-if dc exec -T web alembic current >/dev/null 2>&1; then
-    echo "🔹 Alembic already initialized, upgrading..."
+    return 0
+}
+
+# ----------------- Deploy with rollback -----------------
+if deploy; then
+    echo "🎉 Deployment successful!"
 else
-    echo "🔹 Fresh DB detected, stamping + upgrading..."
-    dc exec -T web alembic stamp head || true
-fi
-
-if dc exec -T web alembic upgrade head; then
-    echo "✅ Migrations applied successfully."
-else
-    echo "❌ Migration failed. Showing logs:"
-    dc logs web
+    echo "⚠️ Deployment failed! Rolling back to previous commit $PREV_COMMIT..."
+    git reset --hard "$PREV_COMMIT"
+    dc down --remove-orphans --timeout 30 || true
+    dc up -d
+    echo "🔹 Rollback complete."
     exit 1
 fi
 
 # ----------------- Summary -----------------
 echo ""
 echo "🎉 IFRS9 PRO – PRODUCTION DEPLOYMENT COMPLETE!"
-echo ""
-echo "🔍 Running services:"
 dc ps
-
 echo ""
 echo "🌐 Access endpoints:"
 echo "   • API:                https://YOUR_DOMAIN"
@@ -116,4 +124,3 @@ echo "   • Logs:               dc logs -f"
 echo "   • Restart:            dc restart"
 echo "   • Stop:               dc down"
 echo "   • DB Shell:           dc exec db psql -U $POSTGRES_USER -d $POSTGRES_DB"
-echo ""
