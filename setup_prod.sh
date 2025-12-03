@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ============================================================
 # IFRS9 Pro – Production Deployment Script with Rollback
-# Uses Dockerfile.prod and docker-compose.prod.yml
+# Uses Dockerfile.prod and docker-compose.prod.yml.
 # ============================================================
 
 echo "🚀 Deploying IFRS9 Pro – PRODUCTION MODE (with rollback)"
