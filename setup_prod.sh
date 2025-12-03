@@ -3,27 +3,39 @@ set -euo pipefail
 
 # ============================================================
 # IFRS9 Pro – Production Deployment Script with Rollback
-# Uses Dockerfile.prod and docker-compose.prod.yml.
+# Uses Dockerfile.prod and docker-compose.prod.yml
 # ============================================================
 
-echo "🚀 Starting IFRS9 Pro Deployment (AUTO MODE)"
+echo "🚀 Deploying IFRS9 Pro – PRODUCTION MODE (with rollback)"
 
+# ----------------- Paths -----------------
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$PROJECT_ROOT/.env"
 COMPOSE_FILE="$PROJECT_ROOT/docker-compose.prod.yml"
 
-# ----------------- Load Environment -----------------
+# ----------------- Load environment -----------------
 if [[ -f "$ENV_FILE" ]]; then
-    echo "📝 Loading .env..."
+    echo "📝 Loading environment variables from .env..."
     set -a
     source "$ENV_FILE"
     set +a
 else
-    echo "❌ Missing .env file!"
+    echo "❌ Missing .env file! Production deployment requires it."
     exit 1
 fi
 
-# ----------------- Docker Compose Wrapper -----------------
+# ----------------- Sanity Checks -----------------
+if ! docker info >/dev/null 2>&1; then
+    echo "❌ Docker daemon is not running."
+    exit 1
+fi
+
+if ! docker compose version >/dev/null 2>&1 && ! command -v docker-compose >/dev/null 2>&1; then
+    echo "❌ Docker Compose not installed."
+    exit 1
+fi
+
+# ----------------- Docker Compose wrapper -----------------
 dc() {
     if docker compose version >/dev/null 2>&1; then
         docker compose -f "$COMPOSE_FILE" -p ifrs9pro "$@"
@@ -58,9 +70,21 @@ deploy() {
         return 1
     fi
 
-# ----------------- Services Up (Zero Downtime Recreate) -----------------
-echo "📦 Starting / Recreating containers..."
-dc up -d --remove-orphans
+    echo "⏳ Waiting for PostgreSQL..."
+    MAX_RETRIES=30
+    for i in $(seq 1 $MAX_RETRIES); do
+        if dc exec -T db pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; then
+            echo "✅ PostgreSQL is ready."
+            break
+        fi
+        echo "   Attempt $i/$MAX_RETRIES – retrying in 2s..."
+        sleep 2
+    done
+    if [[ "$i" -eq $MAX_RETRIES ]]; then
+        echo "❌ PostgreSQL failed to start in time."
+        dc logs db
+        return 1
+    fi
 
     # Additional wait for web container to be ready
     echo "⏳ Waiting for web container..."
@@ -68,40 +92,45 @@ dc up -d --remove-orphans
 
     echo "🗄️ Checking database migration state..."
     
+    # Check if tables already exist (indicates existing database)
+    TABLES_EXIST=$(dc exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'access_requests');" 2>/dev/null || echo "f")
+    
     # Check if alembic_version table exists
-    if dc exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'alembic_version');" | grep -q 't'; then
-        echo "🔹 Alembic version table exists, checking current revision..."
+    ALEMBIC_EXISTS=$(dc exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'alembic_version');" 2>/dev/null || echo "f")
+    
+    if [[ "$TABLES_EXIST" == "t" ]] && [[ "$ALEMBIC_EXISTS" == "f" ]]; then
+        echo "🔹 Existing tables detected without Alembic tracking. Stamping database..."
+        if ! dc exec -T web alembic stamp head; then
+            echo "❌ Failed to stamp database"
+            dc logs web
+            return 1
+        fi
+        echo "✅ Database stamped successfully"
+    elif [[ "$ALEMBIC_EXISTS" == "t" ]]; then
+        echo "🔹 Alembic tracking exists. Checking if migration needed..."
+        CURRENT_REV=$(dc exec -T web alembic current 2>/dev/null | grep -oP '(?<=\()[a-f0-9]+(?=\))' | head -1 || echo "none")
+        HEAD_REV=$(dc exec -T web alembic heads 2>/dev/null | grep -oP '(?<=\()[a-f0-9]+(?=\))' | head -1 || echo "none")
         
-        # Try to get current revision
-        if dc exec -T web alembic current 2>&1 | grep -q "head"; then
-            echo "✅ Database already at head revision"
+        if [[ "$CURRENT_REV" == "$HEAD_REV" ]] && [[ "$CURRENT_REV" != "none" ]]; then
+            echo "✅ Database already at latest revision ($CURRENT_REV)"
         else
-            echo "🔹 Database needs migration..."
+            echo "🔹 Running migration from $CURRENT_REV to $HEAD_REV..."
             if ! dc exec -T web alembic upgrade head; then
                 echo "❌ Migration failed"
                 dc logs web
                 return 1
             fi
+            echo "✅ Migration completed successfully"
         fi
     else
-        # Fresh database - check if tables exist
-        if dc exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'access_requests');" | grep -q 't'; then
-            echo "🔹 Tables exist but no Alembic tracking. Stamping current state..."
-            dc exec -T web alembic stamp head || {
-                echo "❌ Failed to stamp database"
-                return 1
-            }
-        else
-            echo "🔹 Fresh database detected. Running initial migration..."
-            if ! dc exec -T web alembic upgrade head; then
-                echo "❌ Initial migration failed"
-                dc logs web
-                return 1
-            fi
+        echo "🔹 Fresh database detected. Running initial migration..."
+        if ! dc exec -T web alembic upgrade head; then
+            echo "❌ Initial migration failed"
+            dc logs web
+            return 1
         fi
+        echo "✅ Initial migration completed successfully"
     fi
-
-    echo "✅ Database migrations complete"
     
     # Health check
     echo "🏥 Running health check..."
@@ -136,7 +165,7 @@ else
     echo "🔹 Rollback complete."
     dc ps
     exit 1
-}
+fi
 
 # ----------------- Summary -----------------
 echo ""
