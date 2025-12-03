@@ -11,11 +11,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout repository
+      # 1️⃣ Checkout repo
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # Needed for full git history
 
       # 2️⃣ Start SSH agent
       - name: Start SSH agent
@@ -23,49 +23,36 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.DROPLET_SSH_KEY }}
 
-      # 3️⃣ Choose host + script based on branch
+      # 3️⃣ Determine which script to run
       - name: Set deployment variables
         id: vars
         run: |
           BRANCH="${GITHUB_REF##*/}"
-
           if [ "$BRANCH" = "staging" ]; then
             echo "HOST=${{ secrets.STAGING_DROPLET_HOST }}" >> $GITHUB_OUTPUT
             echo "SCRIPT=setup-docker.sh" >> $GITHUB_OUTPUT
-
           elif [ "$BRANCH" = "main" ]; then
             echo "HOST=${{ secrets.PROD_DROPLET_HOST }}" >> $GITHUB_OUTPUT
             echo "SCRIPT=setup_prod.sh" >> $GITHUB_OUTPUT
-
           else
-            echo "Not a deploy branch. Exiting."
+            echo "Branch $BRANCH not deployable. Exiting."
             exit 0
           fi
 
-      # 4️⃣ SSH and deploy
+      # 4️⃣ Deploy via SSH
       - name: Run deploy script on droplet
         env:
+          DROPLET_USER: ${{ secrets.DROPLET_USER }}
           HOST: ${{ steps.vars.outputs.HOST }}
           SCRIPT: ${{ steps.vars.outputs.SCRIPT }}
-          REMOTE_PATH: "/root/ifrs9pro_backend"
-          DROPLET_USER: ${{ secrets.DROPLET_USER }}
+          REMOTE_PATH: /root/ifrs9pro_backend
         run: |
           echo "Deploying $SCRIPT to $HOST"
-
-          ssh -o StrictHostKeyChecking=no $DROPLET_USER@$HOST << EOF
+          ssh -o StrictHostKeyChecking=no $DROPLET_USER@$HOST "REMOTE_PATH='$REMOTE_PATH' SCRIPT='$SCRIPT' bash -s" << 'EOF'
             set -euo pipefail
-
-            REMOTE_PATH="${REMOTE_PATH}"
-            SCRIPT="${SCRIPT}"
-
-            echo "📁 Switching to directory: \$REMOTE_PATH"
-            cd "\$REMOTE_PATH" || { echo "❌ Remote path not found"; exit 1; }
-
-            echo "🔧 Making script executable"
-            chmod +x "\$SCRIPT" || true
-
-            echo "🚀 Running deployment script: \$SCRIPT"
-            ./\$SCRIPT
-
-            echo "✅ Deployment completed successfully!"
-EOF
+            cd "$REMOTE_PATH" || { echo "Remote path not found: $REMOTE_PATH"; exit 1; }
+            chmod +x "$SCRIPT" || true
+            echo "Running $SCRIPT..."
+            ./"$SCRIPT"
+            echo "✅ Deployment completed successfully."
+          EOF
