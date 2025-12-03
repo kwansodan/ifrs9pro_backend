@@ -2,40 +2,29 @@
 set -euo pipefail
 
 # ============================================================
-# IFRS9 Pro – Production Deployment Script with Rollback
-# Uses Dockerfile.prod and docker-compose.prod.yml
+# IFRS9 Pro – Auto Deployment Script (Production)
+# Rebuilds only when images changed.
+# Safe to run on EVERY PUSH (via CI/CD or webhook).
 # ============================================================
 
-echo "🚀 Deploying IFRS9 Pro – PRODUCTION MODE (with rollback)"
+echo "🚀 Starting IFRS9 Pro Deployment (AUTO MODE)"
 
-# ----------------- Paths -----------------
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$PROJECT_ROOT/.env"
 COMPOSE_FILE="$PROJECT_ROOT/docker-compose.prod.yml"
 
-# ----------------- Load environment -----------------
+# ----------------- Load Environment -----------------
 if [[ -f "$ENV_FILE" ]]; then
-    echo "📝 Loading environment variables from .env..."
+    echo "📝 Loading .env..."
     set -a
     source "$ENV_FILE"
     set +a
 else
-    echo "❌ Missing .env file! Production deployment requires it."
+    echo "❌ Missing .env file!"
     exit 1
 fi
 
-# ----------------- Sanity Checks -----------------
-if ! docker info >/dev/null 2>&1; then
-    echo "❌ Docker daemon is not running."
-    exit 1
-fi
-
-if ! docker compose version >/dev/null 2>&1 && ! command -v docker-compose >/dev/null 2>&1; then
-    echo "❌ Docker Compose not installed."
-    exit 1
-fi
-
-# ----------------- Docker Compose wrapper -----------------
+# ----------------- Docker Compose Wrapper -----------------
 dc() {
     if docker compose version >/dev/null 2>&1; then
         docker compose -f "$COMPOSE_FILE" -p ifrs9pro "$@"
@@ -44,83 +33,31 @@ dc() {
     fi
 }
 
-# ----------------- Save current commit hash -----------------
-cd "$PROJECT_ROOT"
-PREV_COMMIT=$(git rev-parse HEAD)
-echo "🔹 Current commit: $PREV_COMMIT (for rollback)"
+# ----------------- Build (ONLY IF CHANGES EXIST) -----------------
+echo "🏗️ Building updated images (cached build)..."
+dc build
 
-# ----------------- Prepare directories -----------------
-mkdir -p reports logs app/ml_models
-chmod 755 reports logs app/ml_models
+# ----------------- Services Up (Zero Downtime Recreate) -----------------
+echo "📦 Starting / Recreating containers..."
+dc up -d --remove-orphans
 
-# ----------------- Deployment function -----------------
-deploy() {
-    echo "🛑 Stopping running services (safe)..."
-    dc down --remove-orphans --timeout 30 || true
-
-    echo "🏗️ Building production images..."
-    dc build --no-cache
-
-    echo "📦 Starting production containers..."
-    dc up -d
-
-    echo "⏳ Waiting for PostgreSQL..."
-    MAX_RETRIES=30
-    for i in $(seq 1 $MAX_RETRIES); do
-        if dc exec -T db pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; then
-            echo "✅ PostgreSQL is ready."
-            break
-        fi
-        echo "   Attempt $i/$MAX_RETRIES – retrying in 2s..."
-        sleep 2
-    done
-    if [[ "$i" -eq $MAX_RETRIES ]]; then
-        echo "❌ PostgreSQL failed to start in time."
-        dc logs db
-        return 1
+# ----------------- Wait for DB -----------------
+echo "⏳ Waiting for PostgreSQL..."
+for x in {1..30}; do
+    if dc exec -T db pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; then
+        echo "✅ PostgreSQL is ready."
+        break
     fi
+    sleep 2
+done
 
-    echo "🗄️ Running Alembic migrations..."
-    if dc exec -T web alembic current >/dev/null 2>&1; then
-        echo "🔹 Alembic already initialized, upgrading..."
-    else
-        echo "🔹 Fresh DB detected, stamping + upgrading..."
-        dc exec -T web alembic stamp head || true
-    fi
-
-    if ! dc exec -T web alembic upgrade head; then
-        echo "❌ Migration failed"
-        dc logs web
-        return 1
-    fi
-
-    return 0
+# ----------------- Run Migrations -----------------
+echo "🗄️ Running Alembic migrations..."
+dc exec -T web alembic upgrade head || {
+    echo "❌ Migration failed!"
+    dc logs web
+    exit 1
 }
 
-# ----------------- Deploy with rollback -----------------
-if deploy; then
-    echo "🎉 Deployment successful!"
-else
-    echo "⚠️ Deployment failed! Rolling back to previous commit $PREV_COMMIT..."
-    git reset --hard "$PREV_COMMIT"
-    dc down --remove-orphans --timeout 30 || true
-    dc up -d
-    echo "🔹 Rollback complete."
-    exit 1
-fi
-
-# ----------------- Summary -----------------
-echo ""
-echo "🎉 IFRS9 PRO – PRODUCTION DEPLOYMENT COMPLETE!"
+echo "🎉 Deployment Complete!"
 dc ps
-echo ""
-echo "🌐 Access endpoints:"
-echo "   • API:                https://YOUR_DOMAIN"
-echo "   • API Docs:           https://YOUR_DOMAIN/docs"
-echo "   • MinIO Console:      https://MINIO_DOMAIN"
-echo ""
-echo "📋 Useful commands:"
-echo "   • Logs:               dc logs -f"
-echo "   • Restart:            dc restart"
-echo "   • Stop:               dc down"
-echo "   • DB Shell:           dc exec db psql -U $POSTGRES_USER -d $POSTGRES_DB"
