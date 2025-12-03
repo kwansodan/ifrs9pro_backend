@@ -6,36 +6,24 @@ set -euo pipefail
 # Uses Dockerfile.prod and docker-compose.prod.yml.
 # ============================================================
 
-echo "🚀 Deploying IFRS9 Pro – PRODUCTION MODE (with rollback)"
+echo "🚀 Starting IFRS9 Pro Deployment (AUTO MODE)"
 
-# ----------------- Paths -----------------
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$PROJECT_ROOT/.env"
 COMPOSE_FILE="$PROJECT_ROOT/docker-compose.prod.yml"
 
-# ----------------- Load environment -----------------
+# ----------------- Load Environment -----------------
 if [[ -f "$ENV_FILE" ]]; then
-    echo "📝 Loading environment variables from .env..."
+    echo "📝 Loading .env..."
     set -a
     source "$ENV_FILE"
     set +a
 else
-    echo "❌ Missing .env file! Production deployment requires it."
+    echo "❌ Missing .env file!"
     exit 1
 fi
 
-# ----------------- Sanity Checks -----------------
-if ! docker info >/dev/null 2>&1; then
-    echo "❌ Docker daemon is not running."
-    exit 1
-fi
-
-if ! docker compose version >/dev/null 2>&1 && ! command -v docker-compose >/dev/null 2>&1; then
-    echo "❌ Docker Compose not installed."
-    exit 1
-fi
-
-# ----------------- Docker Compose wrapper -----------------
+# ----------------- Docker Compose Wrapper -----------------
 dc() {
     if docker compose version >/dev/null 2>&1; then
         docker compose -f "$COMPOSE_FILE" -p ifrs9pro "$@"
@@ -70,21 +58,9 @@ deploy() {
         return 1
     fi
 
-    echo "⏳ Waiting for PostgreSQL..."
-    MAX_RETRIES=30
-    for i in $(seq 1 $MAX_RETRIES); do
-        if dc exec -T db pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; then
-            echo "✅ PostgreSQL is ready."
-            break
-        fi
-        echo "   Attempt $i/$MAX_RETRIES – retrying in 2s..."
-        sleep 2
-    done
-    if [[ "$i" -eq $MAX_RETRIES ]]; then
-        echo "❌ PostgreSQL failed to start in time."
-        dc logs db
-        return 1
-    fi
+# ----------------- Services Up (Zero Downtime Recreate) -----------------
+echo "📦 Starting / Recreating containers..."
+dc up -d --remove-orphans
 
     # Additional wait for web container to be ready
     echo "⏳ Waiting for web container..."
@@ -160,7 +136,7 @@ else
     echo "🔹 Rollback complete."
     dc ps
     exit 1
-fi
+}
 
 # ----------------- Summary -----------------
 echo ""
