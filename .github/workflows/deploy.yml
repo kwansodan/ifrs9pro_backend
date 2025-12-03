@@ -1,4 +1,4 @@
-name: CI/CD Deploy (Staging / Production)
+name: CI/CD Deploy (Basic)
 
 on:
   push:
@@ -11,89 +11,48 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ----------------- Checkout repo -----------------
+      # 1️⃣ Checkout repo
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Needed for full git history (rollback)
+          fetch-depth: 0  # Needed for full git history
 
-      # ----------------- Start SSH agent -----------------
+      # 2️⃣ Start SSH agent
       - name: Start SSH agent
         uses: webfactory/ssh-agent@v0.8.1
         with:
           ssh-private-key: ${{ secrets.DROPLET_SSH_KEY }}
 
-      # ----------------- Determine environment -----------------
-      - name: Determine deployment target
-        id: env
+      # 3️⃣ Determine which script to run
+      - name: Set deployment variables
+        id: vars
         run: |
           BRANCH="${GITHUB_REF##*/}"
-
           if [ "$BRANCH" = "staging" ]; then
-            echo "host=${{ secrets.STAGING_DROPLET_HOST }}" >> $GITHUB_OUTPUT
-            echo "branch=staging" >> $GITHUB_OUTPUT
-            echo "script=setup-docker.sh" >> $GITHUB_OUTPUT
-            echo "compose_file=docker-compose.yml" >> $GITHUB_OUTPUT
+            echo "HOST=${{ secrets.STAGING_DROPLET_HOST }}" >> $GITHUB_OUTPUT
+            echo "SCRIPT=setup-docker.sh" >> $GITHUB_OUTPUT
           elif [ "$BRANCH" = "main" ]; then
-            echo "host=${{ secrets.PROD_DROPLET_HOST }}" >> $GITHUB_OUTPUT
-            echo "branch=main" >> $GITHUB_OUTPUT
-            echo "script=setup_prod.sh" >> $GITHUB_OUTPUT
-            echo "compose_file=docker-compose.prod.yml" >> $GITHUB_OUTPUT
+            echo "HOST=${{ secrets.PROD_DROPLET_HOST }}" >> $GITHUB_OUTPUT
+            echo "SCRIPT=setup_prod.sh" >> $GITHUB_OUTPUT
           else
-            echo "Not a deployable branch ($BRANCH). Exiting."
+            echo "Branch $BRANCH not deployable. Exiting."
             exit 0
           fi
 
-      # ----------------- Deploy via SSH -----------------
-      - name: Deploy to droplet with rollback
+      # 4️⃣ Deploy via SSH
+      - name: Run deploy script on droplet
         env:
           DROPLET_USER: ${{ secrets.DROPLET_USER }}
+          HOST: ${{ steps.vars.outputs.HOST }}
+          SCRIPT: ${{ steps.vars.outputs.SCRIPT }}
+          REMOTE_PATH: /root/ifrs9pro_backend
         run: |
-          HOST="${{ steps.env.outputs.host }}"
-          USER="${DROPLET_USER}"
-          SCRIPT="${{ steps.env.outputs.script }}"
-          COMPOSE_FILE="${{ steps.env.outputs.compose_file }}"
-          REMOTE_PATH="/root/ifrs9pro_backend"
-
-          echo "Deploying branch '$BRANCH' to $HOST using script '$SCRIPT'"
-
-          ssh -o StrictHostKeyChecking=no $USER@$HOST << 'EOF'
+          echo "Deploying $SCRIPT to $HOST"
+          ssh -o StrictHostKeyChecking=no $DROPLET_USER@$HOST << 'EOF'
             set -euo pipefail
-
-            REMOTE_PATH="/root/ifrs9pro_backend"
             cd "$REMOTE_PATH" || { echo "Remote path not found: $REMOTE_PATH"; exit 1; }
-
-            echo "==> Saving current commit for rollback..."
-            PREV_COMMIT=$(git rev-parse HEAD)
-            echo "Previous commit: $PREV_COMMIT"
-
-            echo "==> Fetching latest changes..."
-            git fetch --all --prune
-            git reset --hard origin/"${GITHUB_REF##*/}"
-
-            chmod +x "${SCRIPT}" || true
-
-            rollback() {
-              echo ">>> Deployment failed. Rolling back to $PREV_COMMIT"
-              set +e
-              git reset --hard "$PREV_COMMIT"
-              echo "Restoring previous containers (best effort)..."
-              if command -v docker >/dev/null 2>&1; then
-                if docker compose version >/dev/null 2>&1; then
-                  docker compose -f "${COMPOSE_FILE}" -p ifrs9pro up -d --build || true
-                else
-                  docker-compose -f "${COMPOSE_FILE}" -p ifrs9pro up -d --build || true
-                fi
-              fi
-              echo "Rollback complete."
-              exit 1
-            }
-
-            trap rollback ERR
-
-            echo "==> Running deployment script: ${SCRIPT}"
-            ./"${SCRIPT}"
-
-            trap - ERR
-            echo "✅ Deployment finished successfully."
-EOF
+            chmod +x "$SCRIPT" || true
+            echo "Running $SCRIPT..."
+            ./"$SCRIPT"
+            echo "✅ Deployment completed successfully."
+          EOF
