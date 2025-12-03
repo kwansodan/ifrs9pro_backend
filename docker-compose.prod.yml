@@ -4,9 +4,6 @@ services:
       context: .
       dockerfile: Dockerfile.prod
     container_name: ifrs9pro_fastapi
-    dns:
-      - 1.1.1.1   # Cloudflare
-      - 8.8.8.8   # Google DNS
     ports:
       - "8000:8000"
     env_file: .env
@@ -22,7 +19,7 @@ services:
       - ./app/ml_models:/app/app/ml_models
     restart: unless-stopped
     networks:
-      - backend
+      - ifrs9pro_network
 
   db:
     image: postgres:16-alpine
@@ -40,13 +37,16 @@ services:
       retries: 10
     restart: unless-stopped
     networks:
-      - backend
+      - ifrs9pro_network
 
   minio:
     image: minio/minio:latest
     container_name: ifrs9pro_minio
     command: server /data --console-address ":9001"
     env_file: .env
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
     volumes:
       - minio_data:/data
     ports:
@@ -59,7 +59,7 @@ services:
       retries: 5
     restart: unless-stopped
     networks:
-      - backend
+      - ifrs9pro_network
 
   caddy:
     image: caddy:latest
@@ -76,14 +76,10 @@ services:
     depends_on:
       - web
     networks:
-      - public
-      - backend
+      - ifrs9pro_network
 
 networks:
-  backend:
-    driver: bridge
-    internal: true
-  public:
+  ifrs9pro_network:
     driver: bridge
 
 volumes:
