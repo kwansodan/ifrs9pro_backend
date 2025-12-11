@@ -22,7 +22,9 @@ from app.calculators.local_impairment import (
 router = APIRouter(tags=["dashboard"])
 
 
-@router.get("/dashboard")
+@router.get("/dashboard",  
+            description="Get dashboard information including portfolio and customer overviews"
+            )
 def get_dashboard(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),

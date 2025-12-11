@@ -1,11 +1,11 @@
 import csv
 import io
-from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import datetime, timedelta
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from app.database import get_db
-from app.models import AccessRequest, User, Feedback, Help
+from app.models import AccessRequest, User, Feedback, Help, RequestStatus, Portfolio
 from app.schemas import (
     AccessRequestSubmit,
     AccessRequestResponse,
@@ -40,13 +40,16 @@ from app.schemas import (
     FeedbackResponse,
 
 )
-
+from app.config import settings
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
 # Handle access requests
-@router.get("/requests", response_model=List[AccessRequestResponse], operation_id="list_all_access_requests")
+@router.get("/requests", 
+            response_model=List[AccessRequestResponse], 
+            operation_id="list_all_access_requests",  
+            description="Get all access requests")
 async def get_access_requests(
     db: Session = Depends(get_db), current_user: User = Depends(is_admin)
 ):
@@ -57,70 +60,11 @@ async def get_access_requests(
     return access_requests
 
 
-@router.put("/requests/{request_id}", operation_id="update_specific_access_request")
-async def update_access_request(
-    request_id: int,
-    request_update: AccessRequestUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(is_admin),
-):
-    access_request = (
-        db.query(AccessRequest).filter(AccessRequest.id == request_id).first()
-    )
-
-    if not access_request:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Request not found"
-        )
-
-    access_request.status = request_update.status
-
-    if request_update.status == RequestStatus.APPROVED and request_update.role:
-        access_request.role = request_update.role
-
-        # Generate invitation token
-        token = create_invitation_token(access_request.email)
-        access_request.token = token
-        access_request.token_expiry = datetime.utcnow() + timedelta(
-            hours=settings.INVITATION_EXPIRE_HOURS
-        )
-
-        # Send invitation email
-        await send_invitation_email(access_request.email, token)
-
-    db.commit()
-
-    return {"message": "Request updated successfully"}
-
-
-@router.delete("/requests/{request_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_access_request(
-    request_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
-):
-    """
-    Delete a specific access request by ID.
-    """
-
-    access_request = (
-        db.query(AccessRequest).filter(AccessRequest.id == request_id).first()
-    )
-
-    if access_request:
-        db.delete(access_request)
-        db.commit()
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Access request not found",
-        )
-
-    return None
-
 
 # Handle user management
-@router.get("/users", response_model=List[UserResponse])
+@router.get("/users",  
+            description="Get all users in db", 
+            response_model=List[UserResponse])
 async def get_users(
     db: Session = Depends(get_db), current_user: User = Depends(is_admin)
 ):
@@ -128,7 +72,10 @@ async def get_users(
 
     return users
 
-@router.get("/users/export", response_class=StreamingResponse)
+
+@router.get("/users/export",  
+            description="Get all users and export them as csv", 
+            response_class=StreamingResponse)
 async def export_users_csv(
     db: Session = Depends(get_db), 
     current_user: User = Depends(is_admin)
@@ -187,18 +134,10 @@ async def export_users_csv(
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 
-@router.get("/users/{user_id}", response_model=UserResponse)
-async def get_user(
-    user_id: int, db: Session = Depends(get_db), current_user: User = Depends(is_admin)
-):
-    user = db.query(User).filter(User.id == user_id).first()
 
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
-
-
-@router.post("/users", response_model=UserResponse)
+@router.post("/users",
+            description="create a user in db",
+            response_model=UserResponse)
 async def create_user(
     user_create: UserCreate,
     db: Session = Depends(get_db),
@@ -242,56 +181,11 @@ async def create_user(
     return new_user
 
 
-@router.delete("/users/{user_id}", status_code=204)
-async def delete_user(
-    user_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(is_admin),
-):
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
-        )
-
-    # Delete the user
-    db.delete(user)
-    db.commit()
-
-    return None  #
-
-
-@router.put("/users/{user_id}", response_model=UserResponse)
-async def update_user(
-    user_id: int,
-    user_update: UserUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(is_admin),
-):
-    user = db.query(User).filter(User.id == user_id).first()
-
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
-        )
-
-    # Update provided fields
-    update_data = user_update.dict(exclude_unset=True)
-
-    # Convert enum values to strings
-    if "role" in update_data and update_data["role"]:
-        update_data["role"] = update_data["role"].value
-
-    for key, value in update_data.items():
-        setattr(user, key, value)
-
-    db.commit()
-    db.refresh(user)
-    return user
-
-
 # Feedback routes
-@router.get("/feedback", response_model=List[FeedbackResponse])
+@router.get("/feedback",
+            description="Get all feedback entries",
+            response_model=List[FeedbackResponse]
+            )
 async def admin_get_all_feedback(
     db: Session = Depends(get_db),
     current_user: User = Depends(is_admin),
@@ -328,7 +222,247 @@ async def admin_get_all_feedback(
     
     return response_data
 
-@router.get("/feedback/{feedback_id}", response_model=FeedbackResponse)
+
+# Help routes for admin
+@router.get("/help",  
+            description="Get all help entries", 
+            response_model=List[HelpResponse])
+async def admin_get_all_help(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(is_admin),
+):
+    """
+    Admin endpoint to get all help entries
+    """
+    help_list = db.query(Help).all()
+    
+    # Prepare response with manual mapping
+    response_data = []
+    for help_item in help_list:
+        # Create dictionary manually with all required fields
+        help_dict = {
+            "id": help_item.id,
+            "description": help_item.description,
+            "status": help_item.status,
+            "user_id": help_item.user_id,
+            "created_at": help_item.created_at,
+            "updated_at": help_item.updated_at,
+            "user": {
+                "id": help_item.user.id,
+                "email": help_item.user.email,
+                "first_name": help_item.user.first_name,
+                "last_name": help_item.user.last_name
+            } if hasattr(help_item, "user") and help_item.user else None,
+            "is_creator": help_item.user_id == current_user.id
+        }
+        
+        # Create response object from dictionary
+        response_data.append(HelpResponse(**help_dict))
+    
+    return response_data
+
+@router.get("/help/{help_id}",  
+            description="Get help entry by ID", 
+            response_model=HelpResponse,
+            responses={404: {"description": "Help entry not found"}},
+            )
+async def admin_get_help(
+    help_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(is_admin),
+):
+    """
+    Admin endpoint to get a specific help entry
+    """
+    help_item = db.query(Help).filter(Help.id == help_id).first()
+    if not help_item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Help request not found"
+        )
+    
+    # Create response dictionary manually
+    response_data = {
+        "id": help_item.id,
+        "description": help_item.description,
+        "status": help_item.status,
+        "user_id": help_item.user_id,
+        "created_at": help_item.created_at,
+        "updated_at": help_item.updated_at,
+        "user": {
+            "id": help_item.user.id,
+            "email": help_item.user.email,
+            "first_name": help_item.user.first_name,
+            "last_name": help_item.user.last_name
+        } if hasattr(help_item, "user") and help_item.user else None,
+        "is_creator": help_item.user_id == current_user.id
+    }
+    
+    # Return response directly from dictionary
+    return HelpResponse(**response_data)
+
+
+@router.put("/help/{help_id}/status",  
+            description="Get help status by ID", 
+            response_model=HelpResponse,
+            responses={404: {"description": "Help not found"}},)
+async def update_help_status(
+    help_id: int,
+    status_update: HelpStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(is_admin),
+):
+    """
+    Admin endpoint to update help status
+    """
+    help_item = db.query(Help).filter(Help.id == help_id).first()
+    if not help_item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Help request not found"
+        )
+    
+    # Update status
+    help_item.status = status_update.status.value
+    db.commit()
+    db.refresh(help_item)
+    
+    # Create response dictionary manually
+    response_data = {
+        "id": help_item.id,
+        "description": help_item.description,
+        "status": help_item.status,
+        "user_id": help_item.user_id,
+        "created_at": help_item.created_at,
+        "updated_at": help_item.updated_at,
+        "user": {
+            "id": help_item.user.id,
+            "email": help_item.user.email,
+            "first_name": help_item.user.first_name,
+            "last_name": help_item.user.last_name
+        } if hasattr(help_item, "user") and help_item.user else None,
+        "is_creator": help_item.user_id == current_user.id
+    }
+    
+    # Return response directly from dictionary
+    return HelpResponse(**response_data)
+
+
+@router.delete("/help/{help_id}",  
+            description="Delete a specific help entry by ID", 
+            status_code=status.HTTP_204_NO_CONTENT,
+            responses={404: {"description": "Help not found"}},)
+async def admin_delete_help(
+    help_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(is_admin),
+):
+    """
+    Admin endpoint to delete any help entry
+    """
+    # Get the help
+    help_item = db.query(Help).filter(Help.id == help_id).first()
+    if not help_item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Help request not found"
+        )
+    
+    # Delete the help
+    db.delete(help_item)
+    db.commit()
+    
+    # Explicitly return an empty 204 response
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete("/requests/{request_id}", 
+            description="Delete access requests",
+            status_code=status.HTTP_204_NO_CONTENT,
+            responses={404: {"description": "Request not found"}},
+            )
+async def delete_access_request(
+    request_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Delete a specific access request by ID.
+    """
+
+    access_request = (
+        db.query(AccessRequest).filter(AccessRequest.id == request_id).first()
+    )
+
+    if access_request:
+        db.delete(access_request)
+        db.commit()
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Access request not found",
+        )
+
+    return JSONResponse(
+        status_code=200,
+        content={"detail": "Access request deleted successfully"}
+    )
+
+@router.put("/requests/{request_id}", 
+            operation_id="update_specific_access_request",  
+            description="Update access requests",
+            responses={404: {"description": "Request not found"}},
+            )
+async def update_access_request(
+    request_id: int,
+    request_update: AccessRequestUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(is_admin),
+):
+    access_request = (
+        db.query(AccessRequest).filter(AccessRequest.id == request_id).first()
+    )
+
+    if not access_request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Request not found"
+        )
+
+    access_request.status = request_update.status
+
+    if request_update.status == RequestStatus.APPROVED and request_update.role:
+        access_request.role = request_update.role
+
+        # Generate invitation token
+        token = create_invitation_token(access_request.email)
+        access_request.token = token
+        access_request.token_expiry = datetime.utcnow() + timedelta(
+            hours=settings.INVITATION_EXPIRE_HOURS
+        )
+
+        # Send invitation email
+        await send_invitation_email(access_request.email, token)
+
+    db.commit()
+
+    return {"message": "Request updated successfully"}
+
+
+@router.get("/users/{user_id}", 
+            description="Get a specific user by ID",
+            responses={404: {"description": "User not found"}},
+            response_model=UserResponse)
+async def get_user(
+    user_id: int, db: Session = Depends(get_db), current_user: User = Depends(is_admin)
+):
+    user = db.query(User).filter(User.id == user_id).first()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+@router.get("/feedback/{feedback_id}",
+            description="Get a specific feedback by ID",
+            response_model=FeedbackResponse,
+            responses={404: {"description": "Feedback not found"}},
+            )
 async def admin_get_feedback(
     feedback_id: int,
     db: Session = Depends(get_db),
@@ -365,7 +499,10 @@ async def admin_get_feedback(
     # Return response directly from dictionary
     return FeedbackResponse(**response_data)
 
-@router.put("/feedback/{feedback_id}/status", response_model=FeedbackResponse)
+@router.put("/feedback/{feedback_id}/status",  
+            description="Update a feedback status",
+            response_model=FeedbackResponse,
+            responses={404: {"description": "Feedback not found"}},)
 async def update_feedback_status(
     feedback_id: int,
     status_update: FeedbackStatusUpdate,
@@ -408,7 +545,10 @@ async def update_feedback_status(
     # Return response directly from dictionary
     return FeedbackResponse(**response_data)
 
-@router.delete("/feedback/{feedback_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/feedback/{feedback_id}",  
+            description="Delete a feedback by ID",
+            status_code=status.HTTP_204_NO_CONTENT,
+            responses={404: {"description": "Feedback not found"}},)
 async def admin_delete_feedback(
     feedback_id: int,
     db: Session = Depends(get_db),
@@ -431,137 +571,56 @@ async def admin_delete_feedback(
     # Return no content for successful deletion
     return None
 
-# Help routes for admin
-@router.get("/help", response_model=List[HelpResponse])
-async def admin_get_all_help(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(is_admin),
-):
-    """
-    Admin endpoint to get all help entries
-    """
-    help_list = db.query(Help).all()
-    
-    # Prepare response with manual mapping
-    response_data = []
-    for help_item in help_list:
-        # Create dictionary manually with all required fields
-        help_dict = {
-            "id": help_item.id,
-            "description": help_item.description,
-            "status": help_item.status,
-            "user_id": help_item.user_id,
-            "created_at": help_item.created_at,
-            "updated_at": help_item.updated_at,
-            "user": {
-                "id": help_item.user.id,
-                "email": help_item.user.email,
-                "first_name": help_item.user.first_name,
-                "last_name": help_item.user.last_name
-            } if hasattr(help_item, "user") and help_item.user else None,
-            "is_creator": help_item.user_id == current_user.id
-        }
-        
-        # Create response object from dictionary
-        response_data.append(HelpResponse(**help_dict))
-    
-    return response_data
 
-@router.get("/help/{help_id}", response_model=HelpResponse)
-async def admin_get_help(
-    help_id: int,
+@router.put("/users/{user_id}", 
+            response_model=UserResponse,
+            responses={404: {"description": "User not found"}},)
+async def update_user(
+    user_id: int,
+    user_update: UserUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(is_admin),
 ):
-    """
-    Admin endpoint to get a specific help entry
-    """
-    help_item = db.query(Help).filter(Help.id == help_id).first()
-    if not help_item:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Help request not found"
-        )
-    
-    # Create response dictionary manually
-    response_data = {
-        "id": help_item.id,
-        "description": help_item.description,
-        "status": help_item.status,
-        "user_id": help_item.user_id,
-        "created_at": help_item.created_at,
-        "updated_at": help_item.updated_at,
-        "user": {
-            "id": help_item.user.id,
-            "email": help_item.user.email,
-            "first_name": help_item.user.first_name,
-            "last_name": help_item.user.last_name
-        } if hasattr(help_item, "user") and help_item.user else None,
-        "is_creator": help_item.user_id == current_user.id
-    }
-    
-    # Return response directly from dictionary
-    return HelpResponse(**response_data)
+    user = db.query(User).filter(User.id == user_id).first()
 
-@router.put("/help/{help_id}/status", response_model=HelpResponse)
-async def update_help_status(
-    help_id: int,
-    status_update: HelpStatusUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(is_admin),
-):
-    """
-    Admin endpoint to update help status
-    """
-    help_item = db.query(Help).filter(Help.id == help_id).first()
-    if not help_item:
+    if not user:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Help request not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
         )
-    
-    # Update status
-    help_item.status = status_update.status.value
+
+    # Update provided fields
+    update_data = user_update.dict(exclude_unset=True)
+
+    # Convert enum values to strings
+    if "role" in update_data and update_data["role"]:
+        update_data["role"] = update_data["role"].value
+
+    for key, value in update_data.items():
+        setattr(user, key, value)
+
     db.commit()
-    db.refresh(help_item)
-    
-    # Create response dictionary manually
-    response_data = {
-        "id": help_item.id,
-        "description": help_item.description,
-        "status": help_item.status,
-        "user_id": help_item.user_id,
-        "created_at": help_item.created_at,
-        "updated_at": help_item.updated_at,
-        "user": {
-            "id": help_item.user.id,
-            "email": help_item.user.email,
-            "first_name": help_item.user.first_name,
-            "last_name": help_item.user.last_name
-        } if hasattr(help_item, "user") and help_item.user else None,
-        "is_creator": help_item.user_id == current_user.id
-    }
-    
-    # Return response directly from dictionary
-    return HelpResponse(**response_data)
+    db.refresh(user)
+    return user
 
-@router.delete("/help/{help_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def admin_delete_help(
-    help_id: int,
+
+@router.delete("/users/{user_id}",
+            description="Delete a user by ID",
+            status_code=204,
+            responses={404: {"description": "User not found"}},)
+async def delete_user(
+    user_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(is_admin),
 ):
-    """
-    Admin endpoint to delete any help entry
-    """
-    # Get the help
-    help_item = db.query(Help).filter(Help.id == help_id).first()
-    if not help_item:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Help request not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
         )
-    
-    # Delete the help
-    db.delete(help_item)
+
+    # Delete the user
+    db.delete(user)
     db.commit()
-    
-    # Return no content for successful deletion
-    return None
+
+    return None  #
+

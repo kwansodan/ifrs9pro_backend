@@ -17,13 +17,41 @@ jobs:
         with:
           fetch-depth: 0  # Needed for full git history
 
-      # 2️⃣ Start SSH agent
+      # 2️⃣ Set up Python for pytest
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"  # match your project version
+
+      # 3️⃣ Install dependencies
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      # 4️⃣ Run pytest
+      - name: Run tests
+        run: |
+          echo "Running pytest..."
+          python -m pytest tests || { echo "❌ Pytest failed"; exit 1; }
+
+      # 5️⃣ Run Spectral lint
+      - name: Run Spectral
+        run: |
+          echo "Running Spectral lint..."
+          docker run --rm -v "$PWD:/work" -w /work \
+            stoplight/spectral:latest lint \
+            --ruleset /work/.spectral.yaml \
+            /work/openapi.yaml || { echo "❌ Spectral lint failed"; exit 1; }
+
+      # 6️⃣ Start SSH agent
       - name: Start SSH agent
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DROPLET_SSH_KEY }}
 
-      # 3️⃣ Determine which script to run
+      # 7️⃣ Determine which script to run
       - name: Set deployment variables
         id: vars
         run: |
@@ -39,7 +67,7 @@ jobs:
             exit 0
           fi
 
-      # 4️⃣ Deploy via SSH
+      # 8️⃣ Deploy via SSH
       - name: Run deploy script on droplet
         env:
           DROPLET_USER: ${{ secrets.DROPLET_USER }}

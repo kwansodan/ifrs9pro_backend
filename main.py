@@ -30,10 +30,50 @@ logger = logging.getLogger("app")
 
 
 # Initialize the FastAPI app first
-app = FastAPI()
+app = FastAPI(
+    title="IFRS9 API",
+    description="API for IFRS9 calculations and reporting",
+    version="1.0.0",
+    contact={
+        "name": "IFRS9 PRO",
+        "email": "admin@ifrs9pro.com",
+    },
+)
+
+# Global OpenAPI tags
+app.openapi_tags = [
+    {"name": "admin", "description": "Endpoints for administrative actions"},
+    {"name": "auth", "description": "Authentication and login endpoints"},
+    {"name": "dashboard", "description": "Endpoints for dashboard data"},
+    {"name": "portfolios", "description": "Portfolio management endpoints"},
+    {"name": "quality-issues", "description": "Endpoints for quality issues"},
+    {"name": "reports", "description": "Reporting endpoints"},
+    {"name": "user actions", "description": "Endpoints for general user actions"},
+    {"name": "websocket", "description": "WebSocket endpoints"},
+]
+
+# Add servers manually
+
+# Save original method
+original_openapi = app.openapi
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    openapi_schema = original_openapi() 
+    openapi_schema["servers"] = [
+        {"url": "https://do-site.service4gh.com", "description": "Production"},
+        {"url": "https://do-site-staging.service4gh.com", "description": "Staging"}
+    ]
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
+
+
 
 # Add a health check endpoint immediately
-@app.get("/health")
+@app.get("/health", tags=["health"], description="Check API health")
 async def health_check():
     """Simple health check endpoint for Azure health probes"""
     return {"status": "healthy"}
@@ -75,13 +115,13 @@ app.include_router(user_router.router)
 app.include_router(quality_issues.router)
 app.include_router(websocket.router)
 
-@app.get("/")
+@app.get("/", tags=["root"], description="Check API root")
 async def root():
     return {"message": "Welcome to IFRS9Pro API"}
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-@app.post("/token")
+@app.post("/token", tags=["token"], description="Get authentication token")
 async def get_token(
     form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)
 ):

@@ -85,28 +85,6 @@ services:
     networks:
       - ifrs9pro_network
 
-  master:
-    build:
-      context: ./my_locustfiles # build from that folder
-    ports:
-      - "8089:8089"
-    volumes:
-      - ./my_locustfiles:/mnt/locust
-    command: >
-      -f /mnt/locust/locustfile.py
-      --master
-      --web-host=0.0.0.0
-      --master-bind-host=0.0.0.0
-
-  worker:
-    build:
-      context: ./my_locustfiles # use the same image
-    volumes:
-      - ./my_locustfiles:/mnt/locust
-    command: >
-      -f /mnt/locust/locustfile.py
-      --worker
-      --master-host=master
 
 volumes:
   postgres_data:

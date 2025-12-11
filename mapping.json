@@ -1,0 +1,98 @@
+{
+  "portfolio_id": 1,
+  "files": [
+    {
+      "type": "loan_details",
+      "object_name": "portfolio/7/loan_details/3e639e63-9508-4fd1-8f36-798c9fd93b6b_loan_data_70k.xlsx",
+      "mapping": {
+        "Loan No.": "loan_no",
+        "Employee Id": "employee_id",
+        "Employee Name": "employee_name",
+        "Employer": "employer",
+        "Loan Issue Date": "loan_issue_date",
+        "Deduction Start Period": "deduction_start_period",
+        "Submission Period": "submission_period",
+        "Maturity Period": "maturity_period",
+        "Location Code": "location_code",
+        "Dalex Paddy": "dalex_paddy",
+        "Team Leader": "team_leader",
+        "Loan Type": "loan_type",
+        "Loan Amount": "loan_amount",
+        "Loan Term": "loan_term",
+        "Administrative Fees": "administrative_fees",
+        "Total Interest": "total_interest",
+        "Total Collectible": "total_collectible",
+        "Net Loan Amount": "net_loan_amount",
+        "Monthly Installment": "monthly_installment",
+        "Principal Due": "principal_due",
+        "Interest Due": "interest_due",
+        "Total Due": "total_due",
+        "Principal Paid": "principal_paid",
+        "Interest Paid": "interest_paid",
+        "Total Paid": "total_paid",
+        "Principal Paid2": "principal_paid2",
+        "Interest Paid2": "interest_paid2",
+        "Total Paid2": "total_paid2",
+        "Paid": "paid",
+        "Cancelled": "cancelled",
+        "Outstanding Loan Balance": "outstanding_loan_balance",
+        "Accumulated Arrears": "accumulated_arrears",
+        "NDIA": "ndia",
+        "Prevailing Posted Repayment": "prevailing_posted_repayment",
+        "Prevailing Due Payment": "prevailing_due_payment",
+        "Current Missed Deduction": "current_missed_deduction",
+        "Admin Charge": "admin_charge",
+        "Recovery Rate": "recovery_rate",
+        "Deduction Status": "deduction_status"
+      }
+    },
+    {
+      "type": "client_data",
+      "object_name": "portfolio/7/client_data/fc40a89b-447c-4240-a4d3-737e7839d9c7_client_data_70k.xlsx",
+      "mapping": {
+        "Employee Id": "employee_id",
+        "Lastname": "last_name",
+        "Othernames": "other_names",
+        "Residential Address": "residential_address",
+        "Postal Address": "postal_address",
+        "Client Phone No.": "phone_number",
+        "Title": "title",
+        "Marital Status": "marital_status",
+        "Gender": "gender",
+        "Date of Birth": "date_of_birth",
+        "Employer": "employer",
+        "Previous Employee No.": "previous_employee_no",
+        "Social Security No.": "social_security_no",
+        "Voters Id No.": "voters_id_no",
+        "Employment Date": "employment_date",
+        "Next of Kin": "next_of_kin",
+        "Next of Kin Contact:": "next_of_kin_contact",
+        "Next of Kin Address": "next_of_kin_address",
+        "Search Name": "search_name"
+      }
+    },
+    {
+      "type": "loan_guarantee_data",
+      "object_name": "portfolio/7/loan_guarantee_data/a78f7e91-a99a-49ef-9fbb-6b49180e6a45_Loan_guarantee.xlsx",
+      "mapping": {
+        "id": "loan_no",
+        "Guarantor name": "guarantor_name",
+        "pledged amount": "guarantee_amount"
+      }
+    },
+    {
+      "type": "loan_collateral_data",
+      "object_name":  "portfolio/7/loan_collateral_data/a3466a87-ed5a-40b0-96b9-9570c9258058_loan collateral data.xlsx",
+      "mapping": {
+        "Employee Id": "loan_no",
+        "Lastname": "security_type",
+        "Othernames": "security_description",
+        "Residential Address": "security_value",
+        "Postal Address": "valuation_date",
+        "Client Phone No.": "location",
+        "Title": "registration_details",
+        "Marital Status": "ownership"
+      }
+    }
+  ]
+}

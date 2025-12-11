@@ -51,7 +51,11 @@ def transform_affected_records(quality_issues: List[QualityIssue]) -> List[Quali
     return quality_issues
 
 
-@router.get("/{portfolio_id}/quality-issues", response_model=List[QualityIssueResponse])
+@router.get("/{portfolio_id}/quality-issues", 
+            description="Get all quality issues for a specific portfolio", 
+            response_model=List[QualityIssueResponse],
+            responses={404: {"description": "Portfolio not found"}},
+            )
 def get_quality_issues(
     portfolio_id: int,
     status_type: Optional[str] = None,
@@ -100,7 +104,10 @@ def get_quality_issues(
     return quality_issues
 
 
-@router.get("/{portfolio_id}/quality-issues/download", status_code=status.HTTP_200_OK)
+@router.get("/{portfolio_id}/quality-issues/download", 
+            description="Download all quality issues for a portfolio as Excel", 
+            status_code=status.HTTP_200_OK,
+            responses={404: {"description": "Portfolio not found"}},)
 async def download_all_quality_issues_excel(
     portfolio_id: int,
     status_type: Optional[str] = None,
@@ -232,7 +239,10 @@ async def download_all_quality_issues_excel(
     )
 
 
-@router.get("/{portfolio_id}/quality-issues/{issue_id}", response_model=QualityIssueResponse)
+@router.get("/{portfolio_id}/quality-issues/{issue_id}", 
+            description="Retrieve specific quality issues for a particular portfolio", 
+            response_model=QualityIssueResponse,
+            responses={404: {"description": "Portfolio not found"}},)
 def get_quality_issue(
     portfolio_id: int,
     issue_id: int,
@@ -272,7 +282,10 @@ def get_quality_issue(
     return issue
 
 
-@router.put("/{portfolio_id}/quality-issues/{issue_id}", response_model=QualityIssueResponse)
+@router.put("/{portfolio_id}/quality-issues/{issue_id}", 
+            description="Update quality issues including approving them", 
+            response_model=QualityIssueResponse,
+            responses={404: {"description": "Portfolio not found"}},)
 def update_quality_issue(
     portfolio_id: int,
     issue_id: int,
@@ -322,8 +335,10 @@ def update_quality_issue(
 
 
 @router.post(
-    "/{portfolio_id}/quality-issues/{issue_id}/comments",
+    "/{portfolio_id}/quality-issues/{issue_id}/comments", 
+    description="Add a comment to a quality issue",
     response_model=QualityIssueCommentModel,
+    responses={404: {"description": "Portfolio not found"}},
 )
 def add_comment_to_quality_issue(
     portfolio_id: int,
@@ -372,8 +387,10 @@ def add_comment_to_quality_issue(
 
 
 @router.get(
-    "/{portfolio_id}/quality-issues/{issue_id}/comments",
+    "/{portfolio_id}/quality-issues/{issue_id}/comments", 
+    description="Get all comments for a quality issue",
     response_model=List[QualityIssueCommentModel],
+    responses={404: {"description": "Portfolio not found"}},
 )
 def get_quality_issue_comments(
     portfolio_id: int,
@@ -420,8 +437,10 @@ def get_quality_issue_comments(
 
 
 @router.put(
-    "/{portfolio_id}/quality-issues/{issue_id}/comments/{comment_id}",
+    "/{portfolio_id}/quality-issues/{issue_id}/comments/{comment_id}", 
+    description="Edit a comment on a quality issue",
     response_model=QualityIssueCommentModel,
+    responses={404: {"description": "Portfolio not found"}},
 )
 def edit_quality_issue_comment(
     portfolio_id: int,
@@ -481,7 +500,10 @@ def edit_quality_issue_comment(
 
 
 @router.post(
-    "/{portfolio_id}/quality-issues/{issue_id}/approve", response_model=QualityIssueResponse
+    "/{portfolio_id}/quality-issues/{issue_id}/approve", 
+    description="Approve a quality issue",
+    response_model=QualityIssueResponse,
+    responses={404: {"description": "Portfolio not found"}},
 )
 def approve_quality_issue(
     portfolio_id: int,
@@ -539,7 +561,10 @@ def approve_quality_issue(
     return issue
 
 
-@router.post("/{portfolio_id}/approve-all-quality-issues", response_model=Dict)
+@router.post("/{portfolio_id}/approve-all-quality-issues", 
+             description="Approve all open quality issues for a portfolio at once", 
+             response_model=Dict,
+             responses={404: {"description": "Portfolio not found"}},)
 def approve_all_quality_issues(
     portfolio_id: int,
     comment: Optional[str] = None,
@@ -592,7 +617,10 @@ def approve_all_quality_issues(
     return {"message": "All quality issues approved", "count": len(open_issues)}
 
 
-@router.post("/{portfolio_id}/recheck-quality", response_model=QualityCheckSummary)
+@router.post("/{portfolio_id}/recheck-quality", 
+             description="Run quality checks again to find any new issues.", 
+             response_model=QualityCheckSummary,
+             responses={404: {"description": "Portfolio not found"}},)
 def recheck_quality_issues(
     portfolio_id: int,
     db: Session = Depends(get_db),
@@ -630,7 +658,10 @@ def recheck_quality_issues(
     )
 
 
-@router.get("/{portfolio_id}/quality-issues/{issue_id}/download", status_code=status.HTTP_200_OK)
+@router.get("/{portfolio_id}/quality-issues/{issue_id}/download", 
+            description="Download a specific quality issue as Excel", 
+            status_code=status.HTTP_200_OK,
+            responses={404: {"description": "Portfolio not found"}},)
 async def download_quality_issue_excel(
     portfolio_id: int,
     issue_id: int,

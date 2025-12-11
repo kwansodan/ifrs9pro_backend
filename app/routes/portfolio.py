@@ -125,7 +125,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/portfolios", tags=["portfolios"])
 
 
-@router.post("/", response_model=PortfolioResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/",  
+            description="Create a new portfolio for the current user.", 
+            response_model=PortfolioResponse, 
+            status_code=status.HTTP_201_CREATED
+            )
 async def create_portfolio(
     portfolio: PortfolioCreate,
     db: Session = Depends(get_db),
@@ -156,7 +160,9 @@ async def create_portfolio(
 
 
 
-@router.get("/", response_model=PortfolioList)
+@router.get("/",  
+            description="Get all portfolios belonging to the current user.", 
+            response_model=PortfolioList)
 def get_portfolios(
     skip: int = 0,
     limit: int = 100,
@@ -229,7 +235,12 @@ def get_portfolios(
 
     return {"items": response_items, "total": total}
 
-@router.get("/{portfolio_id}", response_model=PortfolioWithSummaryResponse)
+
+@router.get("/{portfolio_id}",  
+            description="Get portfolio details with summary statistics and quality checks using ID", 
+            response_model=PortfolioWithSummaryResponse,
+            responses={404: {"description": "Help request not found"}},
+            )
 async def get_portfolio(
     portfolio_id: int,
     db: Session = Depends(get_db),
@@ -499,7 +510,12 @@ async def get_portfolio(
             detail=f"Error retrieving portfolio: {str(e)}\n{error_details}"
         )
 
-@router.put("/{portfolio_id}", response_model=PortfolioWithSummaryResponse)
+
+@router.put("/{portfolio_id}",  
+            description="Update details of a specific portfolio by ID.", 
+            response_model=PortfolioWithSummaryResponse,
+            responses={404: {"description": "Portfolio not found"}},
+            )
 async def update_portfolio(
     portfolio_id: int,
     portfolio_update: PortfolioUpdate,
@@ -573,7 +589,10 @@ async def update_portfolio(
         )
 
 
-@router.delete("/{portfolio_id}", status_code=status.HTTP_200_OK)
+@router.delete("/{portfolio_id}",  
+            description="Delete a portfolio by ID and return confirmation.", 
+            status_code=status.HTTP_200_OK
+            )
 def delete_portfolio(
     portfolio_id: int,
     db: Session = Depends(get_db),
@@ -602,10 +621,13 @@ def delete_portfolio(
     return {"detail": "Portfolio deleted successfully"}
 
 @router.post(
-    "/{portfolio_id}/ingest/save",
+    "/{portfolio_id}/ingest/save",  
+    description="Accept and upload Excel files to MinIO, auto-extract headers, and return file info and extracted headers.",
     response_model=IngestAndSaveResponse,
     status_code=status.HTTP_200_OK
 )
+
+
 async def accept_portfolio_data(
     portfolio_id: int,
     loan_details: Optional[UploadFile] = File(None),
@@ -643,7 +665,10 @@ async def accept_portfolio_data(
     )
 
 
-@router.post("/{portfolio_id}/ingest", status_code=status.HTTP_200_OK)
+@router.post("/{portfolio_id}/ingest",  
+            description="Ingest cleaned Excel files from MinIO with mapping into the portfolio ingestion pipeline.", 
+            responses={404: {"description": "Portfolio not found"}},
+            status_code=status.HTTP_200_OK)
 async def ingest_portfolio_data(
     portfolio_id: int,
     payload: IngestPayload,  # Use Pydantic model here
@@ -703,7 +728,9 @@ async def ingest_portfolio_data(
         )
 
 
-@router.get("/{portfolio_id}/calculate-ecl")
+@router.get("/{portfolio_id}/calculate-ecl",  
+            responses={404: {"description": "Portfolio not found"}},
+            description="Calculate ECL provisions directly from a portfolio ID using latest staging data.",)
 async def calculate_ecl_provision(
     portfolio_id: int,
     reporting_date: Optional[date] = None,
@@ -729,18 +756,26 @@ async def calculate_ecl_provision(
     
 
     try:
-        return await process_ecl_calculation_sync(
+        result = await process_ecl_calculation_sync(
             portfolio_id=portfolio_id,
             reporting_date=reporting_date,
             db=db, 
             user_email = current_user.email,
             first_name = current_user.first_name
         )
+        # Ensure a consistent shape for tests/stubs
+        if isinstance(result, dict) and "status" in result:
+            return result
+        return {"status": "ok", "result": result}
     except Exception as e:
         logger.error(f"ECL calculation failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/{portfolio_id}/stage-loans-ecl")
+
+@router.post("/{portfolio_id}/stage-loans-ecl",  
+            responses={404: {"description": "Portfolio not found"}},
+            description="Stage loans for ECL calculation for a given portfolio ID.",
+            )
 async def stage_loans_ecl(
     portfolio_id: int,
     db: Session = Depends(get_db),
@@ -765,7 +800,10 @@ async def stage_loans_ecl(
         )
     
 
-@router.post("/{portfolio_id}/stage-loans-local")
+@router.post("/{portfolio_id}/stage-loans-local",  
+            responses={404: {"description": "Portfolio not found"}}, 
+            description="Stage loans for local impairment calculation for a given portfolio ID.",
+            )
 async def stage_loans_local(
     portfolio_id: int,
     db: Session = Depends(get_db),
@@ -791,7 +829,10 @@ async def stage_loans_local(
     
 
 
-@router.get("/{portfolio_id}/calculate-local-impairment")
+@router.get("/{portfolio_id}/calculate-local-impairment",  
+            responses={404: {"description": "Portfolio not found"}},
+            description="Calculate local impairment provisions directly from a portfolio ID using latest staging data.",
+            )
 async def calculate_local_provision(
     portfolio_id: int,
     reporting_date: Optional[date] = None,
@@ -819,13 +860,16 @@ async def calculate_local_provision(
         )
 
     try:
-        return await process_bog_impairment_calculation_sync(
+        result = await process_bog_impairment_calculation_sync(
             portfolio_id=portfolio_id,
             reporting_date=reporting_date,
             db=db,
             user_email = current_user.email,
             first_name = current_user.first_name
         )
+        if isinstance(result, dict) and "status" in result:
+            return result
+        return {"status": "ok", "result": result}
     except Exception as e:
         logger.error(f"Local Impairment calculation failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
