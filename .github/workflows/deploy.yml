@@ -10,6 +10,10 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
 
+    env:
+      # Set a temporary SECRET_KEY for CI/test purposes
+      SECRET_KEY: "default-test-secret"
+
     steps:
       # 1️⃣ Checkout repo
       - name: Checkout repository

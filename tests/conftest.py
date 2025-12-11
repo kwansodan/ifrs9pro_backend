@@ -6,6 +6,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+
+
 # Ensure the app uses the in-memory SQLite URL before any app imports
 TEST_DB_PATH = os.path.join(tempfile.gettempdir(), "ifrs9pro_test.db")
 TEST_DATABASE_URL = f"sqlite:///{TEST_DB_PATH}"
