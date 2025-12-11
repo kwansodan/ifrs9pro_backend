@@ -15,9 +15,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Needed for full git history
+          fetch-depth: 0
 
-      # 2️⃣ Set up Python for pytest
+      # 2️⃣ Set up Python
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
@@ -30,13 +30,18 @@ jobs:
           pip install -r requirements.txt
           pip install pytest
 
-      # 4️⃣ Run pytest
+      # 4️⃣ Create fake site directory for tests
+      - name: Create fake site directory
+        run: |
+          mkdir -p site
+
+      # 5️⃣ Run pytest
       - name: Run tests
         run: |
           echo "Running pytest..."
           python -m pytest tests || { echo "❌ Pytest failed"; exit 1; }
 
-      # 5️⃣ Run Spectral lint
+      # 6️⃣ Run Spectral lint
       - name: Run Spectral
         run: |
           echo "Running Spectral lint..."
@@ -45,13 +50,13 @@ jobs:
             --ruleset /work/.spectral.yaml \
             /work/openapi.yaml || { echo "❌ Spectral lint failed"; exit 1; }
 
-      # 6️⃣ Start SSH agent
+      # 7️⃣ Start SSH agent
       - name: Start SSH agent
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DROPLET_SSH_KEY }}
 
-      # 7️⃣ Determine which script to run
+      # 8️⃣ Determine which script to run
       - name: Set deployment variables
         id: vars
         run: |
@@ -67,7 +72,7 @@ jobs:
             exit 0
           fi
 
-      # 8️⃣ Deploy via SSH
+      # 9️⃣ Deploy via SSH
       - name: Run deploy script on droplet
         env:
           DROPLET_USER: ${{ secrets.DROPLET_USER }}
