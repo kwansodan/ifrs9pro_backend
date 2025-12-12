@@ -53,7 +53,67 @@ jobs:
             --ruleset /work/.spectral.yaml \
             /work/openapi.yaml || { echo "❌ Spectral lint failed"; exit 1; }
 
-      # 6️⃣ Start Docker Compose stack
+      # 6️⃣ Create CI-only .env file
+      - name: Create CI environment file
+        run: |
+          echo "ACCESS_TOKEN_EXPIRE_HOURS=1" >> .env
+          echo "ACCESS_TOKEN_EXPIRE_MINUTES=15" >> .env
+          echo "DEBUG=True" >> .env
+          echo "INVITATION_EXPIRE_HOURS=1" >> .env
+
+          echo "FRONTEND_BASE_URL=http://localhost:3000" >> .env
+          echo "BASE_URL=http://localhost:8000" >> .env
+
+          echo "SECRET_KEY=test-secret-key" >> .env
+
+          echo "ADMIN_EMAIL=admin@example.com" >> .env
+          echo "ADMIN_PASSWORD=admin123" >> .env
+          echo "SUPERADMIN_EMAIL=superadmin@example.com" >> .env
+          echo "SUPERADMIN_PASSWORD=superadmin123" >> .env
+
+          # CI Postgres
+          echo "SQLALCHEMY_DATABASE_URL=postgresql://testuser:testpass@db:5432/testdb" >> .env
+          echo "POSTGRES_PASSWORD=testpass" >> .env
+          echo "POSTGRES_USER=testuser" >> .env
+          echo "POSTGRES_DB=testdb" >> .env
+
+          # CI Minio
+          echo "MINIO_ENDPOINT=http://minio:9000" >> .env
+          echo "MINIO_PUBLIC_ENDPOINT=http://localhost:9000" >> .env
+          echo "MINIO_ACCESS_KEY=minio" >> .env
+          echo "MINIO_SECRET_KEY=miniostorage" >> .env
+          echo "MINIO_BUCKET_NAME=ci-bucket" >> .env
+          echo "MINIO_USE_SSL=False" >> .env
+
+          # Dummy external services
+          echo "AZURE_COMMUNICATION_CONNECTION_STRING=dummy" >> .env
+          echo "AZURE_SENDER_EMAIL=test@example.com" >> .env
+          echo "BREVO_API_KEY=dummy" >> .env
+          echo "SENDER_EMAIL=test@example.com" >> .env
+          echo "SMTP_HOST=localhost" >> .env
+          echo "SMTP_PORT=1025" >> .env
+          echo "SMTP_USERNAME=dummy" >> .env
+          echo "SMTP_PASSWORD=dummy" >> .env
+          echo "SMTP_USE_TLS=false" >> .env
+          echo "SMTP_FROM=test@example.com" >> .env
+
+          echo "MAILJET_API_KEY=dummy" >> .env
+          echo "MAILJET_API_SECRET=dummy" >> .env
+          echo "MAILJET_SENDER_EMAIL=test@example.com" >> .env
+          echo "MAILJET_SENDER_NAME=Test" >> .env
+          echo "MAILJET_SMTP_HOST=localhost" >> .env
+          echo "MAILJET_SMTP_PORT=1025" >> .env
+
+          echo "CONTAINER_NAME=ci-container" >> .env
+          echo "TENANT_DEFAULT=test-tenant" >> .env
+          echo "PAYSTACK_SECRET_KEY=dummy" >> .env
+
+          echo "TEST_DATABASE_URL=postgresql://testuser:testpass@db:5432/testdb" >> .env
+
+          echo "Created CI .env file:"
+          cat .env
+
+    # 6️⃣ Start Docker Compose stack
       - name: Start API stack (db + minio + fastapi)
         run: |
           echo "Starting docker-compose.local.yml..."
