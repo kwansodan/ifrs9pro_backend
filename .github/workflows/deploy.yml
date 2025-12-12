@@ -33,6 +33,11 @@ jobs:
           pip install -r requirements.txt
           pip install pytest schemathesis
 
+      # 4️⃣ Create fake site directory for tests 
+      - name: Create fake site directory 
+        run: | 
+          mkdir -p site
+
       # 4️⃣ Run pytest
       - name: Run tests
         run: |
