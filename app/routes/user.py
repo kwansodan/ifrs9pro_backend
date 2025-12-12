@@ -18,7 +18,8 @@ router = APIRouter(prefix="/user", tags=["user actions"])
 # Regular user feedback endpoints
 @router.post("/feedback", 
              description="Create new feedback", 
-             response_model=FeedbackResponse)
+             response_model=FeedbackResponse,
+             responses={401: {"description": "Not Aunthenticated"}})
 async def create_feedback(
     feedback_data: FeedbackCreate,
     db: Session = Depends(get_db),
@@ -64,7 +65,8 @@ async def create_feedback(
 
 @router.get("/feedback", 
             description="Get all feedback visible to regular users", 
-            response_model=List[FeedbackResponse])
+            response_model=List[FeedbackResponse],
+            responses={401: {"description": "Not Aunthenticated"}})
 async def get_all_feedback(
     status: Optional[FeedbackStatusEnum] = None,
     db: Session = Depends(get_db),
@@ -114,7 +116,8 @@ async def get_all_feedback(
 
 @router.get("/feedback/mine", 
             description="Get all feedback submitted by the currently logged in user", 
-            response_model=List[FeedbackResponse])
+            response_model=List[FeedbackResponse],
+            responses={401: {"description": "Not Aunthenticated"}})
 async def get_my_feedback(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -154,7 +157,8 @@ async def get_my_feedback(
 
 @router.post("/help", 
              description="Create new help request", 
-             response_model=HelpResponse)
+             response_model=HelpResponse,
+             responses={401: {"description": "Not Aunthenticated"}})
 async def create_help(
     help_data: HelpCreate,
     db: Session = Depends(get_db),
@@ -199,7 +203,8 @@ async def create_help(
 
 @router.get("/help", 
             description="Get all help requests for the current user", 
-            response_model=List[HelpResponse])
+            response_model=List[HelpResponse],
+            responses={401: {"description": "Not Aunthenticated"}})
 async def get_my_help(
     status: Optional[HelpStatusEnum] = None,
     db: Session = Depends(get_db),
@@ -248,7 +253,8 @@ async def get_my_help(
 
 @router.get("/notifications", 
             description="Get notifications for the current user", 
-            response_model=List[NotificationResponse])
+            response_model=List[NotificationResponse],
+            responses={401: {"description": "Not Aunthenticated"}})
 async def get_notifications(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -360,7 +366,8 @@ async def get_notifications(
 @router.put("/feedback/{feedback_id}", 
             description="Update a specific feedback entry", 
             response_model=FeedbackResponse,
-            responses={404: {"description": "Feedback not found"}},)
+            responses={404: {"description": "Feedback not found"},
+                       401: {"description": "Not Authenticated"}},)
 async def update_feedback(
     feedback_id: int,
     feedback_data: FeedbackUpdate,
@@ -419,7 +426,9 @@ async def update_feedback(
 @router.delete("/feedback/{feedback_id}", 
                description="Delete a specific feedback entry", 
                status_code=status.HTTP_204_NO_CONTENT,
-               responses={404: {"description": "Feedback not found"}},
+               responses={404: {"description": "Feedback not found"},
+                          403: {"description": "Forbidden"},
+                          401: {"description": "Not Authenticated"}},
                )
 async def delete_feedback(
     feedback_id: int,
@@ -454,7 +463,8 @@ async def delete_feedback(
 @router.get("/feedback/{feedback_id}", 
             description="Get a specific feedback entry by ID", 
             response_model=FeedbackResponse,
-            responses={404: {"description": "Feedback not found"}})
+            responses={404: {"description": "Feedback not found"},
+                       401: {"description": "Not Authenticated"}},)
 async def get_feedback(
     feedback_id: int,
     db: Session = Depends(get_db),
@@ -495,7 +505,8 @@ async def get_feedback(
 @router.post("/feedback/{feedback_id}/like", 
              description="Like feedback or unlike if already liked", 
              response_model=FeedbackResponse,
-             responses={404: {"description": "Feedback not found"}})
+             responses={404: {"description": "Feedback not found"},
+                        401: {"description": "Not Authenticated"}},)
 async def like_feedback(
     feedback_id: int,
     db: Session = Depends(get_db),
@@ -546,7 +557,8 @@ async def like_feedback(
 @router.put("/help/{help_id}", 
             description="Update a specific help request", 
             response_model=HelpResponse,
-            responses={404: {"description": "Help not found"}})
+            responses={404: {"description": "Help not found"},
+                       401: {"description": "Not Authenticated"}},)
 async def update_help(
     help_id: int,
     help_data: HelpUpdate,
@@ -603,7 +615,9 @@ async def update_help(
 @router.delete("/help/{help_id}", 
                description="Delete a help request", 
                status_code=status.HTTP_204_NO_CONTENT,
-               responses={404: {"description": "Help not found"}})
+               responses={404: {"description": "Help not found"},
+                          403: {"description": "Forbidden"},
+                          401: {"description": "Not Authenticated"}},)
 async def delete_help(
     help_id: int,
     db: Session = Depends(get_db),
@@ -638,7 +652,9 @@ async def delete_help(
 @router.get("/help/{help_id}", 
             description="Get a specific help request by ID", 
             response_model=HelpResponse,
-            responses={404: {"description": "Help not found"}})
+            responses={404: {"description": "Help not found"},
+                       403: {"description": "Forbidden"},
+                       401: {"description": "Not Authenticated"}},)
 async def get_help(
     help_id: int,
     db: Session = Depends(get_db),

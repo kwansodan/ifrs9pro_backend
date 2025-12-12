@@ -65,7 +65,8 @@ logger = logging.getLogger(__name__)
 @router.post("/{portfolio_id}/generate", 
              description="Generate various types of reports for a portfolio", 
              status_code=status.HTTP_200_OK,
-             responses={404: {"description": "Portfolio not found"}},)
+             responses={404: {"description": "Portfolio not found"},
+                        401: {"description": "Not Authenticated"}},)
 async def generate_report(
     portfolio_id: int,
     report_request: ReportRequest,
@@ -117,7 +118,8 @@ async def generate_report(
 @router.get("/{portfolio_id}/history", 
             description="Get report history for a portfolio with optional filters", 
             response_model=ReportHistoryList,
-            responses={404: {"description": "Portfolio not found"}},)
+            responses={404: {"description": "Portfolio not found"},
+                       401: {"description": "Not Authenticated"}},)
 async def get_report_history(
     portfolio_id: int,
     report_type: Optional[ReportTypeEnum] = None,
@@ -169,7 +171,8 @@ async def get_report_history(
 @router.get("/{portfolio_id}/report/{report_id}", 
             description="Get a specific report by ID", 
             response_model=ReportResponse,
-            responses={404: {"description": "Portfolio or Report not found"}},)
+            responses={404: {"description": "Portfolio or Report not found"},
+                       401: {"description": "Not Authenticated"}},)
 async def get_report(
     portfolio_id: int,
     report_id: int,
@@ -210,7 +213,8 @@ async def get_report(
     "/{portfolio_id}/report/{report_id}", 
     description="Delete a specific report by ID", 
     status_code=status.HTTP_204_NO_CONTENT,
-    responses={404: {"description": "Portfolio or Report not found"}},
+    responses={404: {"description": "Portfolio or Report not found"},
+               401: {"description": "Not Authenticated"}},
 )
 async def delete_report(
     portfolio_id: int,
@@ -258,7 +262,8 @@ async def delete_report(
 @router.get("/{portfolio_id}/report/{report_id}/download", 
             description="Download a specific report as Excel", 
             status_code=status.HTTP_200_OK,
-            responses={404: {"description": "Portfolio or Report not found"}},)
+            responses={404: {"description": "Portfolio or Report not found"},
+                       401: {"description": "Not Authenticated"}},)
 async def download_report_excel(
     portfolio_id: int,
     report_id: int,
@@ -310,7 +315,8 @@ async def download_report_excel(
 
 @router.get("/status/{report_id}", 
             description="Check status of a report generation",
-            responses={404: {"description": "Report not found"}},)
+            responses={404: {"description": "Report not found"},
+                       401: {"description": "Not Authenticated"}},)
 def get_report_status(report_id: int, db: Session = Depends(get_db)):
     status_val = db.query(Report.status).filter(Report.id == report_id).scalar()
 

@@ -47,7 +47,8 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 # Handle access requests
 @router.get("/requests", 
-            response_model=List[AccessRequestResponse], 
+            response_model=List[AccessRequestResponse],
+            responses={401: {"description": "Not authenticated"}},
             operation_id="list_all_access_requests",  
             description="Get all access requests")
 async def get_access_requests(
@@ -64,7 +65,8 @@ async def get_access_requests(
 # Handle user management
 @router.get("/users",  
             description="Get all users in db", 
-            response_model=List[UserResponse])
+            response_model=List[UserResponse],
+            responses={401: {"description": "Not authenticated"}})
 async def get_users(
     db: Session = Depends(get_db), current_user: User = Depends(is_admin)
 ):
@@ -75,7 +77,8 @@ async def get_users(
 
 @router.get("/users/export",  
             description="Get all users and export them as csv", 
-            response_class=StreamingResponse)
+            response_class=StreamingResponse,
+            responses={401: {"description": "Not authenticated"}})
 async def export_users_csv(
     db: Session = Depends(get_db), 
     current_user: User = Depends(is_admin)
@@ -137,7 +140,9 @@ async def export_users_csv(
 
 @router.post("/users",
             description="create a user in db",
-            response_model=UserResponse)
+            response_model=UserResponse,
+            responses={400: {"description": "Email already registered"},
+                       401: {"description": "Not Authenticated"}},)
 async def create_user(
     user_create: UserCreate,
     db: Session = Depends(get_db),
@@ -184,8 +189,8 @@ async def create_user(
 # Feedback routes
 @router.get("/feedback",
             description="Get all feedback entries",
-            response_model=List[FeedbackResponse]
-            )
+            response_model=List[FeedbackResponse],
+            responses={401: {"description": "Not authenticated"}})
 async def admin_get_all_feedback(
     db: Session = Depends(get_db),
     current_user: User = Depends(is_admin),
@@ -226,7 +231,8 @@ async def admin_get_all_feedback(
 # Help routes for admin
 @router.get("/help",  
             description="Get all help entries", 
-            response_model=List[HelpResponse])
+            response_model=List[HelpResponse],
+            responses={401: {"description": "Not authenticated"}})
 async def admin_get_all_help(
     db: Session = Depends(get_db),
     current_user: User = Depends(is_admin),
@@ -264,7 +270,8 @@ async def admin_get_all_help(
 @router.get("/help/{help_id}",  
             description="Get help entry by ID", 
             response_model=HelpResponse,
-            responses={404: {"description": "Help entry not found"}},
+            responses={404: {"description": "Help entry not found"},
+                       401: {"description": "Not authenticated"}},
             )
 async def admin_get_help(
     help_id: int,
@@ -304,7 +311,8 @@ async def admin_get_help(
 @router.put("/help/{help_id}/status",  
             description="Get help status by ID", 
             response_model=HelpResponse,
-            responses={404: {"description": "Help not found"}},)
+            responses={404: {"description": "Help not found"},
+                       401: {"description": "Not Authenticated"}},)
 async def update_help_status(
     help_id: int,
     status_update: HelpStatusUpdate,
@@ -349,7 +357,8 @@ async def update_help_status(
 @router.delete("/help/{help_id}",  
             description="Delete a specific help entry by ID", 
             status_code=status.HTTP_204_NO_CONTENT,
-            responses={404: {"description": "Help not found"}},)
+            responses={404: {"description": "Help not found"},
+                       401: {"description": "Not authenticated"},},)
 async def admin_delete_help(
     help_id: int,
     db: Session = Depends(get_db),
@@ -376,7 +385,8 @@ async def admin_delete_help(
 @router.delete("/requests/{request_id}", 
             description="Delete access requests",
             status_code=status.HTTP_204_NO_CONTENT,
-            responses={404: {"description": "Request not found"}},
+            responses={404: {"description": "Request not found"},
+                       401: {"description": "Not Authenticated"}},
             )
 async def delete_access_request(
     request_id: int,
@@ -400,15 +410,13 @@ async def delete_access_request(
             detail="Access request not found",
         )
 
-    return JSONResponse(
-        status_code=200,
-        content={"detail": "Access request deleted successfully"}
-    )
+    return None
 
 @router.put("/requests/{request_id}", 
             operation_id="update_specific_access_request",  
             description="Update access requests",
-            responses={404: {"description": "Request not found"}},
+            responses={404: {"description": "Request not found"},
+                       401: {"description": "Not authenticated"}},
             )
 async def update_access_request(
     request_id: int,
@@ -447,7 +455,8 @@ async def update_access_request(
 
 @router.get("/users/{user_id}", 
             description="Get a specific user by ID",
-            responses={404: {"description": "User not found"}},
+            responses={404: {"description": "User not found"},
+                       401: {"description": "Not authenticated"},},
             response_model=UserResponse)
 async def get_user(
     user_id: int, db: Session = Depends(get_db), current_user: User = Depends(is_admin)
@@ -461,7 +470,8 @@ async def get_user(
 @router.get("/feedback/{feedback_id}",
             description="Get a specific feedback by ID",
             response_model=FeedbackResponse,
-            responses={404: {"description": "Feedback not found"}},
+            responses={404: {"description": "Feedback not found"},
+                       401: {"description": "Not authenticated"}},
             )
 async def admin_get_feedback(
     feedback_id: int,
@@ -502,7 +512,8 @@ async def admin_get_feedback(
 @router.put("/feedback/{feedback_id}/status",  
             description="Update a feedback status",
             response_model=FeedbackResponse,
-            responses={404: {"description": "Feedback not found"}},)
+            responses={404: {"description": "Feedback not found"},
+                       401: {"description": "NOt Authenticated"}},)
 async def update_feedback_status(
     feedback_id: int,
     status_update: FeedbackStatusUpdate,
@@ -548,7 +559,8 @@ async def update_feedback_status(
 @router.delete("/feedback/{feedback_id}",  
             description="Delete a feedback by ID",
             status_code=status.HTTP_204_NO_CONTENT,
-            responses={404: {"description": "Feedback not found"}},)
+            responses={404: {"description": "Feedback not found"},
+                       401: {"description": "Not authenticated"}},)
 async def admin_delete_feedback(
     feedback_id: int,
     db: Session = Depends(get_db),
@@ -574,7 +586,8 @@ async def admin_delete_feedback(
 
 @router.put("/users/{user_id}", 
             response_model=UserResponse,
-            responses={404: {"description": "User not found"}},)
+            responses={404: {"description": "User not found"},
+                       401: {"description": "Not Aunthenticated"}},)
 async def update_user(
     user_id: int,
     user_update: UserUpdate,
@@ -606,7 +619,9 @@ async def update_user(
 @router.delete("/users/{user_id}",
             description="Delete a user by ID",
             status_code=204,
-            responses={404: {"description": "User not found"}},)
+            responses={404: {"description": "User not found"},
+                       401: {"description": "Not authenticated"}}
+                       )
 async def delete_user(
     user_id: int,
     db: Session = Depends(get_db),

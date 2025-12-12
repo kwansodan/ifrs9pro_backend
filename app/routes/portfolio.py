@@ -128,6 +128,7 @@ router = APIRouter(prefix="/portfolios", tags=["portfolios"])
 @router.post("/",  
             description="Create a new portfolio for the current user.", 
             response_model=PortfolioResponse, 
+            responses={401: {"description": "Not authenticated"}},
             status_code=status.HTTP_201_CREATED
             )
 async def create_portfolio(
@@ -162,7 +163,8 @@ async def create_portfolio(
 
 @router.get("/",  
             description="Get all portfolios belonging to the current user.", 
-            response_model=PortfolioList)
+            response_model=PortfolioList,
+            responses={401: {"description": "Not authenticated"}},)
 def get_portfolios(
     skip: int = 0,
     limit: int = 100,
@@ -239,7 +241,8 @@ def get_portfolios(
 @router.get("/{portfolio_id}",  
             description="Get portfolio details with summary statistics and quality checks using ID", 
             response_model=PortfolioWithSummaryResponse,
-            responses={404: {"description": "Help request not found"}},
+            responses={404: {"description": "Help request not found"},
+                       401: {"description": "Not authenticated"}},
             )
 async def get_portfolio(
     portfolio_id: int,
@@ -514,7 +517,8 @@ async def get_portfolio(
 @router.put("/{portfolio_id}",  
             description="Update details of a specific portfolio by ID.", 
             response_model=PortfolioWithSummaryResponse,
-            responses={404: {"description": "Portfolio not found"}},
+            responses={404: {"description": "Portfolio not found"},
+                       401: {"description": "Not authenticated"}},
             )
 async def update_portfolio(
     portfolio_id: int,
@@ -591,7 +595,11 @@ async def update_portfolio(
 
 @router.delete("/{portfolio_id}",  
             description="Delete a portfolio by ID and return confirmation.", 
-            status_code=status.HTTP_200_OK
+            status_code=status.HTTP_200_OK,
+            responses={204: {"description": "Portfolio deleted successfully"},  # or 200
+                  401: {"description": "Not authenticated"},  
+                  404: {"description": "Portfolio not found"},
+                  422: {"description": "Validation error"}},
             )
 def delete_portfolio(
     portfolio_id: int,
@@ -624,10 +632,12 @@ def delete_portfolio(
     "/{portfolio_id}/ingest/save",  
     description="Accept and upload Excel files to MinIO, auto-extract headers, and return file info and extracted headers.",
     response_model=IngestAndSaveResponse,
-    status_code=status.HTTP_200_OK
+    status_code=status.HTTP_200_OK,
+    responses={200: {"description": "Data saved successfully"},
+                400: {"description": "There was an error parsing the body"},  # ← ADD THIS
+                401: {"description": "Not authenticated"},
+                422: {"description": "Validation error"}},
 )
-
-
 async def accept_portfolio_data(
     portfolio_id: int,
     loan_details: Optional[UploadFile] = File(None),
@@ -667,8 +677,12 @@ async def accept_portfolio_data(
 
 @router.post("/{portfolio_id}/ingest",  
             description="Ingest cleaned Excel files from MinIO with mapping into the portfolio ingestion pipeline.", 
-            responses={404: {"description": "Portfolio not found"}},
-            status_code=status.HTTP_200_OK)
+            responses={404: {"description": "Portfolio not found"},
+                       401: {"description": "Not authenticated"},
+                       400: {"description": "There was an error parsing the body"},  
+                       },
+            status_code=status.HTTP_200_OK,
+        )
 async def ingest_portfolio_data(
     portfolio_id: int,
     payload: IngestPayload,  # Use Pydantic model here
@@ -729,7 +743,8 @@ async def ingest_portfolio_data(
 
 
 @router.get("/{portfolio_id}/calculate-ecl",  
-            responses={404: {"description": "Portfolio not found"}},
+            responses={404: {"description": "Portfolio not found"},
+                       401: {"description": "Not authenticated"}},
             description="Calculate ECL provisions directly from a portfolio ID using latest staging data.",)
 async def calculate_ecl_provision(
     portfolio_id: int,
@@ -773,7 +788,8 @@ async def calculate_ecl_provision(
 
 
 @router.post("/{portfolio_id}/stage-loans-ecl",  
-            responses={404: {"description": "Portfolio not found"}},
+            responses={404: {"description": "Portfolio not found"},
+                       401: {"description": "Not authenticated"}},
             description="Stage loans for ECL calculation for a given portfolio ID.",
             )
 async def stage_loans_ecl(
@@ -801,7 +817,8 @@ async def stage_loans_ecl(
     
 
 @router.post("/{portfolio_id}/stage-loans-local",  
-            responses={404: {"description": "Portfolio not found"}}, 
+            responses={404: {"description": "Portfolio not found"},
+                       401: {"description": "Not authenticated"}}, 
             description="Stage loans for local impairment calculation for a given portfolio ID.",
             )
 async def stage_loans_local(
@@ -830,7 +847,8 @@ async def stage_loans_local(
 
 
 @router.get("/{portfolio_id}/calculate-local-impairment",  
-            responses={404: {"description": "Portfolio not found"}},
+            responses={404: {"description": "Portfolio not found"},
+                       401: {"description": "Not authenticated"}},
             description="Calculate local impairment provisions directly from a portfolio ID using latest staging data.",
             )
 async def calculate_local_provision(

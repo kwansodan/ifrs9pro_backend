@@ -54,7 +54,8 @@ def transform_affected_records(quality_issues: List[QualityIssue]) -> List[Quali
 @router.get("/{portfolio_id}/quality-issues", 
             description="Get all quality issues for a specific portfolio", 
             response_model=List[QualityIssueResponse],
-            responses={404: {"description": "Portfolio not found"}},
+            responses={404: {"description": "Portfolio not found"},
+                       401: {"description": "Not authenticated"}},
             )
 def get_quality_issues(
     portfolio_id: int,
@@ -107,7 +108,8 @@ def get_quality_issues(
 @router.get("/{portfolio_id}/quality-issues/download", 
             description="Download all quality issues for a portfolio as Excel", 
             status_code=status.HTTP_200_OK,
-            responses={404: {"description": "Portfolio not found"}},)
+            responses={404: {"description": "Portfolio not found"},
+                       401: {"description": "Not authenticated"}},)
 async def download_all_quality_issues_excel(
     portfolio_id: int,
     status_type: Optional[str] = None,
@@ -242,7 +244,8 @@ async def download_all_quality_issues_excel(
 @router.get("/{portfolio_id}/quality-issues/{issue_id}", 
             description="Retrieve specific quality issues for a particular portfolio", 
             response_model=QualityIssueResponse,
-            responses={404: {"description": "Portfolio not found"}},)
+            responses={404: {"description": "Portfolio not found"},
+                       401: {"description": "Not authenticated"}},)
 def get_quality_issue(
     portfolio_id: int,
     issue_id: int,
@@ -285,7 +288,8 @@ def get_quality_issue(
 @router.put("/{portfolio_id}/quality-issues/{issue_id}", 
             description="Update quality issues including approving them", 
             response_model=QualityIssueResponse,
-            responses={404: {"description": "Portfolio not found"}},)
+            responses={404: {"description": "Portfolio not found"},
+                       401: {"description": "Not authenticated"}},)
 def update_quality_issue(
     portfolio_id: int,
     issue_id: int,
@@ -338,7 +342,8 @@ def update_quality_issue(
     "/{portfolio_id}/quality-issues/{issue_id}/comments", 
     description="Add a comment to a quality issue",
     response_model=QualityIssueCommentModel,
-    responses={404: {"description": "Portfolio not found"}},
+    responses={404: {"description": "Portfolio not found"},
+               401: {"description": "Not authenticated"}},
 )
 def add_comment_to_quality_issue(
     portfolio_id: int,
@@ -390,7 +395,8 @@ def add_comment_to_quality_issue(
     "/{portfolio_id}/quality-issues/{issue_id}/comments", 
     description="Get all comments for a quality issue",
     response_model=List[QualityIssueCommentModel],
-    responses={404: {"description": "Portfolio not found"}},
+    responses={404: {"description": "Portfolio not found"},
+               401: {"description": "Not authenticated"}},
 )
 def get_quality_issue_comments(
     portfolio_id: int,
@@ -440,7 +446,8 @@ def get_quality_issue_comments(
     "/{portfolio_id}/quality-issues/{issue_id}/comments/{comment_id}", 
     description="Edit a comment on a quality issue",
     response_model=QualityIssueCommentModel,
-    responses={404: {"description": "Portfolio not found"}},
+    responses={404: {"description": "Portfolio not found"},
+               401: {"description": "Not authenticated"}},
 )
 def edit_quality_issue_comment(
     portfolio_id: int,
@@ -503,7 +510,8 @@ def edit_quality_issue_comment(
     "/{portfolio_id}/quality-issues/{issue_id}/approve", 
     description="Approve a quality issue",
     response_model=QualityIssueResponse,
-    responses={404: {"description": "Portfolio not found"}},
+    responses={404: {"description": "Portfolio not found"},
+               401: {"description": "Not authenticated"}},
 )
 def approve_quality_issue(
     portfolio_id: int,
@@ -564,7 +572,8 @@ def approve_quality_issue(
 @router.post("/{portfolio_id}/approve-all-quality-issues", 
              description="Approve all open quality issues for a portfolio at once", 
              response_model=Dict,
-             responses={404: {"description": "Portfolio not found"}},)
+             responses={404: {"description": "Portfolio not found"},
+                        401: {"description": "Not authenticated"}},)
 def approve_all_quality_issues(
     portfolio_id: int,
     comment: Optional[str] = None,
@@ -620,7 +629,8 @@ def approve_all_quality_issues(
 @router.post("/{portfolio_id}/recheck-quality", 
              description="Run quality checks again to find any new issues.", 
              response_model=QualityCheckSummary,
-             responses={404: {"description": "Portfolio not found"}},)
+             responses={404: {"description": "Portfolio not found"},
+                        401: {"description": "Not authenticated"},},)
 def recheck_quality_issues(
     portfolio_id: int,
     db: Session = Depends(get_db),
@@ -661,7 +671,9 @@ def recheck_quality_issues(
 @router.get("/{portfolio_id}/quality-issues/{issue_id}/download", 
             description="Download a specific quality issue as Excel", 
             status_code=status.HTTP_200_OK,
-            responses={404: {"description": "Portfolio not found"}},)
+            responses={404: {"description": "Portfolio not found"},
+                       401: {"description": "Not Aunthenticated"},}
+                       )
 async def download_quality_issue_excel(
     portfolio_id: int,
     issue_id: int,

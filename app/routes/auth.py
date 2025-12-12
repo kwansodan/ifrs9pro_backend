@@ -39,7 +39,8 @@ router = APIRouter(tags=["auth"])
 VALID_ADMIN_EMAILS = os.getenv("VALID_ADMIN_EMAILS", "admin@example.com").split(",")
 
 
-@router.post("/request-access",  
+@router.post("/request-access",
+            responses={409: {"description": "Conflict - Email already registered or request exists"}},
             description="Request user access by submitting email for verification")
 async def request_access(
     request_data: EmailVerificationRequest, db: Session = Depends(get_db)
@@ -105,7 +106,9 @@ async def request_access(
     return {"message": "Verification email sent"}
 
 
-@router.post("/submit-admin-request",  
+@router.post("/submit-admin-request", 
+              responses={401: {"description": "Unauthorized"},
+                         404: {"description": "Verified email request not found"}},
             description="Submit admin email for verified access request",)
 async def submit_admin_request(
     request_data: AccessRequestSubmit, db: Session = Depends(get_db)
@@ -164,7 +167,11 @@ async def get_access_requests(
 
 @router.post("/login",  
             description="Login using email and password", 
-            response_model=LoginResponse)
+            response_model=LoginResponse,
+            responses={
+                401: {"description": "Unauthorized"}
+            }
+        )
 async def login(request: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == request.email).first()
 
@@ -222,7 +229,8 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
 
 @router.get("/verify-email/{token}",  
             description="Enter email verification token to verify email address",
-            responses={404: {"description": "Token not found"}},)
+            responses={404: {"description": "Token not found"},
+                       400: {"description": "Not Authenticated"}},)
 async def verify_email(token: str, db: Session = Depends(get_db)):
     try:
         token_data, token_type = decode_token(token)
@@ -290,7 +298,8 @@ async def update_access_request(
 
 @router.post("/set-password/{token}",  
             description="Set password using invitation token",
-            responses={404: {"description": "Token not found"}},)
+            responses={404: {"description": "Token not found"},
+                       400: {"description": "Not Authenticated"}},)
 async def set_password(
     token: str, password_data: PasswordSetup, db: Session = Depends(get_db)
 ):

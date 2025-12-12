@@ -23,7 +23,8 @@ router = APIRouter(tags=["dashboard"])
 
 
 @router.get("/dashboard",  
-            description="Get dashboard information including portfolio and customer overviews"
+            description="Get dashboard information including portfolio and customer overviews",
+            responses={401: {"description": "Not authenticated"}},
             )
 def get_dashboard(
     db: Session = Depends(get_db),
