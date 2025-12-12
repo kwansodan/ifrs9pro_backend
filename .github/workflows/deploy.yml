@@ -135,6 +135,27 @@ jobs:
             --experimental=openapi-3.1 \
             --checks=not_a_server_error,content_type_conformance,status_code_conformance,response_schema_conformance
 
+      # 7️⃣ Export OpenAPI schema
+      - name: Export OpenAPI schema
+        run: |
+            echo "Saving OpenAPI schema as YAML..."
+            mkdir -p artifacts
+            curl -f http://localhost:8000/openapi.json -o artifacts/openapi.json
+            python - <<'PY'
+            import json, yaml
+            with open("artifacts/openapi.json") as f:
+              data = json.load(f)
+            with open("artifacts/openapi.yaml", "w") as f:
+                yaml.dump(data, f, sort_keys=False)
+            PY
+
+  
+      - name: Upload OpenAPI schema
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-schema
+          path: artifacts/openapi.yaml
+
 
       # 9️⃣ Stop Docker Compose
       - name: Tear down API stack
