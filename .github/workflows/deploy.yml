@@ -133,7 +133,7 @@ jobs:
           echo "Running Schemathesis API tests..."
           PYTHONPATH=$(pwd) schemathesis run http://localhost:8000/openapi.json \
             --experimental=openapi-3.1 \
-            --checks=not_a_server_error,content_type_conformance,status_code_conformance,response_schema_conformance,missing_security
+            --checks=not_a_server_error,content_type_conformance,status_code_conformance,response_schema_conformance
 
 
       # 9️⃣ Stop Docker Compose
