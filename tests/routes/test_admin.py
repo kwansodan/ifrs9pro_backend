@@ -41,7 +41,7 @@ def test_admin_delete_access_request(client, db_session):
     db_session.commit()
 
     resp = client.delete(f"/admin/requests/{req.id}")
-    assert resp.status_code == 200
+    assert resp.status_code == 204
 
 
 def test_get_users(client, db_session):
