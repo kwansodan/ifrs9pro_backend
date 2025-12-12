@@ -131,11 +131,10 @@ jobs:
       - name: Run Schemathesis API tests
         run: |
           echo "Running Schemathesis API tests..."
-          PYTHONPATH=$(pwd) \
-          schemathesis run http://localhost:8000/openapi.json \
-            --wait-for-schema=20 \
-            --checks not_a_server_error,status_code_conformance,content_type_conformance,response_schema_conformance,negative_data_rejection \
-            || { echo "❌ Schemathesis tests failed"; exit 1; }
+          PYTHONPATH=$(pwd) schemathesis run http://localhost:8000/openapi.json \
+            --experimental=openapi-3.1 \
+            --checks=not_a_server_error,content_type_conformance,status_code_conformance,response_schema_conformance,missing_security
+
 
       # 9️⃣ Stop Docker Compose
       - name: Tear down API stack
