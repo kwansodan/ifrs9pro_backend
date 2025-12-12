@@ -1,4 +1,4 @@
-name: CI/CD Deploy (Basic)
+name: CI/CD Deploy (Docker Compose)
 
 on:
   push:
@@ -11,17 +11,16 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      # Set a temporary SECRET_KEY for CI/test purposes
       SECRET_KEY: "default-test-secret"
 
     steps:
-      # 1️⃣ Checkout repo
+      # 1️⃣ Checkout
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 2️⃣ Set up Python
+      # 2️⃣ Python
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
@@ -32,43 +31,59 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest
+          pip install pytest schemathesis
 
-      # 4️⃣ Create fake site directory for tests
-      - name: Create fake site directory
-        run: |
-          mkdir -p site
-
-      # 5️⃣ Run pytest
+      # 4️⃣ Run pytest
       - name: Run tests
         run: |
           echo "Running pytest..."
           python -m pytest tests || { echo "❌ Pytest failed"; exit 1; }
 
-      # 6️⃣ Run Spectral lint
+      # 5️⃣ Run Spectral
       - name: Run Spectral
         run: |
-          echo "Running Spectral lint..."
+          echo "Running Spectral..."
           docker run --rm -v "$PWD:/work" -w /work \
             stoplight/spectral:latest lint \
             --ruleset /work/.spectral.yaml \
             /work/openapi.yaml || { echo "❌ Spectral lint failed"; exit 1; }
 
-      #8️Run Schemathesis API tests
-      - name: Run Schemathesis
+      # 6️⃣ Start Docker Compose stack
+      - name: Start API stack (db + minio + fastapi)
+        run: |
+          echo "Starting docker-compose.local.yml..."
+          docker compose -f docker-compose.local.yml up -d
+          echo "Waiting 25 seconds for services to be healthy..."
+          sleep 25
+
+      # 7️⃣ Verify FastAPI is reachable
+      - name: Check API health before testing
+        run: |
+          echo "Checking API at http://localhost:8000/health..."
+          curl -f http://localhost:8000/health || { echo "❌ API is not healthy"; exit 1; }
+
+      # 8️⃣ Schemathesis tests
+      - name: Run Schemathesis API tests
         run: |
           echo "Running Schemathesis API tests..."
-          PYTHONPATH=$(pwd) schemathesis run http://localhost:8000/openapi.json \
+          PYTHONPATH=$(pwd) \
+          schemathesis run http://localhost:8000/openapi.json \
+            --wait-for-schema=20 \
             --checks not_a_server_error,status_code_conformance,content_type_conformance,response_schema_conformance,negative_data_rejection \
             || { echo "❌ Schemathesis tests failed"; exit 1; }
 
-      # 8️⃣ Start SSH agent
+      # 9️⃣ Stop Docker Compose
+      - name: Tear down API stack
+        if: always()
+        run: docker compose -f docker-compose.local.yml down
+
+      # 🔟 SSH agent
       - name: Start SSH agent
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DROPLET_SSH_KEY }}
 
-      # 9️⃣ Determine which script to run
+      # 1️⃣1️⃣ Determine deploy target
       - name: Set deployment variables
         id: vars
         run: |
@@ -79,13 +94,10 @@ jobs:
           elif [ "$BRANCH" = "main" ]; then
             echo "HOST=${{ secrets.PROD_DROPLET_HOST }}" >> $GITHUB_OUTPUT
             echo "SCRIPT=setup_prod.sh" >> $GITHUB_OUTPUT
-          else
-            echo "Branch $BRANCH not deployable. Exiting."
-            exit 0
           fi
 
-      # 10️⃣Deploy via SSH
-      - name: Run deploy script on droplet
+      # 1️⃣2️⃣ Deploy via SSH
+      - name: Deploy to remote droplet
         env:
           DROPLET_USER: ${{ secrets.DROPLET_USER }}
           HOST: ${{ steps.vars.outputs.HOST }}
@@ -97,7 +109,6 @@ jobs:
             set -euo pipefail
             cd "$REMOTE_PATH" || { echo "Remote path not found: $REMOTE_PATH"; exit 1; }
             chmod +x "$SCRIPT" || true
-            echo "Running $SCRIPT..."
             ./"$SCRIPT"
             echo "✅ Deployment completed successfully."
           EOF
