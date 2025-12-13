@@ -149,12 +149,19 @@ jobs:
                 yaml.dump(data, f, sort_keys=False)
             PY
 
-  
+
       - name: Upload OpenAPI schema
         uses: actions/upload-artifact@v4
         with:
           name: openapi-schema
           path: artifacts/openapi.yaml
+
+      #Publish spec to Github Release
+      - name: Create release and upload OpenAPI
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: api-${{ github.sha }}
+          files: openapi.yaml
 
 
       # 9️⃣ Stop Docker Compose
