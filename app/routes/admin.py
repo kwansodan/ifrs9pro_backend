@@ -1,11 +1,21 @@
 import csv
 import io
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
 from fastapi.responses import JSONResponse, StreamingResponse
 from app.database import get_db
-from app.models import AccessRequest, User, Feedback, Help, RequestStatus, Portfolio
+from app.models import (
+    AccessRequest,
+    User,
+    Feedback,
+    Help,
+    RequestStatus,
+    Portfolio,
+    UserSubscription,
+    SubscriptionUsage,
+    SubscriptionPlan,
+)
 from app.schemas import (
     AccessRequestSubmit,
     AccessRequestResponse,
@@ -35,6 +45,7 @@ from app.auth.utils import (
     is_admin,
     decode_token,
 )
+from app.utils.billing import require_active_subscription
 from app.schemas import (
     FeedbackStatusUpdate,
     FeedbackResponse,
@@ -147,11 +158,33 @@ async def create_user(
     user_create: UserCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(is_admin),
+    subscription: UserSubscription = Depends(require_active_subscription),
 ):
     # Check if user with same email already exists
     existing_user = db.query(User).filter(User.email == user_create.email).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
+
+    # Enforce team member limit for this subscription
+    usage = (
+        db.query(SubscriptionUsage)
+        .filter(SubscriptionUsage.subscription_id == subscription.id)
+        .with_for_update()
+        .first()
+    )
+    plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == subscription.plan_id).first()
+
+    if not usage or not plan:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Subscription usage or plan configuration missing.",
+        )
+
+    if usage.current_team_count >= plan.max_team_size:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="Team member limit reached for your subscription plan.",
+        )
 
     # Create new user
     user_data = user_create.dict(exclude={"portfolio_id"})
@@ -164,6 +197,16 @@ async def create_user(
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+
+    # Associate new user with same current subscription (team membership) and
+    # increment team usage atomically.
+    if current_user.current_subscription_id:
+        new_user.current_subscription_id = current_user.current_subscription_id
+        new_user.subscription_status = "active"
+        usage.current_team_count += 1
+        db.add(new_user)
+        db.add(usage)
+        db.commit()
 
     # Link portfolio if provided
     if user_create.portfolio_id:
@@ -181,7 +224,7 @@ async def create_user(
     token = create_invitation_token(new_user.email)
 
     # Send email for password setup
-    send_password_setup_email(new_user.email, token)
+    await send_password_setup_email(new_user.email, token)
 
     return new_user
 
@@ -441,7 +484,7 @@ async def update_access_request(
         # Generate invitation token
         token = create_invitation_token(access_request.email)
         access_request.token = token
-        access_request.token_expiry = datetime.utcnow() + timedelta(
+        access_request.token_expiry = datetime.now(timezone.utc) + timedelta(
             hours=settings.INVITATION_EXPIRE_HOURS
         )
 

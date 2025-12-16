@@ -27,9 +27,10 @@ import pandas as pd
 import time
 import io
 from app.database import get_db
-from app.models import Portfolio, User
+from app.models import Portfolio, User, UserSubscription, SubscriptionUsage, SubscriptionPlan
 from app.config import settings
 from app.auth.utils import get_current_active_user
+from app.utils.billing import require_active_subscription
 from app.calculators.ecl import (
     calculate_exposure_at_default_percentage,
     calculate_probability_of_default,
@@ -135,10 +136,32 @@ async def create_portfolio(
     portfolio: PortfolioCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    subscription: UserSubscription = Depends(require_active_subscription),
 ):
     """
     Create a new portfolio for the current user.
     """
+    # Enforce portfolio limit for this subscription
+    usage = (
+        db.query(SubscriptionUsage)
+        .filter(SubscriptionUsage.subscription_id == subscription.id)
+        .with_for_update()
+        .first()
+    )
+    plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == subscription.plan_id).first()
+
+    if not usage or not plan:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Subscription usage or plan configuration missing.",
+        )
+
+    if usage.current_portfolio_count >= plan.max_portfolios:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="Portfolio limit reached for your current subscription plan.",
+        )
+
     new_portfolio = Portfolio(
         name=portfolio.name,
         description=portfolio.description,
@@ -151,10 +174,13 @@ async def create_portfolio(
         # loan_assets=portfolio.loan_assets,
         # ecl_impairment_account=portfolio.ecl_impairment_account,
         user_id=current_user.id,
+        subscription_id=subscription.id,
     )
 
-
+    # Increment portfolio usage atomically with portfolio creation
     db.add(new_portfolio)
+    usage.current_portfolio_count += 1
+    db.add(usage)
     db.commit()
     db.refresh(new_portfolio)
     return new_portfolio
@@ -646,6 +672,7 @@ async def accept_portfolio_data(
     loan_collateral_data: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    subscription: UserSubscription = Depends(require_active_subscription),
 ):
     """
     Upload Excel files to MinIO, auto-extract headers, and return:
@@ -656,6 +683,35 @@ async def accept_portfolio_data(
     - ORM model columns mapped for each file
     """
     try:
+        # Enforce loan ingestion limits BEFORE processing files
+        portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
+        if not portfolio:
+            raise HTTPException(status_code=404, detail="Portfolio not found")
+
+        if portfolio.subscription_id and portfolio.subscription_id != subscription.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Portfolio does not belong to your active subscription.",
+            )
+
+        usage = (
+            db.query(SubscriptionUsage)
+            .filter(SubscriptionUsage.subscription_id == subscription.id)
+            .with_for_update()
+            .first()
+        )
+        plan = (
+            db.query(SubscriptionPlan)
+            .filter(SubscriptionPlan.id == subscription.plan_id)
+            .first()
+        )
+
+        if not usage or not plan:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Subscription usage or plan configuration missing.",
+            )
+
         logger.info(f"Uploading excel documents to minio for portfolio {portfolio_id}")
         uploaded_files = upload_multiple_files_to_minio(
             portfolio_id=portfolio_id,
@@ -664,6 +720,27 @@ async def accept_portfolio_data(
             loan_guarantee_data=loan_guarantee_data,
             loan_collateral_data=loan_collateral_data,
         )
+        # Determine how many loan records are about to be ingested
+        loan_details_meta = uploaded_files.get("loan_details")
+        new_loan_rows = 0
+        if loan_details_meta and loan_details_meta.get("row_count") is not None:
+            new_loan_rows = int(loan_details_meta["row_count"])
+
+        if new_loan_rows <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="loan_details file is required and cannot be empty.",
+            )
+
+        projected_loan_total = usage.current_loan_count + new_loan_rows
+        if projected_loan_total > plan.max_loan_data:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail="Loan data limit exceeded for your subscription plan.",
+            )
+
+        # We do not persist the increment here; counters are normalized
+        # after ingestion based on actual rows written to the database.
     except Exception as e:
         logger.error(f"Error uploading excel documents to minio {str(e)}")
 

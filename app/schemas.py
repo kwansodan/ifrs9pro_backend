@@ -909,6 +909,7 @@ class UploadedFileBase(BaseModel):
     object_name: str
     excel_columns: List[str]
     model_columns: List[str]
+    row_count: Optional[int] = None
 
 
 class LoanDetailsFile(UploadedFileBase):
@@ -954,3 +955,23 @@ class FileMapping(BaseModel):
 
 class IngestPayload(BaseModel):
     files: List[FileMapping] = Field(..., description="List of files to ingest with mappings")
+
+
+# ==================== BILLING MODELS ====================
+class CustomerCreate(BaseModel):
+    first_name: str
+    last_name: str
+    phone: Optional[str] = None
+
+
+class TransactionInitialize(BaseModel):
+    amount: int = Field(..., description="Amount in GHS (smallest currency unit)")
+    reference: Optional[str] = None
+    callback_url: Optional[str] = None
+    plan: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class SubscriptionDisable(BaseModel):
+    code: str = Field(..., description="Subscription code")
+    token: str = Field(..., description="Email token")

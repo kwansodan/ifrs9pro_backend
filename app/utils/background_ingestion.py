@@ -21,7 +21,9 @@ from app.models import (
     Portfolio,
     StagingResult,
     CalculationResult,
-    QualityIssue
+    QualityIssue,
+    UserSubscription,
+    SubscriptionUsage,
 )
 from app.utils.background_tasks import get_task_manager, run_background_task
 from app.utils.background_processors import (
@@ -113,6 +115,11 @@ async def process_portfolio_ingestion_sync(
             quality_count = db.query(QualityIssue).filter(
                 QualityIssue.portfolio_id == portfolio_id
             ).delete()
+            # Track how many loans currently exist for this portfolio
+            existing_loans_for_portfolio = db.query(Loan).filter(
+                Loan.portfolio_id == portfolio_id
+            ).count()
+
             loan_count = db.query(Loan).filter(
                 Loan.portfolio_id == portfolio_id
             ).delete()
@@ -240,6 +247,38 @@ async def process_portfolio_ingestion_sync(
             results["staging"] = {"error": str(e)}
             results.setdefault("errors", []).append(f"Error during loan staging: {str(e)}")
         end = time.perf_counter()
+
+        # ---------- Recalculate subscription loan usage ----------
+        try:
+            portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
+            if portfolio and portfolio.subscription_id:
+                subscription = (
+                    db.query(UserSubscription)
+                    .filter(UserSubscription.id == portfolio.subscription_id)
+                    .first()
+                )
+                if subscription:
+                    usage = (
+                        db.query(SubscriptionUsage)
+                        .filter(SubscriptionUsage.subscription_id == subscription.id)
+                        .with_for_update()
+                        .first()
+                    )
+                    if usage:
+                        # Authoritative loan count: all loans belonging to this subscription
+                        total_loans = (
+                            db.query(Loan)
+                            .filter(Loan.subscription_id == subscription.id)
+                            .count()
+                        )
+                        usage.current_loan_count = total_loans
+                        from datetime import datetime, timezone
+
+                        usage.last_calculated_at = datetime.now(timezone.utc)
+                        db.add(usage)
+                        db.commit()
+        except Exception as e:
+            logger.error(f"Failed to recalculate subscription usage after ingestion: {str(e)}")
 
         # ---------- Final status & emails ----------
         if results.get("errors"):

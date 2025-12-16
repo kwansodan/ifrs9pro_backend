@@ -13,7 +13,8 @@ from app.models import (
     Security,
     Portfolio,
     QualityIssue,
-    DeductionStatus
+    DeductionStatus,
+    UserSubscription,
 )
 from app.utils.quality_checks import create_and_save_quality_issues
 
@@ -259,8 +260,17 @@ async def process_loan_details_sync(file_content, portfolio_id, db):
                 logger.warning(f"Failed to convert boolean columns: {str(e)}")
      
      
-        # Add portfolio_id to all records
+        # Add portfolio_id (and subscription_id) to all records
         df = df.with_columns(pl.lit(portfolio_id).alias("portfolio_id"))
+
+        # Derive subscription_id from portfolio so that loan rows are tied to subscription
+        portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
+        subscription_id_value = None
+        if portfolio and portfolio.subscription_id:
+            subscription_id_value = int(portfolio.subscription_id)
+
+        if subscription_id_value is not None:
+            df = df.with_columns(pl.lit(subscription_id_value).alias("subscription_id"))
 
         # Clear existing loans for this portfolio
         try:

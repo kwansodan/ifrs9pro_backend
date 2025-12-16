@@ -5,7 +5,13 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-
+from datetime import datetime, timedelta, timezone
+from app.models import (
+    SubscriptionPlan,
+    UserSubscription,
+    SubscriptionUsage,
+)
+from app.routes import reports
 
 
 # Ensure the app uses the in-memory SQLite URL before any app imports
@@ -71,7 +77,54 @@ def regular_user(db_session):
 
 
 @pytest.fixture
-def client(db_session, admin_user, regular_user, monkeypatch):
+def admin_with_active_subscription(db_session, admin_user):
+    # Seed plan (idempotent per test DB)
+    plan = SubscriptionPlan(
+        name="CORE",
+        paystack_plan_code="TEST_PLAN_CORE",
+        max_loan_data=1000,
+        max_portfolios=5,
+        max_team_size=5,
+        price=12000,
+        currency="GHS",
+        is_active=True,
+    )
+    db_session.add(plan)
+    db_session.flush()
+
+    # Seed subscription
+    subscription = UserSubscription(
+        user_id=admin_user.id,
+        plan_id=plan.id,
+        paystack_subscription_code="SUB_TEST_ACTIVE",
+        paystack_customer_code="CUS_TEST",
+        status="active",
+        started_at=datetime.now(timezone.utc),
+        current_period_end=datetime.now(timezone.utc) + timedelta(days=365),
+    )
+    db_session.add(subscription)
+    db_session.flush()
+
+    # Seed usage (required by enforcement)
+    db_session.add(
+        SubscriptionUsage(
+            subscription_id=subscription.id,
+            current_loan_count=0,
+            current_portfolio_count=0,
+            current_team_count=0,
+        )
+    )
+
+    # Link to admin
+    admin_user.current_subscription_id = subscription.id
+    admin_user.subscription_status = "active"
+
+    db_session.commit()
+    return admin_user
+
+
+@pytest.fixture
+def client(db_session, admin_user, regular_user, admin_with_active_subscription, monkeypatch):
     """
     Shared TestClient with dependency overrides and patched external side effects.
     """
@@ -94,6 +147,7 @@ def client(db_session, admin_user, regular_user, monkeypatch):
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[auth_utils.get_current_active_user] = override_current_user
     app.dependency_overrides[auth_utils.is_admin] = override_admin_user
+    
 
     # Patch email/minio/background side effects to no-ops
     monkeypatch.setattr("app.auth.email.send_verification_email", lambda *a, **k: None)
@@ -112,6 +166,11 @@ def client(db_session, admin_user, regular_user, monkeypatch):
     monkeypatch.setattr("app.utils.minio_reports_factory.run_and_save_report_task", lambda *a, **k: None)
     monkeypatch.setattr("app.utils.minio_reports_factory.generate_presigned_url_for_download", lambda *a, **k: "http://example.com")
     monkeypatch.setattr("app.utils.minio_reports_factory.download_report", lambda *a, **k: b"data")
+    monkeypatch.setattr(
+        reports,
+        "run_and_save_report_task",
+        lambda *a, **k: None
+    )
 
     return TestClient(app)
 

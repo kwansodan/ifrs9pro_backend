@@ -11,7 +11,7 @@ from sqlalchemy import (
     Float,
     JSON,
     Table,
-    UniqueConstraint
+    UniqueConstraint,
 )
 from sqlalchemy.sql import func
 from enum import Enum as PyEnum
@@ -49,10 +49,117 @@ class User(Base):
     last_login = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Billing / subscription fields
+    paystack_customer_code = Column(String, nullable=True, index=True)
+    current_subscription_id = Column(
+        Integer,
+        ForeignKey("user_subscriptions.id"),
+        nullable=True,
+    )
+    # none | active | expired | cancelled | past_due
+    subscription_status = Column(String, default="none", nullable=False)
+
     portfolios = relationship("Portfolio", back_populates="user")
     quality_comments = relationship("QualityIssueComment", back_populates="user")
     feedback = relationship("Feedback", back_populates="user")
     help = relationship("Help", back_populates="user")
+
+    # A user can have multiple subscriptions over time
+    subscriptions = relationship(
+        "UserSubscription",
+        back_populates="user",
+        foreign_keys="UserSubscription.user_id",
+    )
+    current_subscription = relationship(
+        "UserSubscription",
+        foreign_keys=[current_subscription_id],
+        uselist=False,
+        post_update=True,
+    )
+
+
+class SubscriptionPlan(Base):
+    """
+    Defines all billable plans and their enforced limits.
+    """
+
+    __tablename__ = "subscription_plans"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # enum: core, professional, enterprise (stored as string)
+    name = Column(String, nullable=False, unique=True)
+    paystack_plan_code = Column(String, nullable=False, unique=True, index=True)
+    max_loan_data = Column(Integer, nullable=False)
+    max_portfolios = Column(Integer, nullable=False)
+    max_team_size = Column(Integer, nullable=False)
+    price = Column(Numeric(precision=18, scale=2), nullable=False)
+    currency = Column(String, nullable=False, default="GHS")
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    subscriptions = relationship("UserSubscription", back_populates="plan")
+
+
+class UserSubscription(Base):
+    """
+    Tracks all subscription lifecycles for a user.
+    """
+
+    __tablename__ = "user_subscriptions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    plan_id = Column(Integer, ForeignKey("subscription_plans.id"), nullable=False)
+
+    paystack_subscription_code = Column(String, nullable=False, unique=True, index=True)
+    paystack_customer_code = Column(String, nullable=True, index=True)
+    authorization_code = Column(String, nullable=True)
+
+    # active | cancelled | expired | past_due
+    status = Column(String, nullable=False, default="active")
+    current_period_start = Column(DateTime(timezone=True), nullable=True)
+    current_period_end = Column(DateTime(timezone=True), nullable=True)
+    next_billing_date = Column(DateTime(timezone=True), nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    cancelled_at = Column(DateTime(timezone=True), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    user = relationship(
+        "User",
+        back_populates="subscriptions",
+        foreign_keys=[user_id],
+    )
+    plan = relationship("SubscriptionPlan", back_populates="subscriptions")
+    usage = relationship("SubscriptionUsage", back_populates="subscription", uselist=False)
+
+
+class SubscriptionUsage(Base):
+    """
+    Tracks real-time usage against hard limits for a subscription.
+    All counters should be updated transactionally.
+    """
+
+    __tablename__ = "subscription_usage"
+
+    id = Column(Integer, primary_key=True, index=True)
+    subscription_id = Column(
+        Integer,
+        ForeignKey("user_subscriptions.id"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    current_loan_count = Column(Integer, nullable=False, default=0)
+    current_portfolio_count = Column(Integer, nullable=False, default=0)
+    current_team_count = Column(Integer, nullable=False, default=0)
+    last_calculated_at = Column(DateTime(timezone=True), nullable=True)
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    subscription = relationship("UserSubscription", back_populates="usage")
 
 
 class AccessRequest(Base):
@@ -98,6 +205,8 @@ class Portfolio(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # Link portfolio to the subscription that owns it
+    subscription_id = Column(Integer, ForeignKey("user_subscriptions.id"), nullable=True)
     name = Column(String, nullable=True)
     description = Column(String, nullable=True)
     asset_type = Column(String, nullable=True)
@@ -110,7 +219,11 @@ class Portfolio(Base):
     ecl_impairment_account = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    # Cached loan count for quick checks (authoritative count enforced via SubscriptionUsage)
+    loan_count = Column(Integer, nullable=False, default=0)
+
     user = relationship("User", back_populates="portfolios")
+    subscription = relationship("UserSubscription", backref="portfolios")
     loans = relationship("Loan", back_populates="portfolio", passive_deletes=True)
     clients = relationship("Client", back_populates="portfolio", passive_deletes=True)
     guarantees = relationship("Guarantee", back_populates="portfolio", passive_deletes=True)
@@ -204,7 +317,9 @@ class Loan(Base):
     __tablename__ = "loans"
 
     id = Column(Integer, primary_key=True, index=True)
-    portfolio_id = Column(Integer, ForeignKey("portfolios.id",ondelete='CASCADE'))
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="CASCADE"))
+    # Subscription owning this loan data (derived from portfolio.subscription_id)
+    subscription_id = Column(Integer, ForeignKey("user_subscriptions.id"), nullable=True)
     loan_no = Column(String, index=True, nullable=True)
     employee_id = Column(String, nullable=True)
     employee_name = Column(String, nullable=True)

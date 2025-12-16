@@ -7,7 +7,17 @@ from fastapi.middleware.gzip import GZipMiddleware
 from sqlalchemy.orm import Session
 from app.database import get_db, init_db
 # Import all routers including websocket
-from app.routes import auth, portfolio, admin, reports, dashboard, user as user_router, quality_issues, websocket
+from app.routes import (
+    auth, 
+    portfolio, 
+    admin, 
+    reports, 
+    dashboard, 
+    user as user_router, 
+    quality_issues, 
+    websocket, 
+    billing,
+    webhooks)
 from app.models import User, UserRole
 from app.auth.utils import get_password_hash
 from fastapi.staticfiles import StaticFiles
@@ -22,11 +32,24 @@ from app.config import settings
 import pickle
 import numpy as np
 import asyncio
-
+from app.utils.billing import require_active_subscription
+from contextlib import asynccontextmanager
+from app.database import SessionLocal
+from app.utils.seed_subscription_plans import seed_subscription_plans
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("app")
+
+# Lifespan utils for seeding subscription plans
+@asynccontextmanager
+async def lifespan(app):
+    db = SessionLocal()
+    try:
+        seed_subscription_plans(db)
+    finally:
+        db.close()
+    yield
 
 
 # Initialize the FastAPI app first
@@ -38,11 +61,14 @@ app = FastAPI(
         "name": "IFRS9 PRO",
         "email": "admin@ifrs9pro.com",
     },
+    lifespan=lifespan
 )
 
 # Global OpenAPI tags
 app.openapi_tags = [
     {"name": "admin", "description": "Endpoints for administrative actions"},
+    {"name": "billing", "description": "Endpoints for billing actions"},
+    {"name": "webhooks", "description": "Webhook endpoints"},
     {"name": "auth", "description": "Authentication and login endpoints"},
     {"name": "dashboard", "description": "Endpoints for dashboard data"},
     {"name": "portfolios", "description": "Portfolio management endpoints"},
@@ -107,14 +133,19 @@ async def log_preflight_requests(request: Request, call_next):
 
 
 # Register routers
+# Auth  and billing routers are the ONLY router that is always accessible without a subscription.
 app.include_router(auth.router)
-app.include_router(admin.router)
-app.include_router(portfolio.router)
-app.include_router(reports.router)
-app.include_router(dashboard.router)
-app.include_router(user_router.router)
-app.include_router(quality_issues.router)
-app.include_router(websocket.router)
+app.include_router(billing.router)
+app.include_router(webhooks.router)
+# All other routers are hard-gated behind an active subscription.
+app.include_router(billing.router, dependencies=[Depends(require_active_subscription)])
+app.include_router(admin.router, dependencies=[Depends(require_active_subscription)])
+app.include_router(portfolio.router, dependencies=[Depends(require_active_subscription)])
+app.include_router(reports.router, dependencies=[Depends(require_active_subscription)])
+app.include_router(dashboard.router, dependencies=[Depends(require_active_subscription)])
+app.include_router(user_router.router, dependencies=[Depends(require_active_subscription)])
+app.include_router(quality_issues.router, dependencies=[Depends(require_active_subscription)])
+app.include_router(websocket.router, dependencies=[Depends(require_active_subscription)])
 
 @app.get("/", tags=["root"], description="Check API root")
 async def root():
