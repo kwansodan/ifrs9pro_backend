@@ -129,7 +129,10 @@ router = APIRouter(prefix="/portfolios", tags=["portfolios"])
 @router.post("/",  
             description="Create a new portfolio for the current user.", 
             response_model=PortfolioResponse, 
-            responses={401: {"description": "Not authenticated"}},
+            responses={401: {"description": "Not authenticated"},
+                       403: {"description": "Subscription limit reached"},
+                       402: {"description": "Portfolio limit reached"},
+                       },
             status_code=status.HTTP_201_CREATED
             )
 async def create_portfolio(
@@ -190,7 +193,10 @@ async def create_portfolio(
 @router.get("/",  
             description="Get all portfolios belonging to the current user.", 
             response_model=PortfolioList,
-            responses={401: {"description": "Not authenticated"}},)
+            responses={401: {"description": "Not authenticated"},
+                       500: {"description": "Internal server error"},
+                       500: {"description": "Internal server error"}},
+            )
 def get_portfolios(
     skip: int = 0,
     limit: int = 100,
@@ -203,6 +209,8 @@ def get_portfolios(
     Retrieve all portfolios belonging to the current user.
     Optional filtering by asset_type and customer_type.
     """
+    if limit < 0:
+        raise HTTPException(status_code=422, detail="Limit must be positive")
     query = db.query(Portfolio)
 
     # Apply filters if provided
@@ -534,17 +542,16 @@ async def get_portfolio(
         logger.error(f"Error in fast_get_portfolio: {str(e)}")
         import traceback
         error_details = traceback.format_exc()
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Error retrieving portfolio: {str(e)}\n{error_details}"
-        )
+        # Remove the conversion - let the 404 raise naturally
+        raise HTTPException(status_code=404, detail="Portfolio not found")
 
 
 @router.put("/{portfolio_id}",  
             description="Update details of a specific portfolio by ID.", 
             response_model=PortfolioWithSummaryResponse,
             responses={404: {"description": "Portfolio not found"},
-                       401: {"description": "Not authenticated"}},
+                       401: {"description": "Not authenticated"},
+                       500: {"description": "Internal server error related to subscription"}},
             )
 async def update_portfolio(
     portfolio_id: int,
@@ -613,10 +620,7 @@ async def update_portfolio(
     except Exception as e:
         db.rollback()
         logger.error(f"Error updating portfolio: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update portfolio: {str(e)}"
-        )
+        raise HTTPException(status_code=404, detail="Portfolio not found")
 
 
 @router.delete("/{portfolio_id}",  
@@ -660,9 +664,12 @@ def delete_portfolio(
     response_model=IngestAndSaveResponse,
     status_code=status.HTTP_200_OK,
     responses={200: {"description": "Data saved successfully"},
-                400: {"description": "There was an error parsing the body"},  # ← ADD THIS
-                401: {"description": "Not authenticated"},
-                422: {"description": "Validation error"}},
+               400: {"description": "There was an error parsing the body"},  # ← ADD THIS
+               401: {"description": "Not authenticated"},
+               422: {"description": "Validation error"},
+               404: {"description": "Portfolio not found"},
+               500: {"description": "Internal server error"},
+               }
 )
 async def accept_portfolio_data(
     portfolio_id: int,
@@ -682,36 +689,90 @@ async def accept_portfolio_data(
     - extracted excel headers
     - ORM model columns mapped for each file
     """
+    # Validate portfolio exists and belongs to the subscription
+    portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
+    if not portfolio:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+
+    if portfolio.subscription_id and portfolio.subscription_id != subscription.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Portfolio does not belong to your active subscription.",
+        )
+
+    # Validate that loan_details file is provided
+    if not loan_details:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="loan_details file is required.",
+        )
+
+    # Get subscription usage and plan
+    usage = (
+        db.query(SubscriptionUsage)
+        .filter(SubscriptionUsage.subscription_id == subscription.id)
+        .with_for_update()
+        .first()
+    )
+    plan = (
+        db.query(SubscriptionPlan)
+        .filter(SubscriptionPlan.id == subscription.plan_id)
+        .first()
+    )
+
+    if not usage or not plan:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Subscription usage or plan configuration missing.",
+        )
+
+    # Read the loan_details file to count rows BEFORE uploading
     try:
-        # Enforce loan ingestion limits BEFORE processing files
-        portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
-        if not portfolio:
-            raise HTTPException(status_code=404, detail="Portfolio not found")
-
-        if portfolio.subscription_id and portfolio.subscription_id != subscription.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Portfolio does not belong to your active subscription.",
-            )
-
-        usage = (
-            db.query(SubscriptionUsage)
-            .filter(SubscriptionUsage.subscription_id == subscription.id)
-            .with_for_update()
-            .first()
+        # Read file content
+        loan_file_content = await loan_details.read()
+        
+        # Reset file pointer for later upload
+        await loan_details.seek(0)
+        
+        # Count rows in the Excel file
+        import pandas as pd
+        from io import BytesIO
+        
+        df = pd.read_excel(BytesIO(loan_file_content))
+        new_loan_rows = len(df)
+        
+        logger.info(f"Detected {new_loan_rows} loan rows in uploaded file")
+        
+    except Exception as e:
+        logger.error(f"Error reading loan_details file: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to read loan_details file: {str(e)}",
         )
-        plan = (
-            db.query(SubscriptionPlan)
-            .filter(SubscriptionPlan.id == subscription.plan_id)
-            .first()
+
+    # Validate loan count
+    if new_loan_rows <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="loan_details file cannot be empty.",
         )
 
-        if not usage or not plan:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Subscription usage or plan configuration missing.",
-            )
+    # Check if adding these loans would exceed the plan limit
+    projected_loan_total = usage.current_loan_count + new_loan_rows
+    if projected_loan_total > plan.max_loan_data:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=(
+                f"Loan data limit exceeded. Your plan allows {plan.max_loan_data} loans. "
+                f"You currently have {usage.current_loan_count} loans. "
+                f"This upload contains {new_loan_rows} loans, which would exceed your limit by "
+                f"{projected_loan_total - plan.max_loan_data} loans. "
+                f"Please upgrade your plan or remove some existing loans."
+            ),
+        )
 
+    # All validations passed, now upload files
+    try:
         logger.info(f"Uploading excel documents to minio for portfolio {portfolio_id}")
         uploaded_files = upload_multiple_files_to_minio(
             portfolio_id=portfolio_id,
@@ -720,35 +781,21 @@ async def accept_portfolio_data(
             loan_guarantee_data=loan_guarantee_data,
             loan_collateral_data=loan_collateral_data,
         )
-        # Determine how many loan records are about to be ingested
-        loan_details_meta = uploaded_files.get("loan_details")
-        new_loan_rows = 0
-        if loan_details_meta and loan_details_meta.get("row_count") is not None:
-            new_loan_rows = int(loan_details_meta["row_count"])
-
-        if new_loan_rows <= 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="loan_details file is required and cannot be empty.",
-            )
-
-        projected_loan_total = usage.current_loan_count + new_loan_rows
-        if projected_loan_total > plan.max_loan_data:
-            raise HTTPException(
-                status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail="Loan data limit exceeded for your subscription plan.",
-            )
-
-        # We do not persist the increment here; counters are normalized
-        # after ingestion based on actual rows written to the database.
+        
+        logger.info(f"Successfully uploaded {len(uploaded_files)} files to MinIO")
+        
     except Exception as e:
-        logger.error(f"Error uploading excel documents to minio {str(e)}")
+        logger.error(f"Error uploading excel documents to minio: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload files to storage: {str(e)}",
+        )
 
     # Return response via Pydantic model
     return IngestAndSaveResponse(
         portfolio_id=portfolio_id,
         uploaded_files=uploaded_files,
-        message="Files uploaded successfully, headers extracted."
+        message=f"Files uploaded successfully. {new_loan_rows} loan records detected."
     )
 
 
@@ -756,7 +803,8 @@ async def accept_portfolio_data(
             description="Ingest cleaned Excel files from MinIO with mapping into the portfolio ingestion pipeline.", 
             responses={404: {"description": "Portfolio not found"},
                        401: {"description": "Not authenticated"},
-                       400: {"description": "There was an error parsing the body"},  
+                       400: {"description": "There was an error parsing the body"},
+                       500: {"description": "Internal server error during ingestion"}  
                        },
             status_code=status.HTTP_200_OK,
         )

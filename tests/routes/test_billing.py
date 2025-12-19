@@ -10,7 +10,6 @@ from app.routes.billing import (
     initialize_transaction,
     disable_subscription,
     get_subscription,
-    manage_subscription,
     verify_transaction,
 )
 from app.models import User, UserSubscription
@@ -310,90 +309,6 @@ class TestGetSubscription:
 
         with pytest.raises(HTTPException) as exc_info:
             await get_subscription(mock_user, mock_db)
-
-        assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
-        assert "Subscription not found" in exc_info.value.detail
-
-
-class TestManageSubscription:
-    @pytest.mark.asyncio
-    async def test_manage_subscription_enable(self, mock_user, mock_subscription, mock_db):
-        """Test enabling a subscription"""
-        mock_db.query.return_value.filter.return_value.first.return_value = mock_subscription
-
-        mock_response = {
-            "status": True,
-            "message": "Subscription enabled successfully"
-        }
-
-        with patch("app.routes.billing.paystack_request", new_callable=AsyncMock) as mock_request:
-            mock_request.return_value = mock_response
-
-            result = await manage_subscription("enable", mock_user, mock_db)
-
-            assert result["status"] is True
-            mock_request.assert_called_once_with(
-                "POST",
-                "/subscription/enable",
-                {"code": "SUB_test123", "token": "SUB_test123"}
-            )
-
-    @pytest.mark.asyncio
-    async def test_manage_subscription_disable(self, mock_user, mock_subscription, mock_db):
-        """Test disabling a subscription"""
-        mock_db.query.return_value.filter.return_value.first.return_value = mock_subscription
-
-        with patch("app.routes.billing.paystack_request", new_callable=AsyncMock) as mock_request:
-            mock_request.return_value = {"status": True}
-
-            result = await manage_subscription("disable", mock_user, mock_db)
-
-            assert result["status"] is True
-            call_args = mock_request.call_args
-            assert call_args[0][1] == "/subscription/disable"
-
-    @pytest.mark.asyncio
-    async def test_manage_subscription_cancel(self, mock_user, mock_subscription, mock_db):
-        """Test canceling a subscription"""
-        mock_db.query.return_value.filter.return_value.first.return_value = mock_subscription
-
-        with patch("app.routes.billing.paystack_request", new_callable=AsyncMock) as mock_request:
-            mock_request.return_value = {"status": True}
-
-            result = await manage_subscription("cancel", mock_user, mock_db)
-
-            assert result["status"] is True
-            call_args = mock_request.call_args
-            assert call_args[0][1] == "/subscription/cancel"
-
-    @pytest.mark.asyncio
-    async def test_manage_subscription_invalid_action(self, mock_user, mock_db):
-        """Test error with invalid action"""
-        with pytest.raises(HTTPException) as exc_info:
-            await manage_subscription("invalid_action", mock_user, mock_db)
-
-        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
-        assert "Invalid action" in exc_info.value.detail
-
-    @pytest.mark.asyncio
-    async def test_manage_subscription_no_active_subscription(self, mock_db):
-        """Test error when user has no active subscription"""
-        user = MagicMock(spec=User)
-        user.current_subscription_id = None
-
-        with pytest.raises(HTTPException) as exc_info:
-            await manage_subscription("enable", user, mock_db)
-
-        assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
-        assert "No active subscription found" in exc_info.value.detail
-
-    @pytest.mark.asyncio
-    async def test_manage_subscription_not_found_in_db(self, mock_user, mock_db):
-        """Test error when subscription is not found in database"""
-        mock_db.query.return_value.filter.return_value.first.return_value = None
-
-        with pytest.raises(HTTPException) as exc_info:
-            await manage_subscription("enable", mock_user, mock_db)
 
         assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
         assert "Subscription not found" in exc_info.value.detail

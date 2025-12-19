@@ -95,10 +95,10 @@ async def require_active_subscription(
         UserSubscription.id == admin_user.current_subscription_id
     ).first()
 
-    if not subscription or subscription.status != "active":
+    if not subscription or subscription.status == "expired":
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail="Admin subscription is not active.",
+            detail="Admin subscription is not expired.",
         )
 
     from datetime import datetime, timezone

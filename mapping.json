@@ -3,7 +3,7 @@
   "files": [
     {
       "type": "loan_details",
-      "object_name": "portfolio/7/loan_details/3e639e63-9508-4fd1-8f36-798c9fd93b6b_loan_data_70k.xlsx",
+      "object_name": "portfolio/1/loan_details/90671fb8-9c4a-432b-9eaf-0fbad287094b_loan_details_complete.xlsx",
       "mapping": {
         "Loan No.": "loan_no",
         "Employee Id": "employee_id",
@@ -48,7 +48,7 @@
     },
     {
       "type": "client_data",
-      "object_name": "portfolio/7/client_data/fc40a89b-447c-4240-a4d3-737e7839d9c7_client_data_70k.xlsx",
+      "object_name": "portfolio/1/client_data/39fe63bb-9196-4cb6-938c-248a629ec991_customer_data.xlsx",
       "mapping": {
         "Employee Id": "employee_id",
         "Lastname": "last_name",
@@ -73,7 +73,7 @@
     },
     {
       "type": "loan_guarantee_data",
-      "object_name": "portfolio/7/loan_guarantee_data/a78f7e91-a99a-49ef-9fbb-6b49180e6a45_Loan_guarantee.xlsx",
+      "object_name": "portfolio/1/loan_guarantee_data/d98a7d23-2b6f-4c68-a591-a6831bc7689d_Loan_guarantee.xlsx",
       "mapping": {
         "id": "loan_no",
         "Guarantor name": "guarantor_name",
@@ -82,7 +82,7 @@
     },
     {
       "type": "loan_collateral_data",
-      "object_name":  "portfolio/7/loan_collateral_data/a3466a87-ed5a-40b0-96b9-9570c9258058_loan collateral data.xlsx",
+      "object_name":  "portfolio/1/loan_collateral_data/b547bc8b-32be-46b5-b3f4-c9ed6c8d168d_loan collateral data.xlsx",
       "mapping": {
         "Employee Id": "loan_no",
         "Lastname": "security_type",

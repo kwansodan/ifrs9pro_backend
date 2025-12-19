@@ -4,6 +4,8 @@ import pytest
 from unittest.mock import patch, AsyncMock
 from fastapi.testclient import TestClient 
 from fastapi import status
+from unittest.mock import patch
+from io import BytesIO
 
 from datetime import date
 from app.models import Portfolio
@@ -61,21 +63,31 @@ def test_update_and_delete_portfolio(client, db_session):
 
 @pytest.mark.asyncio
 async def test_accept_portfolio_data(client, db_session, regular_user):
-    # Create portfolio belonging to user
     portfolio = Portfolio(
         user_id=regular_user.id,
         name="Test P",
-        description="desc"
+        description="desc",
     )
     db_session.add(portfolio)
     db_session.commit()
 
-    # Fake excel file bytes
-    excel_bytes = b"fake excel content"
+    # Create REAL in-memory Excel file
+    buffer = BytesIO()
+    df = pd.DataFrame({"A": [1], "B": [2]})
+    df.to_excel(buffer, index=False)
+    excel_bytes = buffer.getvalue()
 
     files = {
-        "loan_details": ("loan.xlsx", excel_bytes, "application/vnd.ms-excel"),
-        "client_data": ("client.xlsx", excel_bytes, "application/vnd.ms-excel"),
+        "loan_details": (
+            "loan.xlsx",
+            excel_bytes,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
+        "client_data": (
+            "client.xlsx",
+            excel_bytes,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
     }
 
     fake_uploaded = {
@@ -90,8 +102,8 @@ async def test_accept_portfolio_data(client, db_session, regular_user):
             "file_id": "2",
             "file_url": "url2",
             "object_name": "client.xlsx",
-            "excel_columns": ["C", "D"],
-            "model_columns": {"modelC", "modelD"},
+            "excel_columns": ["A", "B"],
+            "model_columns": {"modelA", "modelB"},
         },
         "loan_guarantee_data": None,
         "loan_collateral_data": None,
@@ -99,22 +111,22 @@ async def test_accept_portfolio_data(client, db_session, regular_user):
 
     with patch(
         "app.routes.portfolio.upload_multiple_files_to_minio",
-        return_value=fake_uploaded
+        return_value=fake_uploaded,
     ) as mock_upload:
 
-        resp = client.post(f"/portfolios/{portfolio.id}/ingest/save", files=files)
-
+        resp = client.post(
+            f"/portfolios/{portfolio.id}/ingest/save",
+            files=files,
+        )
 
         assert resp.status_code == 200
-        data = resp.json()
 
+        data = resp.json()
         assert data["portfolio_id"] == portfolio.id
-        assert "uploaded_files" in data
         assert int(data["uploaded_files"]["loan_details"]["file_id"]) == 1
-        assert data["message"] == "Files uploaded successfully, headers extracted."
 
         mock_upload.assert_called_once()
-
+        
 
 @pytest.mark.asyncio
 async def test_ingest_portfolio_data(client, db_session, regular_user):

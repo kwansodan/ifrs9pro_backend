@@ -2,7 +2,7 @@ import random
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from app.database import get_db
 from app.models import User
 from app.models import Feedback, FeedbackStatus
@@ -34,11 +34,15 @@ async def create_feedback(
         user_id=current_user.id,
         status=FeedbackStatus.SUBMITTED,
     )
-    
-    # Add to database
-    db.add(new_feedback)
-    db.commit()
-    db.refresh(new_feedback)
+    try:
+        db.add(new_feedback)
+        db.commit()
+        db.refresh(new_feedback)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create feedback."
+        )
     
     # Create response dictionary manually
     response_data = {
@@ -204,7 +208,9 @@ async def create_help(
 @router.get("/help", 
             description="Get all help requests for the current user", 
             response_model=List[HelpResponse],
-            responses={401: {"description": "Not Aunthenticated"}})
+            responses={401: {"description": "Not Aunthenticated"},
+                       500: {"description": "Internal server error"}}
+    )
 async def get_my_help(
     status: Optional[HelpStatusEnum] = None,
     db: Session = Depends(get_db),

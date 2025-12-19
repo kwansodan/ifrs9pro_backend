@@ -81,8 +81,13 @@ async def get_access_requests(
 async def get_users(
     db: Session = Depends(get_db), current_user: User = Depends(is_admin)
 ):
-    users = db.query(User).all()
-
+    try:
+        users = db.query(User).all()
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve users."
+        )
     return users
 
 
@@ -241,8 +246,13 @@ async def admin_get_all_feedback(
     """
     Admin endpoint to get all feedback entries
     """
-    feedback_list = db.query(Feedback).all()
-    
+    try:
+        feedback_list = db.query(Feedback).all()
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve feedback entries."
+        )
     # Prepare response with manual mapping
     response_data = []
     for feedback in feedback_list:
@@ -283,8 +293,13 @@ async def admin_get_all_help(
     """
     Admin endpoint to get all help entries
     """
-    help_list = db.query(Help).all()
-    
+    try:
+        help_list = db.query(Help).all()
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve help entries."
+        )
     # Prepare response with manual mapping
     response_data = []
     for help_item in help_list:
@@ -355,7 +370,9 @@ async def admin_get_help(
             description="Get help status by ID", 
             response_model=HelpResponse,
             responses={404: {"description": "Help not found"},
-                       401: {"description": "Not Authenticated"}},)
+                       401: {"description": "Not Authenticated"},
+                       500: {"description": "Internal server error"}},
+)
 async def update_help_status(
     help_id: int,
     status_update: HelpStatusUpdate,
@@ -401,7 +418,9 @@ async def update_help_status(
             description="Delete a specific help entry by ID", 
             status_code=status.HTTP_204_NO_CONTENT,
             responses={404: {"description": "Help not found"},
-                       401: {"description": "Not authenticated"},},)
+                       401: {"description": "Not authenticated"},
+                       500: {"description": "Internal server error"}},
+)
 async def admin_delete_help(
     help_id: int,
     db: Session = Depends(get_db),
@@ -496,10 +515,11 @@ async def update_access_request(
     return {"message": "Request updated successfully"}
 
 
-@router.get("/users/{user_id}", 
+@router.get("/users/{user_id:int}", 
             description="Get a specific user by ID",
             responses={404: {"description": "User not found"},
-                       401: {"description": "Not authenticated"},},
+                       401: {"description": "Not authenticated"},
+                       405: {"description": "Method not allowed"}},
             response_model=UserResponse)
 async def get_user(
     user_id: int, db: Session = Depends(get_db), current_user: User = Depends(is_admin)

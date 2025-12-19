@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from app.schemas import CustomerCreate, TransactionInitialize, SubscriptionDisable
+from app.schemas import CustomerCreate, TransactionInitialize, SubscriptionDisable, SubscriptionEnable
 from app.utils.billing import paystack_request, verify_paystack_signature
 from app.auth.utils import is_admin, get_current_active_user
 from app.database import get_db
@@ -34,7 +34,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Endpoints
-@router.get("/plans", status_code=status.HTTP_200_OK)
+@router.get("/plans", 
+            status_code=status.HTTP_200_OK,
+            responses={500: {"description": "Paystack failure"},
+                    502: {"description": "External payment provider error"},
+                    429: {"description": "Rate limit exceeded"},
+                    200: {"description": "Customer details"},
+                    401: {"description": "Not authenticated"}},
+            )
 async def list_plans(page: int = 1, per_page: int = 50):
     """List all subscription plans"""
     result = await paystack_request("GET", f"/plan?page={page}&perPage={per_page}")
@@ -51,8 +58,14 @@ async def list_plans(page: int = 1, per_page: int = 50):
             }
     return list(seen.values())
 
-
-@router.post("/customers", status_code=status.HTTP_201_CREATED)
+@router.post("/customers", 
+             status_code=status.HTTP_201_CREATED,
+             responses={502: {"description": "Paystack unavailable"},
+                        429: {"description": "Rate limit exceeded"},
+                        200: {"description": "Customer details"},
+                        401: {"description": "Not authenticated"},
+                       },
+)
 async def create_customer(
     customer: CustomerCreate,
     current_user: User = Depends(get_current_active_user)
@@ -64,14 +77,26 @@ async def create_customer(
     return result
 
 
-@router.get("/customers/me", status_code=status.HTTP_200_OK)
+@router.get("/customers/me", 
+            status_code=status.HTTP_200_OK,
+            responses={
+                200: {"description": "Customer details"},
+                401: {"description": "Not authenticated"}
+            })
 async def get_my_customer(current_user: User = Depends(get_current_active_user)):
     """Fetch authenticated user's customer details"""
     result = await paystack_request("GET", f"/customer/{current_user.email}")
     return result
 
 
-@router.post("/transactions/initialize", status_code=status.HTTP_201_CREATED)
+@router.post("/transactions/initialize", 
+             status_code=status.HTTP_201_CREATED,
+             responses={500: {"description": "Paystack failure"},
+                        422: {"description": "Paystack failure"},
+                        200: {"description": "Customer details"},
+                        401: {"description": "Not authenticated"},
+                        400: {"description": "Invalid amount"},
+                    })
 async def initialize_transaction(
     transaction: TransactionInitialize,
     current_user: User = Depends(get_current_active_user)
@@ -83,7 +108,16 @@ async def initialize_transaction(
     return result
 
 
-@router.post("/subscriptions/disable", status_code=status.HTTP_200_OK)
+@router.post("/subscriptions/disable", 
+             status_code=status.HTTP_200_OK,
+             responses={500: {"description": "Paystack failure"},
+                        502: {"description": "External payment provider error"},
+                        422: {"description": "Invalid or missing parameters"},
+                        400: {"description": "Missing parameters"},
+                        200: {"description": "Customer details"},
+                        401: {"description": "Not authenticated"}
+                    },
+)
 async def disable_subscription(subscription: SubscriptionDisable):
     """Disable a subscription using subscription code and email token"""
     data = subscription.model_dump()
@@ -91,7 +125,28 @@ async def disable_subscription(subscription: SubscriptionDisable):
     return result
 
 
-@router.get("/subscriptions", status_code=status.HTTP_200_OK)
+@router.post("/subscriptions/enable", 
+             status_code=status.HTTP_200_OK,
+             responses={500: {"description": "Paystack failure"},
+                        402: {"description": "Payment required to enable subscription"},
+                        404: {"description": "Subscription not found"},
+                        200: {"description": "Customer details"},
+                        401: {"description": "Not authenticated"}
+                    },
+)
+async def enable_subscription(subscription: SubscriptionEnable):
+    """Disable a subscription using subscription code and email token"""
+    data = subscription.model_dump()
+    result = await paystack_request("POST", "/subscription/enable", data)
+    return result
+
+
+
+@router.get("/subscriptions", 
+            status_code=status.HTTP_200_OK,
+            responses={404: {"description": "No active subscription found"},
+                    200: {"description": "Customer details"},
+                    401: {"description": "Not authenticated"}},)
 async def get_subscription(
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db)
@@ -119,45 +174,14 @@ async def get_subscription(
     return result
 
 
-@router.post("/subscriptions/manage", status_code=status.HTTP_200_OK)
-async def manage_subscription(
-    action: str,
-    current_user=Depends(get_current_active_user),
-    db: Session = Depends(get_db)
-):
-    """Enable, disable, or cancel the current admin subscription"""
-    valid_actions = ["enable", "disable", "cancel"]
-    if action not in valid_actions:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid action. Must be one of: {', '.join(valid_actions)}"
-        )
-
-    if not current_user.current_subscription_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No active subscription found for current user"
-        )
-    
-    subscription = db.query(UserSubscription).filter(
-        UserSubscription.id == current_user.current_subscription_id
-    ).first()
-    
-    if not subscription:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Subscription not found"
-        )
-    
-    result = await paystack_request(
-        "POST",
-        f"/subscription/{action}",
-        {"code": subscription.paystack_subscription_code, "token": subscription.paystack_subscription_code}
-    )
-    return result
-
-
-@router.get("/transactions/verify/{reference}", status_code=status.HTTP_200_OK)
+@router.get("/transactions/verify/{reference}", 
+            status_code=status.HTTP_200_OK,
+            responses={500: {"description": "Transaction not found"},
+                    502: {"description": "External payment provider error"},
+                    400: {"description": "Invalid transaction reference"},
+                    200: {"description": "Customer details"},
+                    401: {"description": "Not authenticated"}},
+            )
 async def verify_transaction(reference: str):
     """Verify transaction by reference"""
     result = await paystack_request("GET", f"/transaction/verify/{reference}")

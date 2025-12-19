@@ -41,18 +41,81 @@ from app.utils.seed_subscription_plans import seed_subscription_plans
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("app")
 
-# Lifespan utils for seeding subscription plans
+# Consolidated lifespan for all startup/shutdown logic
 @asynccontextmanager
 async def lifespan(app):
+    """Handle all startup and shutdown logic"""
+    logger.info("=== Application Starting Up ===")
+    
+    # Initialize database
+    try:
+        logger.info("Initializing database...")
+        init_db()
+        logger.info("Database initialized successfully")
+    except Exception as e:
+        logger.error(f"Error initializing database: {e}")
+    
+    # Seed subscription plans
     db = SessionLocal()
     try:
+        logger.info("Seeding subscription plans...")
         seed_subscription_plans(db)
+        logger.info("Subscription plans seeded successfully")
+    except Exception as e:
+        logger.error(f"Error seeding subscription plans: {e}")
     finally:
         db.close()
+    
+    # Create admin user
+    db = SessionLocal()
+    try:
+        logger.info("Creating admin user if needed...")
+        admin_email = os.getenv("ADMIN_EMAIL")
+        admin_password = os.getenv("ADMIN_PASSWORD")
+
+        if not admin_email or not admin_password:
+            logger.warning("⚠️ Admin credentials not provided in environment variables")
+            logger.warning("   Set ADMIN_EMAIL and ADMIN_PASSWORD to create admin user")
+        else:
+            # Check if admin exists
+            existing_admin = db.query(User).filter(User.email == admin_email).first()
+            
+            if not existing_admin:
+                try:
+                    admin_user = User(
+                        email=admin_email,
+                        hashed_password=get_password_hash(admin_password),
+                        role=UserRole.ADMIN,
+                        is_active=True,
+                    )
+                    db.add(admin_user)
+                    db.commit()
+                    logger.info(f"✅ Admin user created: {admin_email}")
+                except Exception as e:
+                    db.rollback()
+                    # Check if it's a unique violation (another process created it)
+                    if "UniqueViolation" in str(e) or "duplicate key" in str(e):
+                        logger.info(f"ℹ️ Admin user was created by another process: {admin_email}")
+                    else:
+                        logger.error(f"❌ Error creating admin user: {e}")
+                        raise
+            else:
+                logger.info(f"ℹ️ Admin user already exists: {admin_email}")
+    except Exception as e:
+        logger.error(f"❌ Error in admin user creation: {e}")
+    finally:
+        db.close()
+    
+    logger.info("=== Application Startup Complete ===")
+    
+    # Yield control to the application
     yield
+    
+    # Shutdown logic (if needed)
+    logger.info("=== Application Shutting Down ===")
 
 
-# Initialize the FastAPI app first
+# Initialize the FastAPI app
 app = FastAPI(
     title="IFRS9 API",
     description="API for IFRS9 calculations and reporting",
@@ -78,8 +141,6 @@ app.openapi_tags = [
     {"name": "websocket", "description": "WebSocket endpoints"},
 ]
 
-# Add servers manually
-
 # Save original method
 original_openapi = app.openapi
 
@@ -96,8 +157,6 @@ def custom_openapi():
     return app.openapi_schema
 
 app.openapi = custom_openapi
-
-
 
 # Add a health check endpoint immediately
 @app.get("/health", tags=["health"], description="Check API health")
@@ -122,6 +181,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 @app.middleware("http")
 async def log_preflight_requests(request: Request, call_next):
     if request.method == "OPTIONS":
@@ -130,15 +190,12 @@ async def log_preflight_requests(request: Request, call_next):
         logging.info(f"Preflight from {origin} | Access-Control-Request-Headers: {access_control_req_headers}")
     return await call_next(request)
 
-
-
 # Register routers
-# Auth  and billing routers are the ONLY router that is always accessible without a subscription.
+# Auth and billing routers are the ONLY router that is always accessible without a subscription.
 app.include_router(auth.router)
 app.include_router(billing.router)
 app.include_router(webhooks.router)
 # All other routers are hard-gated behind an active subscription.
-app.include_router(billing.router, dependencies=[Depends(require_active_subscription)])
 app.include_router(admin.router, dependencies=[Depends(require_active_subscription)])
 app.include_router(portfolio.router, dependencies=[Depends(require_active_subscription)])
 app.include_router(reports.router, dependencies=[Depends(require_active_subscription)])
@@ -224,80 +281,6 @@ def get_model():
 # Mount the MkDocs static site
 app.mount("/documentation", StaticFiles(directory="site", html=True), name="documentation")
 
-@app.on_event("startup")
-async def init_db_async():
-    """Initialize database tables asynchronously"""
-    try:
-        logger.info("Initializing database...")
-        init_db()
-        logger.info("Database initialized successfully")
-    except Exception as e:
-        logger.error(f"Error initializing database: {e}")
-        
-@app.on_event("startup")
-async def create_admin_user_async():
-    """Create admin user asynchronously with better error handling"""
-    try:
-        logger.info("Creating admin user if needed...")
-        # Get a new session
-        db = next(get_db())
-        try:
-            admin_email = os.getenv("ADMIN_EMAIL")
-            admin_password = os.getenv("ADMIN_PASSWORD")
-
-            if not admin_email or not admin_password:
-                logger.warning("Admin credentials not provided in environment variables")
-                return
-
-            # Query with FOR UPDATE to lock the row and prevent race conditions
-            existing_admin = db.query(User).filter(User.email == admin_email).first()
-            
-            if not existing_admin:
-                try:
-                    admin_user = User(
-                        email=admin_email,
-                        hashed_password=get_password_hash(admin_password),
-                        role=UserRole.ADMIN,
-                        is_active=True,  # Ensure the admin is active
-                    )
-                    db.add(admin_user)
-                    db.commit()
-                    db.expunge_all()
-                    logger.info(f"Admin user created: {admin_email}")
-                except Exception as e:
-                    db.rollback()
-                    # Check if it's a unique violation
-                    if "UniqueViolation" in str(e) or "duplicate key" in str(e):
-                        logger.info(f"Admin user was created by another process, ignoring: {admin_email}")
-                    else:
-                        # Re-raise if it's not a unique violation
-                        raise
-            else:
-                logger.info("Admin user already exists")
-                
-                # Optionally update admin password if needed
-                # Uncomment if you want to update the admin password on startup
-                # if not verify_password(admin_password, existing_admin.hashed_password):
-                #     existing_admin.hashed_password = get_password_hash(admin_password)
-                #     db.commit()
-                #     logger.info("Admin password updated")
-                
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Error creating admin user: {e}")
-        finally:
-            db.close()
-    except Exception as e:
-        logger.error(f"Error in create_admin_user_async: {e}")
-        
-@app.on_event("startup")
-async def startup_event():
-    """
-    Application startup event handler
-    - First responds to health checks
-    """
-    logger.info("Application startup event triggered")
-    
 if __name__ == "__main__":
     import uvicorn
 

@@ -1,7 +1,7 @@
 from pydantic import BaseModel, EmailStr, Field
 from pydantic.types import StrictBool
 from typing import List, Dict, Any, Optional
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from enum import Enum
 
 # ==================== ENUM DEFINITIONS ====================
@@ -100,7 +100,7 @@ class UserResponse(BaseModel):
     recovery_email: Optional[EmailStr] = None
     role: UserRole
     is_active: bool
-    created_at: datetime
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     last_login: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -123,7 +123,7 @@ class EmailVerificationRequest(BaseModel):
 
 class PasswordSetup(BaseModel):
     password: str = Field(..., min_length=8, example="MyS3cur3Pwd")
-    confirm_password: str
+    confirm_password: str = Field(..., min_length=8, example="MyS3cur3Pwd")
 
 
 class Token(BaseModel):
@@ -973,5 +973,10 @@ class TransactionInitialize(BaseModel):
 
 
 class SubscriptionDisable(BaseModel):
+    code: str = Field(..., description="Subscription code")
+    token: str = Field(..., description="Email token")
+
+
+class SubscriptionEnable(BaseModel):
     code: str = Field(..., description="Subscription code")
     token: str = Field(..., description="Email token")
