@@ -1,0 +1,10 @@
+[reports]
+directory = "test-results"
+preserve-bytes = true
+
+[reports.junit]
+path = "test-results/schemathesis-results.xml"
+
+[reports.har]
+enabled = true
+path = "test-results/schemathesis.har"

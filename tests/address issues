@@ -1,0 +1,26 @@
+issues to solve 
+class FeedbackStatusEnum(str, Enum):
+    SUBMITTED = "submitted"
+    OPEN = "open"
+    CLOSED = "closed"
+    RETURNED = "returned"
+    IN_DEVELOPMENT = "in development"
+    COMPLETED = "completed"  
+correct space between in development
+
+delete access request endpoint does not return any success response
+
+Confirm duplicate routes and fix
+
+fix collateral and guarantee and actually make them optional
+
+write tests to test main portfolio fxns
+
+
+schemathesis ; 
+(env) joojo@joojo-laptop:~/Desktop/ifrs9pro_backend_fresh$ export SCHEMATHESIS_HOOKS=tests.utils.auth
+(env) joojo@joojo-laptop:~/Desktop/ifrs9pro_backend_fresh$ PYTHONPATH=$(pwd) schemathesis run http://localhost:8000/openapi.json
+Schemathesis v4.7.5
+━━━━━━━━━━━━━━━━━━━
+
+generate yaml at startup

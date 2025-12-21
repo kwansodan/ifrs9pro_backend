@@ -1,0 +1,70 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: ifrs9pro_fastapi
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      DEBUG: "False"
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./reports:/app/reports
+      - ./app/ml_models:/app/app/ml_models
+    restart: unless-stopped
+    networks:
+      - ifrs9pro_network
+
+  db:
+    image: postgres:16-alpine
+    container_name: ifrs9pro_postgres
+    env_file: .env
+    environment:
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - ifrs9pro_network
+
+  minio:
+    image: minio/minio:latest
+    container_name: ifrs9pro_minio
+    command: server /data --console-address ":9001"
+    env_file: .env
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - ifrs9pro_network
+
+networks:
+  ifrs9pro_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  minio_data:

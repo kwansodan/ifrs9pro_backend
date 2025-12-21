@@ -39,7 +39,9 @@ router = APIRouter(tags=["auth"])
 VALID_ADMIN_EMAILS = os.getenv("VALID_ADMIN_EMAILS", "admin@example.com").split(",")
 
 
-@router.post("/request-access")
+@router.post("/request-access",
+            responses={409: {"description": "Conflict - Email already registered or request exists"}},
+            description="Request user access by submitting email for verification")
 async def request_access(
     request_data: EmailVerificationRequest, db: Session = Depends(get_db)
 ):
@@ -104,38 +106,10 @@ async def request_access(
     return {"message": "Verification email sent"}
 
 
-@router.get("/verify-email/{token}")
-async def verify_email(token: str, db: Session = Depends(get_db)):
-    try:
-        token_data, token_type = decode_token(token)
-
-        if token_type != "email_verification":
-            raise HTTPException(status_code=400, detail="Invalid token type")
-
-        access_request = (
-            db.query(AccessRequest)
-            .filter(
-                AccessRequest.email == token_data.email,
-                AccessRequest.status == RequestStatus.PENDING,
-            )
-            .first()
-        )
-
-        if not access_request:
-            raise HTTPException(status_code=404, detail="Request not found")
-
-        access_request.is_email_verified = True
-        db.commit()
-
-        return {
-            "message": "Email successfully verified. Thank you for confirming your email address."
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.post("/submit-admin-request/")
+@router.post("/submit-admin-request", 
+              responses={401: {"description": "Unauthorized"},
+                         404: {"description": "Verified email request not found"}},
+            description="Submit admin email for verified access request",)
 async def submit_admin_request(
     request_data: AccessRequestSubmit, db: Session = Depends(get_db)
 ):
@@ -177,7 +151,9 @@ async def submit_admin_request(
     )
 
 
-@router.get("/admin/requests", response_model=List[AccessRequestResponse])
+@router.get("/admin/requests",  
+            description="Get all access requests", 
+            response_model=List[AccessRequestResponse])
 async def get_access_requests(
     db: Session = Depends(get_db), current_user: User = Depends(is_admin)
 ):
@@ -188,7 +164,105 @@ async def get_access_requests(
     return access_requests
 
 
-@router.put("/admin/requests/{request_id}")
+
+@router.post("/login",  
+            description="Login using email and password", 
+            response_model=LoginResponse,
+            responses={
+                401: {"description": "Unauthorized"}
+            }
+        )
+async def login(request: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == request.email).first()
+
+    if not user or not verify_password(request.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Set last login
+    user.last_login = datetime.utcnow()
+    db.commit()
+    db.refresh(user)
+
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+
+    # Include user info in the token
+    token_data = {
+        "sub": user.email,
+        "id": user.id,
+        "role": user.role,
+        "is_active": user.is_active,
+    }
+
+    access_token = create_access_token(
+        data=token_data, expires_delta=access_token_expires
+    )
+
+    # Decode the token for sending back user info
+    decoded_token = decode_token(access_token)
+    access_request = (
+        db.query(AccessRequest).filter(AccessRequest.email == user.email).first()
+    )
+
+    access_request_status = None
+    if access_request is not None:
+        access_request_status = access_request.status
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": access_token_expires.total_seconds(),
+        "user": {
+            "id": user.id,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "email": user.email,
+            "recovery_email": user.recovery_email,
+            "role": user.role,
+            "is_active": user.is_active,
+            "access_request_status": access_request_status,
+        },
+    }
+
+@router.get("/verify-email/{token}",  
+            description="Enter email verification token to verify email address",
+            responses={404: {"description": "Token not found"},
+                       400: {"description": "Not Authenticated"}},)
+async def verify_email(token: str, db: Session = Depends(get_db)):
+    try:
+        token_data, token_type = decode_token(token)
+
+        if token_type != "email_verification":
+            raise HTTPException(status_code=400, detail="Invalid token type")
+
+        access_request = (
+            db.query(AccessRequest)
+            .filter(
+                AccessRequest.email == token_data.email,
+                AccessRequest.status == RequestStatus.PENDING,
+            )
+            .first()
+        )
+
+        if not access_request:
+            raise HTTPException(status_code=404, detail="Request not found")
+
+        access_request.is_email_verified = True
+        db.commit()
+
+        return {
+            "message": "Email successfully verified. Thank you for confirming your email address."
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.put("/admin/requests/{request_id}",  
+            description="Update access request by ID",
+            responses={404: {"description": "Request ID not found"}},)
 async def update_access_request(
     request_id: int,
     request_update: AccessRequestUpdate,
@@ -222,7 +296,10 @@ async def update_access_request(
     return {"message": "Request updated successfully"}
 
 
-@router.post("/set-password/{token}")
+@router.post("/set-password/{token}",  
+            description="Set password using invitation token",
+            responses={404: {"description": "Token not found"},
+                       400: {"description": "Not Authenticated"}},)
 async def set_password(
     token: str, password_data: PasswordSetup, db: Session = Depends(get_db)
 ):
@@ -302,60 +379,3 @@ async def set_password(
                 detail="An account with this email already exists. If you've already set up your password, please log in.",
             )
         raise HTTPException(status_code=400, detail=f"Error setting password: {str(e)}")
-
-
-@router.post("/login", response_model=LoginResponse)
-async def login(request: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == request.email).first()
-
-    if not user or not verify_password(request.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    # Set last login
-    user.last_login = datetime.utcnow()
-    db.commit()
-    db.refresh(user)
-
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-
-    # Include user info in the token
-    token_data = {
-        "sub": user.email,
-        "id": user.id,
-        "role": user.role,
-        "is_active": user.is_active,
-    }
-
-    access_token = create_access_token(
-        data=token_data, expires_delta=access_token_expires
-    )
-
-    # Decode the token for sending back user info
-    decoded_token = decode_token(access_token)
-    access_request = (
-        db.query(AccessRequest).filter(AccessRequest.email == user.email).first()
-    )
-
-    access_request_status = None
-    if access_request is not None:
-        access_request_status = access_request.status
-
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "expires_in": access_token_expires.total_seconds(),
-        "user": {
-            "id": user.id,
-            "first_name": user.first_name,
-            "last_name": user.last_name,
-            "email": user.email,
-            "recovery_email": user.recovery_email,
-            "role": user.role,
-            "is_active": user.is_active,
-            "access_request_status": access_request_status,
-        },
-    }

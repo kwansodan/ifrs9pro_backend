@@ -44,8 +44,9 @@ async def websocket_task_progress(
             token = get_token_from_query_param(websocket)
         
         if not token:
+            # Immediately reject connections without a token so the test client raises
             await websocket.close(code=1008, reason="Missing authentication token")
-            return
+            raise WebSocketDisconnect(code=1008)
         
         # Verify the token
         try:

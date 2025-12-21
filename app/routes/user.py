@@ -16,7 +16,10 @@ from app.schemas import HelpCreate, HelpResponse, HelpStatusEnum, HelpUpdate, No
 router = APIRouter(prefix="/user", tags=["user actions"])
 
 # Regular user feedback endpoints
-@router.post("/feedback", response_model=FeedbackResponse)
+@router.post("/feedback", 
+             description="Create new feedback", 
+             response_model=FeedbackResponse,
+             responses={401: {"description": "Not Aunthenticated"}})
 async def create_feedback(
     feedback_data: FeedbackCreate,
     db: Session = Depends(get_db),
@@ -59,93 +62,11 @@ async def create_feedback(
     # Return response directly from dictionary
     return FeedbackResponse(**response_data)
 
-@router.put("/feedback/{feedback_id}", response_model=FeedbackResponse)
-async def update_feedback(
-    feedback_id: int,
-    feedback_data: FeedbackUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
-):
-    """
-    Update a specific feedback entry
-    Only the creator can update their feedback
-    """
-    # Get the feedback
-    feedback = db.query(Feedback).filter(Feedback.id == feedback_id).first()
-    if not feedback:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Feedback not found"
-        )
-    
-    # Check if user is the creator
-    if feedback.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
-            detail="You can only update your own feedback"
-        )
-    
-    # Update the fields
-    if feedback_data.description is not None:
-        feedback.description = feedback_data.description
-    
-    # Save changes
-    db.commit()
-    db.refresh(feedback)
-    
-    # Create response dictionary manually
-    response_data = {
-        "id": feedback.id,
-        "description": feedback.description,
-        "status": feedback.status,
-        "user_id": feedback.user_id,
-        "created_at": feedback.created_at,
-        "updated_at": feedback.updated_at,
-        "user": {
-            "id": feedback.user.id,
-            "email": feedback.user.email,
-            "first_name": feedback.user.first_name,
-            "last_name": feedback.user.last_name
-        } if hasattr(feedback, "user") and feedback.user else None,
-        "like_count": len(feedback.liked_by),
-        "is_liked_by_user": current_user in feedback.liked_by,
-        "is_creator": True  # Must be creator to update
-    }
-    
-    # Return response directly from dictionary
-    return FeedbackResponse(**response_data)
 
-@router.delete("/feedback/{feedback_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_feedback(
-    feedback_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
-):
-    """
-    Delete a specific feedback entry
-    Only the creator can delete their feedback
-    """
-    # Get the feedback
-    feedback = db.query(Feedback).filter(Feedback.id == feedback_id).first()
-    if not feedback:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Feedback not found"
-        )
-    
-    # Check if user is the creator
-    if feedback.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
-            detail="You can only delete your own feedback"
-        )
-    
-    # Delete the feedback
-    db.delete(feedback)
-    db.commit()
-    
-    # Return no content for successful deletion
-    return None
-
-@router.get("/feedback", response_model=List[FeedbackResponse])
+@router.get("/feedback", 
+            description="Get all feedback visible to regular users", 
+            response_model=List[FeedbackResponse],
+            responses={401: {"description": "Not Aunthenticated"}})
 async def get_all_feedback(
     status: Optional[FeedbackStatusEnum] = None,
     db: Session = Depends(get_db),
@@ -192,7 +113,11 @@ async def get_all_feedback(
     
     return response_data
 
-@router.get("/feedback/mine", response_model=List[FeedbackResponse])
+
+@router.get("/feedback/mine", 
+            description="Get all feedback submitted by the currently logged in user", 
+            response_model=List[FeedbackResponse],
+            responses={401: {"description": "Not Aunthenticated"}})
 async def get_my_feedback(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -229,94 +154,11 @@ async def get_my_feedback(
     
     return response_data
 
-@router.get("/feedback/{feedback_id}", response_model=FeedbackResponse)
-async def get_feedback(
-    feedback_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
-):
-    """
-    Get a specific feedback entry by ID
-    """
-    feedback = db.query(Feedback).filter(Feedback.id == feedback_id).first()
-    if not feedback:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Feedback not found"
-        )
-    
-    # Create response dictionary manually
-    response_data = {
-        "id": feedback.id,
-        "description": feedback.description,
-        "status": feedback.status,
-        "user_id": feedback.user_id,
-        "created_at": feedback.created_at,
-        "updated_at": feedback.updated_at,
-        "user": {
-            "id": feedback.user.id,
-            "email": feedback.user.email,
-            "first_name": feedback.user.first_name,
-            "last_name": feedback.user.last_name
-        } if hasattr(feedback, "user") and feedback.user else None,
-        "like_count": len(feedback.liked_by),
-        "is_liked_by_user": current_user in feedback.liked_by,
-        "is_creator": feedback.user_id == current_user.id
-    }
-    
-    # Return response directly from dictionary
-    return FeedbackResponse(**response_data)
 
-@router.post("/feedback/{feedback_id}/like", response_model=FeedbackResponse)
-async def like_feedback(
-    feedback_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
-):
-    """
-    Like or unlike a feedback item
-    """
-    feedback = db.query(Feedback).filter(Feedback.id == feedback_id).first()
-    if not feedback:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Feedback not found"
-        )
-    
-    # Toggle like status
-    if current_user in feedback.liked_by:
-        feedback.liked_by.remove(current_user)
-        liked_by_current_user = False
-    else:
-        feedback.liked_by.append(current_user)
-        liked_by_current_user = True
-    
-    db.commit()
-    db.refresh(feedback)
-    
-    # Create response dictionary manually
-    response_data = {
-        "id": feedback.id,
-        "description": feedback.description,
-        "status": feedback.status,
-        "user_id": feedback.user_id,
-        "created_at": feedback.created_at,
-        "updated_at": feedback.updated_at,
-        "user": {
-            "id": feedback.user.id,
-            "email": feedback.user.email,
-            "first_name": feedback.user.first_name,
-            "last_name": feedback.user.last_name
-        } if hasattr(feedback, "user") and feedback.user else None,
-        "like_count": len(feedback.liked_by),
-        "is_liked_by_user": liked_by_current_user,
-        "is_creator": feedback.user_id == current_user.id
-    }
-    
-    # Return response directly from dictionary
-    return FeedbackResponse(**response_data)
-
-
-
-@router.post("/help", response_model=HelpResponse)
+@router.post("/help", 
+             description="Create new help request", 
+             response_model=HelpResponse,
+             responses={401: {"description": "Not Aunthenticated"}})
 async def create_help(
     help_data: HelpCreate,
     db: Session = Depends(get_db),
@@ -357,91 +199,12 @@ async def create_help(
     # Return response
     return HelpResponse(**response_data)
 
-@router.put("/help/{help_id}", response_model=HelpResponse)
-async def update_help(
-    help_id: int,
-    help_data: HelpUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
-):
-    """
-    Update a help request
-    Only the creator can update their help request
-    """
-    # Get the help
-    help_item = db.query(Help).filter(Help.id == help_id).first()
-    if not help_item:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Help request not found"
-        )
-    
-    # Check if user is the creator
-    if help_item.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
-            detail="You can only update your own help requests"
-        )
-    
-    # Update the fields
-    if help_data.description is not None:
-        help_item.description = help_data.description
-    
-    # Save changes
-    db.commit()
-    db.refresh(help_item)
-    
-    # Create response dictionary
-    response_data = {
-        "id": help_item.id,
-        "description": help_item.description,
-        "status": help_item.status,
-        "user_id": help_item.user_id,
-        "created_at": help_item.created_at,
-        "updated_at": help_item.updated_at,
-        "user": {
-            "id": help_item.user.id,
-            "email": help_item.user.email,
-            "first_name": help_item.user.first_name,
-            "last_name": help_item.user.last_name
-        } if hasattr(help_item, "user") and help_item.user else None,
-        "is_creator": True
-    }
-    
-    # Return response
-    return HelpResponse(**response_data)
 
-@router.delete("/help/{help_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_help(
-    help_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
-):
-    """
-    Delete a help request
-    Only the creator can delete their help request
-    """
-    # Get the help
-    help_item = db.query(Help).filter(Help.id == help_id).first()
-    if not help_item:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Help request not found"
-        )
-    
-    # Check if user is the creator
-    if help_item.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
-            detail="You can only delete your own help requests"
-        )
-    
-    # Delete the help
-    db.delete(help_item)
-    db.commit()
-    
-    # Return no content for successful deletion
-    return None
 
-@router.get("/help", response_model=List[HelpResponse])
+@router.get("/help", 
+            description="Get all help requests for the current user", 
+            response_model=List[HelpResponse],
+            responses={401: {"description": "Not Aunthenticated"}})
 async def get_my_help(
     status: Optional[HelpStatusEnum] = None,
     db: Session = Depends(get_db),
@@ -486,49 +249,12 @@ async def get_my_help(
     
     return response_data
 
-@router.get("/help/{help_id}", response_model=HelpResponse)
-async def get_help(
-    help_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
-):
-    """
-    Get a specific help request by ID
-    Users can only view their own help requests
-    """
-    # Get the help with current user check
-    help_item = db.query(Help).filter(
-        Help.id == help_id, 
-        Help.user_id == current_user.id
-    ).first()
-    
-    if not help_item:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, 
-            detail="Help request not found or not authorized to view"
-        )
-    
-    # Create response dictionary
-    response_data = {
-        "id": help_item.id,
-        "description": help_item.description,
-        "status": help_item.status,
-        "user_id": help_item.user_id,
-        "created_at": help_item.created_at,
-        "updated_at": help_item.updated_at,
-        "user": {
-            "id": help_item.user.id,
-            "email": help_item.user.email,
-            "first_name": help_item.user.first_name,
-            "last_name": help_item.user.last_name
-        } if hasattr(help_item, "user") and help_item.user else None,
-        "is_creator": True
-    }
-    
-    # Return response
-    return HelpResponse(**response_data)
 
-@router.get("/notifications", response_model=List[NotificationResponse])
+
+@router.get("/notifications", 
+            description="Get notifications for the current user", 
+            response_model=List[NotificationResponse],
+            responses={401: {"description": "Not Aunthenticated"}})
 async def get_notifications(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -635,3 +361,338 @@ async def get_notifications(
         notifications.append(NotificationResponse(**notification))
     
     return notifications
+
+
+@router.put("/feedback/{feedback_id}", 
+            description="Update a specific feedback entry", 
+            response_model=FeedbackResponse,
+            responses={404: {"description": "Feedback not found"},
+                       401: {"description": "Not Authenticated"}},)
+async def update_feedback(
+    feedback_id: int,
+    feedback_data: FeedbackUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Update a specific feedback entry
+    Only the creator can update their feedback
+    """
+    # Get the feedback
+    feedback = db.query(Feedback).filter(Feedback.id == feedback_id).first()
+    if not feedback:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Feedback not found"
+        )
+    
+    # Check if user is the creator
+    if feedback.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="You can only update your own feedback"
+        )
+    
+    # Update the fields
+    if feedback_data.description is not None:
+        feedback.description = feedback_data.description
+    
+    # Save changes
+    db.commit()
+    db.refresh(feedback)
+    
+    # Create response dictionary manually
+    response_data = {
+        "id": feedback.id,
+        "description": feedback.description,
+        "status": feedback.status,
+        "user_id": feedback.user_id,
+        "created_at": feedback.created_at,
+        "updated_at": feedback.updated_at,
+        "user": {
+            "id": feedback.user.id,
+            "email": feedback.user.email,
+            "first_name": feedback.user.first_name,
+            "last_name": feedback.user.last_name
+        } if hasattr(feedback, "user") and feedback.user else None,
+        "like_count": len(feedback.liked_by),
+        "is_liked_by_user": current_user in feedback.liked_by,
+        "is_creator": True  # Must be creator to update
+    }
+    
+    # Return response directly from dictionary
+    return FeedbackResponse(**response_data)
+
+
+@router.delete("/feedback/{feedback_id}", 
+               description="Delete a specific feedback entry", 
+               status_code=status.HTTP_204_NO_CONTENT,
+               responses={404: {"description": "Feedback not found"},
+                          403: {"description": "Forbidden"},
+                          401: {"description": "Not Authenticated"}},
+               )
+async def delete_feedback(
+    feedback_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Delete a specific feedback entry
+    Only the creator can delete their feedback
+    """
+    # Get the feedback
+    feedback = db.query(Feedback).filter(Feedback.id == feedback_id).first()
+    if not feedback:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Feedback not found"
+        )
+    
+    # Check if user is the creator
+    if feedback.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="You can only delete your own feedback"
+        )
+    
+    # Delete the feedback
+    db.delete(feedback)
+    db.commit()
+    
+    # Return no content for successful deletion
+    return None
+
+@router.get("/feedback/{feedback_id}", 
+            description="Get a specific feedback entry by ID", 
+            response_model=FeedbackResponse,
+            responses={404: {"description": "Feedback not found"},
+                       401: {"description": "Not Authenticated"}},)
+async def get_feedback(
+    feedback_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Get a specific feedback entry by ID
+    """
+    feedback = db.query(Feedback).filter(Feedback.id == feedback_id).first()
+    if not feedback:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Feedback not found"
+        )
+    
+    # Create response dictionary manually
+    response_data = {
+        "id": feedback.id,
+        "description": feedback.description,
+        "status": feedback.status,
+        "user_id": feedback.user_id,
+        "created_at": feedback.created_at,
+        "updated_at": feedback.updated_at,
+        "user": {
+            "id": feedback.user.id,
+            "email": feedback.user.email,
+            "first_name": feedback.user.first_name,
+            "last_name": feedback.user.last_name
+        } if hasattr(feedback, "user") and feedback.user else None,
+        "like_count": len(feedback.liked_by),
+        "is_liked_by_user": current_user in feedback.liked_by,
+        "is_creator": feedback.user_id == current_user.id
+    }
+    
+    # Return response directly from dictionary
+    return FeedbackResponse(**response_data)
+
+
+@router.post("/feedback/{feedback_id}/like", 
+             description="Like feedback or unlike if already liked", 
+             response_model=FeedbackResponse,
+             responses={404: {"description": "Feedback not found"},
+                        401: {"description": "Not Authenticated"}},)
+async def like_feedback(
+    feedback_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Like or unlike a feedback item
+    """
+    feedback = db.query(Feedback).filter(Feedback.id == feedback_id).first()
+    if not feedback:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Feedback not found"
+        )
+    
+    # Toggle like status
+    if current_user in feedback.liked_by:
+        feedback.liked_by.remove(current_user)
+        liked_by_current_user = False
+    else:
+        feedback.liked_by.append(current_user)
+        liked_by_current_user = True
+    
+    db.commit()
+    db.refresh(feedback)
+    
+    # Create response dictionary manually
+    response_data = {
+        "id": feedback.id,
+        "description": feedback.description,
+        "status": feedback.status,
+        "user_id": feedback.user_id,
+        "created_at": feedback.created_at,
+        "updated_at": feedback.updated_at,
+        "user": {
+            "id": feedback.user.id,
+            "email": feedback.user.email,
+            "first_name": feedback.user.first_name,
+            "last_name": feedback.user.last_name
+        } if hasattr(feedback, "user") and feedback.user else None,
+        "like_count": len(feedback.liked_by),
+        "is_liked_by_user": liked_by_current_user,
+        "is_creator": feedback.user_id == current_user.id
+    }
+    
+    # Return response directly from dictionary
+    return FeedbackResponse(**response_data)
+
+@router.put("/help/{help_id}", 
+            description="Update a specific help request", 
+            response_model=HelpResponse,
+            responses={404: {"description": "Help not found"},
+                       401: {"description": "Not Authenticated"}},)
+async def update_help(
+    help_id: int,
+    help_data: HelpUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Update a help request
+    Only the creator can update their help request
+    """
+    # Get the help
+    help_item = db.query(Help).filter(Help.id == help_id).first()
+    if not help_item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Help request not found"
+        )
+    
+    # Check if user is the creator
+    if help_item.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="You can only update your own help requests"
+        )
+    
+    # Update the fields
+    if help_data.description is not None:
+        help_item.description = help_data.description
+    
+    # Save changes
+    db.commit()
+    db.refresh(help_item)
+    
+    # Create response dictionary
+    response_data = {
+        "id": help_item.id,
+        "description": help_item.description,
+        "status": help_item.status,
+        "user_id": help_item.user_id,
+        "created_at": help_item.created_at,
+        "updated_at": help_item.updated_at,
+        "user": {
+            "id": help_item.user.id,
+            "email": help_item.user.email,
+            "first_name": help_item.user.first_name,
+            "last_name": help_item.user.last_name
+        } if hasattr(help_item, "user") and help_item.user else None,
+        "is_creator": True
+    }
+    
+    # Return response
+    return HelpResponse(**response_data)
+
+
+@router.delete("/help/{help_id}", 
+               description="Delete a help request", 
+               status_code=status.HTTP_204_NO_CONTENT,
+               responses={404: {"description": "Help not found"},
+                          403: {"description": "Forbidden"},
+                          401: {"description": "Not Authenticated"}},)
+async def delete_help(
+    help_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Delete a help request
+    Only the creator can delete their help request
+    """
+    # Get the help
+    help_item = db.query(Help).filter(Help.id == help_id).first()
+    if not help_item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Help request not found"
+        )
+    
+    # Check if user is the creator
+    if help_item.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="You can only delete your own help requests"
+        )
+    
+    # Delete the help
+    db.delete(help_item)
+    db.commit()
+    
+    # Return no content for successful deletion
+    return None
+
+
+@router.get("/help/{help_id}", 
+            description="Get a specific help request by ID", 
+            response_model=HelpResponse,
+            responses={404: {"description": "Help not found"},
+                       403: {"description": "Forbidden"},
+                       401: {"description": "Not Authenticated"}},)
+async def get_help(
+    help_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Get a specific help request by ID
+    Users can only view their own help requests
+    """
+    # Get the help with current user check
+    help_item = db.query(Help).filter(
+        Help.id == help_id, 
+        Help.user_id == current_user.id
+    ).first()
+    
+    if not help_item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Help request not found or not authorized to view"
+        )
+    
+    # Create response dictionary
+    response_data = {
+        "id": help_item.id,
+        "description": help_item.description,
+        "status": help_item.status,
+        "user_id": help_item.user_id,
+        "created_at": help_item.created_at,
+        "updated_at": help_item.updated_at,
+        "user": {
+            "id": help_item.user.id,
+            "email": help_item.user.email,
+            "first_name": help_item.user.first_name,
+            "last_name": help_item.user.last_name
+        } if hasattr(help_item, "user") and help_item.user else None,
+        "is_creator": True
+    }
+    
+    # Return response
+    return HelpResponse(**response_data)
+

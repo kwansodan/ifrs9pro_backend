@@ -1,0 +1,16 @@
+# Base rulesets to extend
+extends:
+  - "spectral:oas"       # OpenAPI 2 & 3 rules (most common for REST APIs)
+  - "spectral:asyncapi"  # AsyncAPI rules (for event-driven APIs)
+
+
+# Custom rules
+rules:
+  # Ensure info.description exists and is non-empty
+  no-info-description:
+    description: "API info.description should be defined and non-empty"
+    given: "$.info"       # Select the "info" object in your OpenAPI spec
+    severity: warn        # Warning, not error (does not break linting)
+    then:
+      field: description  # Check the 'description' field of info
+      function: truthy    # Must exist and not be empty

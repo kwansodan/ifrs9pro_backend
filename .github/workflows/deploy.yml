@@ -1,4 +1,4 @@
-name: CI/CD Deploy (Basic)
+name: CI/CD Deploy (Docker Compose)
 
 on:
   push:
@@ -10,20 +10,172 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
 
+    env:
+      SECRET_KEY: "default-test-secret"
+
     steps:
-      # 1️⃣ Checkout repo
+      # 1️⃣ Checkout
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Needed for full git history
+          fetch-depth: 0
 
-      # 2️⃣ Start SSH agent
+      # 2️⃣ Python
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      # 3️⃣ Install dependencies
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest schemathesis
+
+      # 4️⃣ Create fake site directory for tests 
+      - name: Create fake site directory 
+        run: | 
+          mkdir -p site
+
+      # 4️⃣ Run pytest
+      - name: Run tests
+        run: |
+          echo "Running pytest..."
+          python -m pytest tests || { echo "❌ Pytest failed"; exit 1; }
+
+      # 5️⃣ Run Spectral
+      - name: Run Spectral
+        run: |
+          echo "Running Spectral..."
+          docker run --rm -v "$PWD:/work" -w /work \
+            stoplight/spectral:latest lint \
+            --ruleset /work/.spectral.yaml \
+            /work/openapi.yaml || { echo "❌ Spectral lint failed"; exit 1; }
+
+      # 6️⃣ Create CI-only .env file
+      - name: Create CI environment file
+        run: |
+          echo "ACCESS_TOKEN_EXPIRE_HOURS=1" >> .env
+          echo "ACCESS_TOKEN_EXPIRE_MINUTES=15" >> .env
+          echo "DEBUG=True" >> .env
+          echo "INVITATION_EXPIRE_HOURS=1" >> .env
+
+          echo "FRONTEND_BASE_URL=http://localhost:3000" >> .env
+          echo "BASE_URL=http://localhost:8000" >> .env
+
+          echo "SECRET_KEY=test-secret-key" >> .env
+
+          echo "ADMIN_EMAIL=admin@example.com" >> .env
+          echo "ADMIN_PASSWORD=admin123" >> .env
+          echo "SUPERADMIN_EMAIL=superadmin@example.com" >> .env
+          echo "SUPERADMIN_PASSWORD=superadmin123" >> .env
+
+          # CI Postgres
+          echo "SQLALCHEMY_DATABASE_URL=postgresql://testuser:testpass@db:5432/testdb" >> .env
+          echo "POSTGRES_PASSWORD=testpass" >> .env
+          echo "POSTGRES_USER=testuser" >> .env
+          echo "POSTGRES_DB=testdb" >> .env
+
+          # CI Minio
+          echo "MINIO_ENDPOINT=http://minio:9000" >> .env
+          echo "MINIO_PUBLIC_ENDPOINT=http://localhost:9000" >> .env
+          echo "MINIO_ACCESS_KEY=minio" >> .env
+          echo "MINIO_SECRET_KEY=miniostorage" >> .env
+          echo "MINIO_BUCKET_NAME=ci-bucket" >> .env
+          echo "MINIO_USE_SSL=False" >> .env
+
+          # Dummy external services
+          echo "AZURE_COMMUNICATION_CONNECTION_STRING=dummy" >> .env
+          echo "AZURE_SENDER_EMAIL=test@example.com" >> .env
+          echo "BREVO_API_KEY=dummy" >> .env
+          echo "SENDER_EMAIL=test@example.com" >> .env
+          echo "SMTP_HOST=localhost" >> .env
+          echo "SMTP_PORT=1025" >> .env
+          echo "SMTP_USERNAME=dummy" >> .env
+          echo "SMTP_PASSWORD=dummy" >> .env
+          echo "SMTP_USE_TLS=false" >> .env
+          echo "SMTP_FROM=test@example.com" >> .env
+
+          echo "MAILJET_API_KEY=dummy" >> .env
+          echo "MAILJET_API_SECRET=dummy" >> .env
+          echo "MAILJET_SENDER_EMAIL=test@example.com" >> .env
+          echo "MAILJET_SENDER_NAME=Test" >> .env
+          echo "MAILJET_SMTP_HOST=localhost" >> .env
+          echo "MAILJET_SMTP_PORT=1025" >> .env
+
+          echo "CONTAINER_NAME=ci-container" >> .env
+          echo "TENANT_DEFAULT=test-tenant" >> .env
+          echo "PAYSTACK_SECRET_KEY=dummy" >> .env
+
+          echo "TEST_DATABASE_URL=postgresql://testuser:testpass@db:5432/testdb" >> .env
+
+          echo "Created CI .env file:"
+          cat .env
+
+    # 6️⃣ Start Docker Compose stack
+      - name: Start API stack (db + minio + fastapi)
+        run: |
+          echo "Starting docker-compose.local.yml..."
+          docker compose -f docker-compose.local.yml up -d
+          echo "Waiting 25 seconds for services to be healthy..."
+          sleep 25
+
+      # 7️⃣ Verify FastAPI is reachable
+      - name: Check API health before testing
+        run: |
+          echo "Checking API at http://localhost:8000/health..."
+          curl -f http://localhost:8000/health || { echo "❌ API is not healthy"; exit 1; }
+
+      # 8️⃣ Schemathesis tests
+      - name: Run Schemathesis API tests
+        run: |
+          echo "Running Schemathesis API tests..."
+          PYTHONPATH=$(pwd) schemathesis run http://localhost:8000/openapi.json \
+            --experimental=openapi-3.1 \
+            --checks=not_a_server_error,content_type_conformance,status_code_conformance,response_schema_conformance
+
+      # 7️⃣ Export OpenAPI schema
+      - name: Export OpenAPI schema
+        run: |
+            echo "Saving OpenAPI schema as YAML..."
+            mkdir -p artifacts
+            curl -f http://localhost:8000/openapi.json -o artifacts/openapi.json
+            python - <<'PY'
+            import json, yaml
+            with open("artifacts/openapi.json") as f:
+              data = json.load(f)
+            with open("artifacts/openapi.yaml", "w") as f:
+                yaml.dump(data, f, sort_keys=False)
+            PY
+
+
+      - name: Upload OpenAPI schema
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-schema
+          path: artifacts/openapi.yaml
+
+      #Publish spec to Github Release
+      - name: Create release and upload OpenAPI
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: api-${{ github.sha }}
+          files: openapi.yaml
+
+
+      # 9️⃣ Stop Docker Compose
+      - name: Tear down API stack
+        if: always()
+        run: docker compose -f docker-compose.local.yml down
+
+      # 🔟 SSH agent
       - name: Start SSH agent
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DROPLET_SSH_KEY }}
 
-      # 3️⃣ Determine which script to run
+      # 1️⃣1️⃣ Determine deploy target
       - name: Set deployment variables
         id: vars
         run: |
@@ -34,13 +186,10 @@ jobs:
           elif [ "$BRANCH" = "main" ]; then
             echo "HOST=${{ secrets.PROD_DROPLET_HOST }}" >> $GITHUB_OUTPUT
             echo "SCRIPT=setup_prod.sh" >> $GITHUB_OUTPUT
-          else
-            echo "Branch $BRANCH not deployable. Exiting."
-            exit 0
           fi
 
-      # 4️⃣ Deploy via SSH
-      - name: Run deploy script on droplet
+      # 1️⃣2️⃣ Deploy via SSH
+      - name: Deploy to remote droplet
         env:
           DROPLET_USER: ${{ secrets.DROPLET_USER }}
           HOST: ${{ steps.vars.outputs.HOST }}
@@ -52,7 +201,6 @@ jobs:
             set -euo pipefail
             cd "$REMOTE_PATH" || { echo "Remote path not found: $REMOTE_PATH"; exit 1; }
             chmod +x "$SCRIPT" || true
-            echo "Running $SCRIPT..."
             ./"$SCRIPT"
             echo "✅ Deployment completed successfully."
           EOF

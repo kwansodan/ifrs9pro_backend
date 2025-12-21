@@ -1,4 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field
+from pydantic.types import StrictBool
 from typing import List, Dict, Any, Optional
 from datetime import datetime, date
 from enum import Enum
@@ -121,7 +122,7 @@ class EmailVerificationRequest(BaseModel):
 
 
 class PasswordSetup(BaseModel):
-    password: str = Field(..., min_length=8, example="string")
+    password: str = Field(..., min_length=8, example="MyS3cur3Pwd")
     confirm_password: str
 
 
@@ -227,7 +228,7 @@ class FeedbackStatusEnum(str, Enum):
     COMPLETED = "completed"
 
 class FeedbackBase(BaseModel):
-    description: str = Field(..., min_length=10)
+    description: str = Field(..., min_length=3)
 
 class FeedbackCreate(FeedbackBase):
     """
@@ -239,7 +240,7 @@ class FeedbackUpdate(BaseModel):
     """
     Schema for updating existing feedback
     """
-    description: Optional[str] = Field(None, min_length=10)
+    description: Optional[str] = Field(None, min_length=3)
 
 class FeedbackStatusUpdate(BaseModel):
     """
@@ -775,10 +776,10 @@ class PortfolioCreate(BaseModel):
     customer_type: CustomerType
     funding_source: FundingSource
     data_source: DataSource
-    repayment_source: bool = False
-    # credit_risk_reserve: Optional[str] = None
-    # loan_assets: Optional[str] = None
-    # ecl_impairment_account: Optional[str] = None
+    repayment_source: StrictBool = False
+    #credit_risk_reserve: Optional[str] = None
+    #loan_assets: Optional[str] = None
+    #ecl_impairment_account: Optional[str] = None
 
 
 class PortfolioUpdate(BaseModel):
