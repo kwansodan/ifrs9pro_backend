@@ -23,6 +23,22 @@ services:
     networks:
       - ifrs9pro_network
 
+  caddy:
+    image: caddy:latest
+    container_name: caddy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+    networks:
+      - ifrs9pro_network
+
   db:
     image: postgres:16-alpine
     container_name: ifrs9pro_postgres
@@ -73,6 +89,8 @@ services:
 volumes:
   postgres_data:
   minio_data:
+  caddy_data:
+  caddy_config:
 
 
 networks:
