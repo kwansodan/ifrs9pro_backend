@@ -17,9 +17,11 @@ from app.routes import (
     quality_issues, 
     websocket, 
     billing,
-    webhooks)
-from app.models import User, UserRole
-from app.auth.utils import get_password_hash
+    webhooks,
+    webhooks,
+    superadmin,
+)
+from app.models import User, UserRole, Tenant
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from datetime import datetime, timedelta
@@ -27,6 +29,7 @@ from app.auth.utils import (
     get_password_hash,
     verify_password,
     create_access_token,
+    require_super_admin
 )
 from app.config import settings
 import pickle
@@ -69,49 +72,64 @@ async def lifespan(app):
     # Create admin user
     db = SessionLocal()
     try:
-        logger.info("Creating admin user if needed...")
+        logger.info("Checking for System Tenant and Super Admin...")
+        
+        # A. Create System Tenant (Platform Owner)
+        # We use a reserved slug like 'system' or 'platform'
+        system_tenant = db.query(Tenant).filter(Tenant.slug == "system").first()
+        
+        if not system_tenant:
+            logger.info("Creating 'System' tenant...")
+            system_tenant = Tenant(
+                name="System Administrator",
+                slug="system",
+                is_active=True,
+                subscription_status="active" # System tenant is always active
+            )
+            db.add(system_tenant)
+            db.commit()
+            db.refresh(system_tenant)
+            logger.info(f"✅ System tenant created with ID: {system_tenant.id}")
+        
+        # B. Create Super Admin User
         admin_email = os.getenv("ADMIN_EMAIL")
         admin_password = os.getenv("ADMIN_PASSWORD")
 
         if not admin_email or not admin_password:
-            logger.warning("⚠️ Admin credentials not provided in environment variables")
-            logger.warning("   Set ADMIN_EMAIL and ADMIN_PASSWORD to create admin user")
+            logger.warning("⚠️ ADMIN_EMAIL or ADMIN_PASSWORD not set. Skipping Super Admin creation.")
         else:
-            # Check if admin exists
+            # Check if super admin exists
             existing_admin = db.query(User).filter(User.email == admin_email).first()
             
             if not existing_admin:
                 try:
-                    admin_user = User(
+                    super_admin = User(
                         email=admin_email,
                         hashed_password=get_password_hash(admin_password),
-                        role=UserRole.ADMIN,
+                        role=UserRole.SUPER_ADMIN, # <--- MUST BE SUPER_ADMIN
                         is_active=True,
+                        tenant_id=system_tenant.id # <--- LINK TO SYSTEM TENANT
                     )
-                    db.add(admin_user)
+                    db.add(super_admin)
                     db.commit()
-                    logger.info(f"✅ Admin user created: {admin_email}")
+                    logger.info(f"✅ Super Admin created: {admin_email}")
                 except Exception as e:
                     db.rollback()
-                    # Check if it's a unique violation (another process created it)
-                    if "UniqueViolation" in str(e) or "duplicate key" in str(e):
-                        logger.info(f"ℹ️ Admin user was created by another process: {admin_email}")
-                    else:
-                        logger.error(f"❌ Error creating admin user: {e}")
-                        raise
+                    logger.error(f"❌ Error creating super admin: {e}")
             else:
-                logger.info(f"ℹ️ Admin user already exists: {admin_email}")
+                # Optional: Ensure existing admin has the correct role and tenant
+                if existing_admin.role != UserRole.SUPER_ADMIN:
+                    logger.warning(f"⚠️ User {admin_email} exists but is not SUPER_ADMIN.")
+
     except Exception as e:
-        logger.error(f"❌ Error in admin user creation: {e}")
+        logger.error(f"❌ Critical error in startup seeding: {e}")
     finally:
         db.close()
     
     logger.info("=== Application Startup Complete ===")
     
-    # Yield control to the application
     yield
     
-    # Shutdown logic (if needed)
     logger.info("=== Application Shutting Down ===")
 
 
@@ -129,17 +147,20 @@ app = FastAPI(
 
 # Global OpenAPI tags
 app.openapi_tags = [
+    {"name": "superadmin", "description": "Endpoints for superadmin actions"},
     {"name": "admin", "description": "Endpoints for administrative actions"},
     {"name": "billing", "description": "Endpoints for billing actions"},
     {"name": "webhooks", "description": "Webhook endpoints"},
     {"name": "auth", "description": "Authentication and login endpoints"},
     {"name": "dashboard", "description": "Endpoints for dashboard data"},
     {"name": "portfolios", "description": "Portfolio management endpoints"},
-    {"name": "quality-issues", "description": "Endpoints for quality issues"},
+    {"name": "quality-issues", "description": "Endpoints for portfolio quality issues"},
     {"name": "reports", "description": "Reporting endpoints"},
-    {"name": "user actions", "description": "Endpoints for general user actions"},
+    {"name": "user", "description": "User-related operations including feedback, help, notifications"},
+    {"name": "token", "description": "Authentication and token operations"},
     {"name": "websocket", "description": "WebSocket endpoints"},
 ]
+
 
 # Save original method
 original_openapi = app.openapi
@@ -192,6 +213,7 @@ async def log_preflight_requests(request: Request, call_next):
 
 # Register routers
 # Auth and billing routers are the ONLY router that is always accessible without a subscription.
+app.include_router(superadmin.router,dependencies=[Depends(require_super_admin)])
 app.include_router(auth.router)
 app.include_router(billing.router)
 app.include_router(webhooks.router)

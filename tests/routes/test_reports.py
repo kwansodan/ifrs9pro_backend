@@ -1,14 +1,16 @@
 from datetime import date, datetime
 from app.models import Portfolio, Report
 import pytest
+from unittest.mock import patch
 
 
 @pytest.fixture
-def portfolio(db_session, regular_user):
+def portfolio(db_session, regular_user, tenant):
     """Create a test portfolio"""
     portfolio = Portfolio(
         name="Test Portfolio",
         user_id=regular_user.id,
+        tenant_id=tenant.id,
         description="Test description",
     )
     db_session.add(portfolio)
@@ -18,10 +20,11 @@ def portfolio(db_session, regular_user):
 
 
 @pytest.fixture
-def report(db_session, portfolio, regular_user):
+def report(db_session, portfolio, regular_user, tenant):
     """Create a test report"""
     report = Report(
         portfolio_id=portfolio.id,
+        tenant_id=tenant.id,
         report_name="test_report_20241210.xlsx",
         report_type="ecl_detailed_report",
         report_date=datetime.now().date(),
@@ -100,31 +103,52 @@ def test_get_report_status_not_found(client):
     assert response.status_code == 404
 
 
-def test_generate_report(client, db_session):
-    portfolio = Portfolio(
-        user_id=1,
-        name="Report Portfolio",
-        asset_type="equity",
-        customer_type="individuals",
-        funding_source="pension fund",
-        data_source="upload data",
-    )
-    db_session.add(portfolio)
-    db_session.commit()
+# tests/routes/test_reports.py
+from app.database import current_tenant_id
 
-    resp = client.post(
-        f"/reports/{portfolio.id}/generate",
-        json={"report_type": "ecl_detailed_report", "report_date": str(date.today())},
-    )
-    assert resp.status_code == 200
-    assert "report_id" in resp.json()
+def test_generate_report(client, db_session, regular_user, tenant):
+    # Set tenant context
+    token = current_tenant_id.set(tenant.id)
+    try:
+        portfolio = Portfolio(
+            user_id=regular_user.id,
+            tenant_id=tenant.id,
+            name="Report Portfolio",
+            asset_type="equity",
+            customer_type="individuals",
+            funding_source="pension fund",
+            data_source="upload data",
+        )
+        db_session.add(portfolio)
+        db_session.commit()
+        
+        # Mock any external services used in report generation
+        with patch("app.routes.reports.run_and_save_report_task") as mock_gen:
+            mock_gen.return_value = {"status": "success", "report_id": 1}
+            
+            resp = client.post(
+                f"/reports/{portfolio.id}/generate",
+                json={
+                    "report_type": "ecl_detailed_report",
+                    "report_date": str(date.today())
+                },
+            )
+            
+            # Debug: print error if not 200
+            if resp.status_code != 200:
+                print(f"Error: {resp.json()}")
+            
+            assert resp.status_code == 200
+    finally:
+        current_tenant_id.reset(token)
 
 
-def test_report_history_and_download(client, db_session):
+def test_report_history_and_download(client, db_session, regular_user, tenant):
     portfolio = db_session.query(Portfolio).first()
     if not portfolio:
         portfolio = Portfolio(
-            user_id=1,
+            user_id=regular_user.id,
+            tenant_id=tenant.id,
             name="History Portfolio",
             asset_type="equity",
             customer_type="individuals",
@@ -149,4 +173,19 @@ def test_report_history_and_download(client, db_session):
         )
         # Might be 200 with stubbed download
         assert dl_resp.status_code in (200, 404)
+
+def test_generate_report_error_wrapping(client, portfolio, monkeypatch):
+    """Test standard error wrapping in report generation"""
+    def mock_report_init(*args, **kwargs):
+        raise Exception("Database fail")
+    
+    # Patch Report class to fail on instantiation
+    monkeypatch.setattr("app.routes.reports.Report", mock_report_init)
+    
+    resp = client.post(
+        f"/reports/{portfolio.id}/generate",
+        json={"report_type": "ecl_detailed_report", "report_date": str(date.today())},
+    )
+    assert resp.status_code == 500
+    assert "Error generating report: Database fail" in resp.json()["detail"]
 

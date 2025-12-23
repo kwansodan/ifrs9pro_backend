@@ -14,9 +14,10 @@ from app.schemas import CustomerCreate, TransactionInitialize, SubscriptionDisab
 from app.utils.billing import paystack_request, verify_paystack_signature
 from app.auth.utils import is_admin, get_current_active_user
 from app.database import get_db
+from app.dependencies import get_tenant_db
 from app.models import (
     User,
-    UserSubscription,
+    TenantSubscription,
     SubscriptionPlan,
     SubscriptionUsage,
 )
@@ -67,13 +68,47 @@ async def list_plans(page: int = 1, per_page: int = 50):
                        },
 )
 async def create_customer(
-    customer: CustomerCreate,
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),  # IMPORTANT
 ):
-    """Create a new customer using authenticated user's email"""
-    customer_data = customer.model_dump(exclude_none=True)
-    customer_data["email"] = current_user.email  # Use authenticated user's email
+    if not current_user.tenant:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User is not associated with a tenant",
+        )
+
+    customer_data = {
+        "email": current_user.email,
+        "first_name": current_user.tenant.name,
+        "last_name": "Company",
+        "phone": current_user.phone_number,
+        "metadata": {
+            "tenant_id": current_user.tenant.id,
+            "industry": current_user.tenant.industry,
+            "country": current_user.tenant.country,
+            "admin_name": f"{current_user.first_name} {current_user.last_name}",
+        },
+    }
+
     result = await paystack_request("POST", "/customer", customer_data)
+
+    if not result.get("status") or not result.get("data"):
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to create Paystack customer",
+        )
+
+    customer_code = result["data"].get("customer_code")
+    if not customer_code:
+        raise HTTPException(
+            status_code=502,
+            detail="Paystack customer code missing",
+        )
+
+    current_user.tenant.paystack_customer_code = customer_code
+    db.commit()
+    db.refresh(current_user.tenant)
+
     return result
 
 
@@ -145,33 +180,56 @@ async def enable_subscription(subscription: SubscriptionEnable):
 @router.get("/subscriptions", 
             status_code=status.HTTP_200_OK,
             responses={404: {"description": "No active subscription found"},
-                    200: {"description": "Customer details"},
+                    200: {"description": "Subscription details"},
                     401: {"description": "Not authenticated"}},)
 async def get_subscription(
-    current_user=Depends(get_current_active_user),
-    db: Session = Depends(get_db)
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_tenant_db)
 ):
-    """Get current admin subscription details"""
-    if not current_user.current_subscription_id:
+    """Get current tenant's subscription details"""
+    if not current_user.tenant:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No active subscription found for current user"
+            detail="User is not associated with a tenant"
         )
     
-    subscription = db.query(UserSubscription).filter(
-        UserSubscription.id == current_user.current_subscription_id
-    ).first()
+    # Query for the latest active (or past_due/non-renewing) subscription for this tenant.
+    # The query is automatically filtered by tenant_id via get_tenant_db
+    subscription = (
+        db.query(TenantSubscription)
+        .filter(TenantSubscription.status.in_(["active", "past_due", "non-renewing"]))
+        .order_by(TenantSubscription.created_at.desc())
+        .first()
+    )
     
     if not subscription:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Subscription not found"
+            detail="No active subscription found for tenant"
         )
     
-    result = await paystack_request(
-        "GET", f"/subscription/{subscription.paystack_subscription_code}"
-    )
-    return result
+    try:
+        result = await paystack_request(
+            "GET", f"/subscription/{subscription.paystack_subscription_code}"
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Failed to fetch subscription details: {e}")
+        # Fallback to local data if Paystack call fails
+        return {
+            "status": True,
+            "message": "Local subscription retrieved",
+            "data": {
+                "subscription_code": subscription.paystack_subscription_code,
+                "status": subscription.status,
+                "amount": 0, # Cannot determine current amount without Paystack
+                "next_payment_date": subscription.next_billing_date.isoformat() if subscription.next_billing_date else None,
+                "plan": {
+                    "plan_code": subscription.plan.paystack_plan_code if subscription.plan else None,
+                    "name": subscription.plan.name if subscription.plan else "Unknown Plan"
+                }
+            }
+        }
 
 
 @router.get("/transactions/verify/{reference}", 

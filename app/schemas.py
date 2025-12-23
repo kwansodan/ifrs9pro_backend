@@ -1,4 +1,5 @@
-from pydantic import BaseModel, EmailStr, Field
+from typing import Annotated, Literal
+from pydantic import BaseModel, Field, EmailStr, SecretStr, field_validator, ValidationError
 from pydantic.types import StrictBool
 from typing import List, Dict, Any, Optional
 from datetime import datetime, date, timezone
@@ -14,6 +15,7 @@ class RequestStatus(str, Enum):
 
 
 class UserRole(str, Enum):
+    SUPER_ADMIN="super_admin"
     ADMIN = "admin"
     ANALYST = "analyst"
     REVIEWER = "reviewer"
@@ -58,6 +60,28 @@ class FeedbackStatusEnum(str, Enum):
     RETURNED = "returned"
     IN_DEVELOPMENT = "in development"
     COMPLETED = "completed"
+
+
+# ==================== TENANT REGISTRATION ====================
+class TenantRegistrationRequest(BaseModel):
+    # Company details
+    company_name: str = Field(min_length=2, max_length=100)
+    industry: str = Field(min_length=2, max_length=50)
+    country: str = Field(min_length=2, max_length=2)
+
+    preferred_accounting_standard: Literal[
+        "IFRS9",
+        "IFRS9_BOG",
+    ]
+
+    # Admin user
+    first_name: str = Field(min_length=1, max_length=50)
+    last_name: str = Field(min_length=1, max_length=50)
+    email: EmailStr
+    phone_number: str = Field(min_length=7, max_length=20)
+    job_role: str = Field(min_length=2, max_length=50)
+
+    password: str = Field(min_length=8, max_length=128)
 
 
 # ==================== AUTH MODELS ====================
@@ -980,3 +1004,36 @@ class SubscriptionDisable(BaseModel):
 class SubscriptionEnable(BaseModel):
     code: str = Field(..., description="Subscription code")
     token: str = Field(..., description="Email token")
+
+
+# ---MULTITENANCY SCHEMAS  ---
+class TenantCreate(BaseModel):
+    name: str
+    slug: str
+    admin_email: EmailStr
+    admin_first_name: str
+    admin_last_name: str
+    plan_name: str = "core"  # Default plan
+
+class TenantResponse(BaseModel):
+    id: int
+    name: str
+    slug: str
+    is_active: bool
+    created_at: datetime
+    user_count: int
+    portfolio_count: int
+
+    class Config:
+        from_attributes = True
+
+class TenantUpdate(BaseModel):
+    name: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class SystemStats(BaseModel):
+    total_tenants: int
+    total_users: int
+    total_portfolios: int
+    total_loans: int
+    total_value_locked: float

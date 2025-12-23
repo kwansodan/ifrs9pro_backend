@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 from app.database import get_db
+from app.dependencies import get_tenant_db
 from app.models import User
 from app.models import Feedback, FeedbackStatus
 from app.models import User, Help, HelpStatus
@@ -22,7 +23,7 @@ router = APIRouter(prefix="/user", tags=["user actions"])
              responses={401: {"description": "Not Aunthenticated"}})
 async def create_feedback(
     feedback_data: FeedbackCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -32,6 +33,7 @@ async def create_feedback(
     new_feedback = Feedback(
         description=feedback_data.description,
         user_id=current_user.id,
+        tenant_id=current_user.tenant_id,
         status=FeedbackStatus.SUBMITTED,
     )
     try:
@@ -73,7 +75,7 @@ async def create_feedback(
             responses={401: {"description": "Not Aunthenticated"}})
 async def get_all_feedback(
     status: Optional[FeedbackStatusEnum] = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -123,7 +125,7 @@ async def get_all_feedback(
             response_model=List[FeedbackResponse],
             responses={401: {"description": "Not Aunthenticated"}})
 async def get_my_feedback(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -165,7 +167,7 @@ async def get_my_feedback(
              responses={401: {"description": "Not Aunthenticated"}})
 async def create_help(
     help_data: HelpCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -175,6 +177,7 @@ async def create_help(
     new_help = Help(
         description=help_data.description,
         user_id=current_user.id,
+        tenant_id=current_user.tenant_id,
         status=HelpStatus.SUBMITTED,
     )
     
@@ -213,7 +216,7 @@ async def create_help(
     )
 async def get_my_help(
     status: Optional[HelpStatusEnum] = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -262,7 +265,7 @@ async def get_my_help(
             response_model=List[NotificationResponse],
             responses={401: {"description": "Not Aunthenticated"}})
 async def get_notifications(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -377,7 +380,7 @@ async def get_notifications(
 async def update_feedback(
     feedback_id: int,
     feedback_data: FeedbackUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -438,7 +441,7 @@ async def update_feedback(
                )
 async def delete_feedback(
     feedback_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -473,7 +476,7 @@ async def delete_feedback(
                        401: {"description": "Not Authenticated"}},)
 async def get_feedback(
     feedback_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -515,7 +518,7 @@ async def get_feedback(
                         401: {"description": "Not Authenticated"}},)
 async def like_feedback(
     feedback_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -568,7 +571,7 @@ async def like_feedback(
 async def update_help(
     help_id: int,
     help_data: HelpUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -626,7 +629,7 @@ async def update_help(
                           401: {"description": "Not Authenticated"}},)
 async def delete_help(
     help_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -663,7 +666,7 @@ async def delete_help(
                        401: {"description": "Not Authenticated"}},)
 async def get_help(
     help_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """

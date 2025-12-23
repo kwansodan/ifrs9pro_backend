@@ -18,6 +18,7 @@ from enum import Enum as PyEnum
 from app.database import Base
 from sqlalchemy.orm import relationship
 from datetime import datetime
+from app.database import TenantMixin
 
 
 
@@ -29,13 +30,14 @@ class RequestStatus(str, PyEnum):
 
 
 class UserRole(str, PyEnum):
+    SUPER_ADMIN = "super_admin"
     ADMIN = "admin"
     ANALYST = "analyst"
     REVIEWER = "reviewer"
     USER = "user"
 
 
-class User(Base):
+class User(TenantMixin, Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -43,39 +45,51 @@ class User(Base):
     last_name = Column(String, nullable=True)
     email = Column(String, unique=True, index=True)
     recovery_email = Column(String, nullable=True)
+    phone_number = Column(String, nullable=True)
+    job_role = Column(String, nullable=True)
     hashed_password = Column(String, nullable=True)
     role = Column(String, default=UserRole.USER)
     is_active = Column(Boolean, default=True)
     last_login = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-
-    # Billing / subscription fields
-    paystack_customer_code = Column(String, nullable=True, index=True)
-    current_subscription_id = Column(
-        Integer,
-        ForeignKey("user_subscriptions.id"),
-        nullable=True,
-    )
-    # none | active | expired | cancelled | past_due
-    subscription_status = Column(String, default="none", nullable=False)
+    # tenant_id is provided by TenantMixin
+    tenant = relationship("Tenant", back_populates="users")
 
     portfolios = relationship("Portfolio", back_populates="user")
     quality_comments = relationship("QualityIssueComment", back_populates="user")
     feedback = relationship("Feedback", back_populates="user")
     help = relationship("Help", back_populates="user")
 
-    # A user can have multiple subscriptions over time
+
+class Tenant(Base):
+    __tablename__ = "tenants"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, unique=True)
+    slug = Column(String, nullable=False, unique=True, index=True)
+    industry = Column(String, nullable=True)
+    country = Column(String, nullable=True)
+    accounting_standard = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Billing (customer-level, not subscription-level)
+    paystack_customer_code = Column(String, nullable=True, index=True)
+
+    # Optional denormalized state (not FK)
+    subscription_status = Column(String, default="none", nullable=False)
+
+    # Relationships
     subscriptions = relationship(
-        "UserSubscription",
-        back_populates="user",
-        foreign_keys="UserSubscription.user_id",
+        "TenantSubscription",
+        back_populates="tenant",
+        cascade="all, delete-orphan",
     )
-    current_subscription = relationship(
-        "UserSubscription",
-        foreign_keys=[current_subscription_id],
-        uselist=False,
-        post_update=True,
+
+    users = relationship(
+        "User",
+        back_populates="tenant",
     )
 
 
@@ -99,18 +113,21 @@ class SubscriptionPlan(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    subscriptions = relationship("UserSubscription", back_populates="plan")
+    subscriptions = relationship("TenantSubscription", back_populates="plan")
 
 
-class UserSubscription(Base):
+class TenantSubscription(Base):
     """
-    Tracks all subscription lifecycles for a user.
+    Tracks all subscription lifecycles for a Tenant (Organization).
     """
 
-    __tablename__ = "user_subscriptions"
+    # 1. Rename table
+    __tablename__ = "tenant_subscriptions"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    
+    # 2. Fix Foreign Key (Point to tenants.id)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
     plan_id = Column(Integer, ForeignKey("subscription_plans.id"), nullable=False)
 
     paystack_subscription_code = Column(String, nullable=False, unique=True, index=True)
@@ -128,14 +145,17 @@ class UserSubscription(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    user = relationship(
-        "User",
-        back_populates="subscriptions",
-        foreign_keys=[user_id],
+    # 3. Fix Relationship (Point to Tenant)
+    tenant = relationship(
+        "Tenant",
+        back_populates="subscriptions",  # Ensure 'subscriptions' exists in Tenant model
+        foreign_keys=[tenant_id],
     )
+    
+    # Ensure SubscriptionPlan.subscriptions is updated to point here
     plan = relationship("SubscriptionPlan", back_populates="subscriptions")
+    
     usage = relationship("SubscriptionUsage", back_populates="subscription", uselist=False)
-
 
 class SubscriptionUsage(Base):
     """
@@ -148,7 +168,7 @@ class SubscriptionUsage(Base):
     id = Column(Integer, primary_key=True, index=True)
     subscription_id = Column(
         Integer,
-        ForeignKey("user_subscriptions.id"),
+        ForeignKey("tenant_subscriptions.id"),
         nullable=False,
         unique=True,
         index=True,
@@ -159,13 +179,14 @@ class SubscriptionUsage(Base):
     last_calculated_at = Column(DateTime(timezone=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    subscription = relationship("UserSubscription", back_populates="usage")
+    subscription = relationship("TenantSubscription", back_populates="usage")
 
 
 class AccessRequest(Base):
     __tablename__ = "access_requests"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
     email = Column(String, index=True)
     admin_email = Column(String, nullable=True)
     status = Column(String, default=RequestStatus.PENDING)
@@ -200,13 +221,13 @@ class DataSource(str, PyEnum):
     UPLOAD_DATA = "upload data"
 
 
-class Portfolio(Base):
+class Portfolio(TenantMixin, Base):
     __tablename__ = "portfolios"
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     # Link portfolio to the subscription that owns it
-    subscription_id = Column(Integer, ForeignKey("user_subscriptions.id"), nullable=True)
+    subscription_id = Column(Integer, ForeignKey("tenant_subscriptions.id"), nullable=True)
     name = Column(String, nullable=True)
     description = Column(String, nullable=True)
     asset_type = Column(String, nullable=True)
@@ -223,7 +244,7 @@ class Portfolio(Base):
     loan_count = Column(Integer, nullable=False, default=0)
 
     user = relationship("User", back_populates="portfolios")
-    subscription = relationship("UserSubscription", backref="portfolios")
+    subscription = relationship("TenantSubscription", backref="portfolios")
     loans = relationship("Loan", back_populates="portfolio", passive_deletes=True)
     clients = relationship("Client", back_populates="portfolio", passive_deletes=True)
     guarantees = relationship("Guarantee", back_populates="portfolio", passive_deletes=True)
@@ -266,7 +287,7 @@ class Title(str, PyEnum):
     OTHER = "other"
 
 
-class Client(Base):
+class Client(TenantMixin,Base):
     __tablename__ = "clients"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -313,13 +334,13 @@ class DeductionStatus(str, PyEnum):
     DEFAULTED = "defaulted"
 
 
-class Loan(Base):
+class Loan(TenantMixin,Base):
     __tablename__ = "loans"
 
     id = Column(Integer, primary_key=True, index=True)
     portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="CASCADE"))
     # Subscription owning this loan data (derived from portfolio.subscription_id)
-    subscription_id = Column(Integer, ForeignKey("user_subscriptions.id"), nullable=True)
+    subscription_id = Column(Integer, ForeignKey("tenant_subscriptions.id"), nullable=True)
     loan_no = Column(String, index=True, nullable=True)
     employee_id = Column(String, nullable=True)
     employee_name = Column(String, nullable=True)
@@ -378,7 +399,7 @@ class Loan(Base):
     bog_provision = Column(Numeric(precision=38, scale=2), default=0)
     calculation_date = Column(DateTime(timezone=False), nullable=True)
 
-class Guarantee(Base):
+class Guarantee(TenantMixin,Base):
     __tablename__ = "guarantees"
     id = Column(Integer, primary_key=True, index=True)
     portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete='CASCADE'), nullable=True)
@@ -402,7 +423,7 @@ class SecurityType(str, PyEnum):
     NON_CASH = "non_cash"
 
 
-class Security(Base):
+class Security(TenantMixin, Base):
     __tablename__ = "securities"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -459,7 +480,7 @@ class MacroEcos(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 
-class QualityIssue(Base):
+class QualityIssue(TenantMixin,Base):
     __tablename__ = "quality_issues"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -493,7 +514,7 @@ class QualityIssueComment(Base):
     user = relationship("User", back_populates="quality_comments")
 
 
-class Report(Base):
+class Report(TenantMixin,Base):
     __tablename__ = "reports"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -540,7 +561,7 @@ feedback_likes = Table(
 )
 
 
-class Feedback(Base):
+class Feedback(TenantMixin, Base):
     __tablename__ = "feedback"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -568,7 +589,7 @@ class HelpStatus(str, PyEnum):
 
 
 
-class Help(Base):
+class Help(TenantMixin, Base):
     __tablename__ = "help"
 
     id = Column(Integer, primary_key=True, index=True)

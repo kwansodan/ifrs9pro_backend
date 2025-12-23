@@ -11,7 +11,7 @@ from app.database import get_db
 from app.auth.utils import get_current_active_user
 from app.models import (
     User,
-    UserSubscription,
+    TenantSubscription,
     SubscriptionPlan,
     SubscriptionUsage,
     UserRole
@@ -71,56 +71,71 @@ def verify_paystack_signature(payload: bytes, signature: str) -> bool:
 
 
 async def require_active_subscription(
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
-) -> UserSubscription:
+) -> TenantSubscription | None:
     """
-    Global dependency to enforce that the admin user has an active subscription.
-    Grants access to all users if admin's subscription is active.
+    Enforces that the User's TENANT has an active subscription,
+    unless the user is a super admin.
     """
-    # 🔑 Subscription authority = ADMIN
-    admin_user = (
-        db.query(User)
-        .filter(User.role == UserRole.ADMIN)
-        .order_by(User.id.asc())
+
+    # 0. SUPER ADMIN BYPASS (must be first)
+    if current_user.role == UserRole.SUPER_ADMIN:
+        return None  # Explicit bypass, no subscription enforcement
+
+    # 1. Get the Tenant from the current user
+    tenant = current_user.tenant
+    if not tenant:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User is not associated with a valid tenant.",
+        )
+
+    # 2. Check if Tenant has a subscription linked
+    if not tenant.subscriptions:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="Organization has no active subscription.",
+        )
+
+    # 3. Fetch the subscription
+    # 3. Fetch the latest subscription for this tenant
+    subscription = (
+        db.query(TenantSubscription)
+        .filter(TenantSubscription.tenant_id == tenant.id)
+        .order_by(TenantSubscription.created_at.desc())
         .first()
     )
 
-    if not admin_user or not admin_user.current_subscription_id:
+    if not subscription or subscription.status in ("expired", "cancelled", "past_due"):
+        # Note: past_due might be allowed depending on business logic, but strict check blocks it.
+        # usually past_due means grace period. stricter enforcement here.
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail="Active admin subscription required.",
-        )
-
-    subscription = db.query(UserSubscription).filter(
-        UserSubscription.id == admin_user.current_subscription_id
-    ).first()
-
-    if not subscription or subscription.status == "expired":
-        raise HTTPException(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail="Admin subscription is not expired.",
+            detail="Organization subscription is expired, cancelled, or past due.",
         )
 
     from datetime import datetime, timezone
-    now_utc = datetime.now(timezone.utc)
 
+    now_utc = datetime.now(timezone.utc)
     period_end = subscription.current_period_end
 
     if period_end:
-        # Normalize DB value to UTC-aware
         if period_end.tzinfo is None:
             period_end = period_end.replace(tzinfo=timezone.utc)
 
         if period_end <= now_utc:
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail="Admin subscription has expired.",
+                detail="Organization subscription has expired.",
             )
 
-    # Ensure usage row exists for downstream checks
-    usage = db.query(SubscriptionUsage).filter(
-        SubscriptionUsage.subscription_id == subscription.id
-    ).first()
+    # 4. Ensure usage row exists
+    usage = (
+        db.query(SubscriptionUsage)
+        .filter(SubscriptionUsage.subscription_id == subscription.id)
+        .first()
+    )
 
     if not usage:
         usage = SubscriptionUsage(
@@ -133,5 +148,6 @@ async def require_active_subscription(
         db.commit()
 
     return subscription
+
 
 

@@ -8,8 +8,9 @@ from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timedelta, timezone
 from app.models import (
     SubscriptionPlan,
-    UserSubscription,
+    TenantSubscription,
     SubscriptionUsage,
+    Tenant
 )
 from app.routes import reports
 
@@ -20,6 +21,7 @@ TEST_DATABASE_URL = f"sqlite:///{TEST_DB_PATH}"
 os.environ.setdefault("SQLALCHEMY_DATABASE_URL", TEST_DATABASE_URL)
 
 from app.database import Base, get_db
+from app.dependencies import get_tenant_db
 from app.models import User, UserRole
 from app.auth.utils import get_password_hash
 from main import app
@@ -48,12 +50,29 @@ def db_session():
 
 
 @pytest.fixture
-def admin_user(db_session):
+def tenant(db_session):
+    tenant = Tenant(
+        name="Test Corp",
+        slug="test-corp",
+        industry="Tech",
+        country="Ghana",
+        is_active=True
+    )
+    db_session.add(tenant)
+    db_session.commit()
+    db_session.refresh(tenant)
+    return tenant
+
+@pytest.fixture
+def admin_user(db_session, tenant):
     user = User(
         email="admin@example.com",
         hashed_password=get_password_hash("adminpass"),
         role=UserRole.ADMIN,
         is_active=True,
+        tenant_id=tenant.id, 
+        first_name="Admin",
+        last_name="User"
     )
     db_session.add(user)
     db_session.commit()
@@ -62,13 +81,15 @@ def admin_user(db_session):
 
 
 @pytest.fixture
-def regular_user(db_session):
+def regular_user(db_session, tenant):
     user = User(
         email="user@example.com",
         hashed_password=get_password_hash("userpass"),
         role=UserRole.USER,
         is_active=True,
+        tenant_id=tenant.id,
         first_name="Test",
+        last_name="User"
     )
     db_session.add(user)
     db_session.commit()
@@ -77,14 +98,14 @@ def regular_user(db_session):
 
 
 @pytest.fixture
-def admin_with_active_subscription(db_session, admin_user):
+def admin_with_active_subscription(db_session, admin_user, tenant):
     # Seed plan (idempotent per test DB)
     plan = SubscriptionPlan(
         name="CORE",
         paystack_plan_code="TEST_PLAN_CORE",
         max_loan_data=1000,
         max_portfolios=5,
-        max_team_size=5,
+        max_team_size=2,
         price=12000,
         currency="GHS",
         is_active=True,
@@ -92,9 +113,9 @@ def admin_with_active_subscription(db_session, admin_user):
     db_session.add(plan)
     db_session.flush()
 
-    # Seed subscription
-    subscription = UserSubscription(
-        user_id=admin_user.id,
+    # Seed subscription linked to TENANT
+    subscription = TenantSubscription(
+        tenant_id=tenant.id,
         plan_id=plan.id,
         paystack_subscription_code="SUB_TEST_ACTIVE",
         paystack_customer_code="CUS_TEST",
@@ -115,9 +136,10 @@ def admin_with_active_subscription(db_session, admin_user):
         )
     )
 
-    # Link to admin
-    admin_user.current_subscription_id = subscription.id
-    admin_user.subscription_status = "active"
+    # Link to tenant (in case we need direct relationship access or validation)
+    tenant.subscription_id = subscription.id
+    tenant.subscription_status = "active"
+    tenant.paystack_customer_code = "CUS_TEST"
 
     db_session.commit()
     return admin_user
@@ -145,6 +167,7 @@ def client(db_session, admin_user, regular_user, admin_with_active_subscription,
         return admin_user
 
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_tenant_db] = override_get_db
     app.dependency_overrides[auth_utils.get_current_active_user] = override_current_user
     app.dependency_overrides[auth_utils.is_admin] = override_admin_user
     

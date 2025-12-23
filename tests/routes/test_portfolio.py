@@ -14,7 +14,7 @@ import pandas as pd
 from unittest.mock import patch
 from app.schemas import IngestPayload
 
-def test_create_portfolio(client):
+def test_create_portfolio(client, tenant):
     resp = client.post(
         "/portfolios/",
         json={
@@ -30,6 +30,37 @@ def test_create_portfolio(client):
     assert resp.status_code == 201
     assert resp.json()["name"] == "Test Portfolio"
 
+def test_user_cannot_exceed_portfolio_limit_returns_402(client, tenant):
+    payload = {
+        "name": "Portfolio",
+        "description": "demo",
+        "asset_type": "equity",
+        "customer_type": "individuals",
+        "funding_source": "pension fund",
+        "data_source": "upload data",
+        "repayment_source": True,
+    }
+
+    # Create the maximum allowed portfolios (CORE plan = 5)
+    for i in range(5):
+        resp = client.post(
+            "/portfolios/",
+            json={**payload, "name": f"Portfolio {i + 1}"},
+        )
+        assert resp.status_code == 201, resp.text
+
+    # Sixth portfolio must fail with 402 Payment Required
+    resp = client.post(
+        "/portfolios/",
+        json={**payload, "name": "Portfolio 6"},
+    )
+
+    assert resp.status_code == 402
+
+    body = resp.json()
+    assert "portfolio" in body["detail"].lower()
+    assert "limit" in body["detail"].lower()
+
 
 def test_list_portfolios(client):
     resp = client.get("/portfolios/")
@@ -37,9 +68,10 @@ def test_list_portfolios(client):
     assert "items" in resp.json()
 
 
-def test_update_and_delete_portfolio(client, db_session):
+def test_update_and_delete_portfolio(client, db_session, regular_user, tenant):
     portfolio = Portfolio(
-        user_id=1,
+        user_id=regular_user.id,
+        tenant_id=tenant.id,
         name="To Update",
         asset_type="equity",
         customer_type="individuals",
@@ -62,9 +94,10 @@ def test_update_and_delete_portfolio(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_accept_portfolio_data(client, db_session, regular_user):
+async def test_accept_portfolio_data(client, db_session, regular_user, tenant):
     portfolio = Portfolio(
         user_id=regular_user.id,
+        tenant_id=tenant.id,
         name="Test P",
         description="desc",
     )
@@ -127,12 +160,71 @@ async def test_accept_portfolio_data(client, db_session, regular_user):
 
         mock_upload.assert_called_once()
         
-
 @pytest.mark.asyncio
-async def test_ingest_portfolio_data(client, db_session, regular_user):
+async def test_accept_portfolio_data_exceeds_loan_limit_returns_402(
+    client,
+    db_session,
+    regular_user,
+    tenant,
+):
     # Create portfolio
     portfolio = Portfolio(
         user_id=regular_user.id,
+        tenant_id=tenant.id,
+        name="Test P",
+        description="desc",
+    )
+    db_session.add(portfolio)
+    db_session.commit()
+    db_session.refresh(portfolio)
+
+    # CORE plan max_loan_data = 1000
+    # Create Excel with MORE than allowed rows
+    rows = 1001
+    buffer = BytesIO()
+    df = pd.DataFrame({"loan_amount": range(rows)})
+    df.to_excel(buffer, index=False)
+    excel_bytes = buffer.getvalue()
+
+    files = {
+        "loan_details": (
+            "loan.xlsx",
+            excel_bytes,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
+        "client_data": (
+            "client.xlsx",
+            excel_bytes,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
+    }
+
+    with patch(
+        "app.routes.portfolio.upload_multiple_files_to_minio"
+    ) as mock_upload:
+
+        resp = client.post(
+            f"/portfolios/{portfolio.id}/ingest/save",
+            files=files,
+        )
+
+        # Must fail due to subscription limit
+        assert resp.status_code == 402
+
+        body = resp.json()
+        assert "loan" in body["detail"].lower()
+        assert "limit" in body["detail"].lower()
+
+        # Absolutely nothing should be uploaded
+        mock_upload.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ingest_portfolio_data(client, db_session, regular_user, tenant):
+    # Create portfolio
+    portfolio = Portfolio(
+        user_id=regular_user.id,
+        tenant_id=tenant.id,
         name="My Portfolio"
     )
     db_session.add(portfolio)
@@ -188,9 +280,10 @@ async def test_ingest_portfolio_data(client, db_session, regular_user):
 
 
 
-def test_calculation_endpoints_are_stubbed(client, db_session):
+def test_calculation_endpoints_are_stubbed(client, db_session, regular_user, tenant):
     portfolio = Portfolio(
-        user_id=1,
+        user_id=regular_user.id,
+        tenant_id=tenant.id,
         name="Calc",
         asset_type="equity",
         customer_type="individuals",
@@ -210,8 +303,8 @@ def test_calculation_endpoints_are_stubbed(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_stage_loans_ecl_success(client, db_session, regular_user):
-    portfolio = Portfolio(user_id=regular_user.id, name="Test P", description="desc")
+async def test_stage_loans_ecl_success(client, db_session, regular_user, tenant):
+    portfolio = Portfolio(user_id=regular_user.id, tenant_id=tenant.id, name="Test P", description="desc")
     db_session.add(portfolio)
     db_session.commit()
 
@@ -236,8 +329,8 @@ async def test_stage_loans_ecl_portfolio_not_found(client, db_session, regular_u
 
 
 @pytest.mark.asyncio
-async def test_stage_loans_local_success(client, db_session, regular_user):
-    portfolio = Portfolio(user_id=regular_user.id, name="Test P", description="desc")
+async def test_stage_loans_local_success(client, db_session, regular_user, tenant):
+    portfolio = Portfolio(user_id=regular_user.id, tenant_id=tenant.id, name="Test P", description="desc")
     db_session.add(portfolio)
     db_session.commit()
 

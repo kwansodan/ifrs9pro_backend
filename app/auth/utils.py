@@ -6,7 +6,7 @@ from fastapi import Depends, HTTPException, status, WebSocket, Query
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import User
+from app.models import User, Tenant
 from app.schemas import TokenData
 import os
 from dotenv import load_dotenv
@@ -139,7 +139,7 @@ def get_current_active_user(current_user: User = Depends(get_current_user)):
 
 
 def is_admin(current_user: User = Depends(get_current_active_user)):
-    if current_user.role != models.UserRole.ADMIN:
+    if current_user.role not in [models.UserRole.ADMIN, models.UserRole.SUPER_ADMIN]:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     return current_user
 
@@ -171,3 +171,26 @@ async def get_current_active_user_ws(
     except Exception as e:
         await websocket.close(code=1011, reason=f"Server error: {str(e)}")
         return None
+
+# --- DEPENDENCIES ---
+def require_super_admin(current_user: User = Depends(get_current_active_user)):
+    """
+    Gatekeeper: Only allow users with role 'super_admin' to access these endpoints.
+    """
+    if current_user.role != "super_admin":  # Ensure 'super_admin' is added to UserRole enum
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have super admin privileges."
+        )
+    return current_user
+
+
+def get_current_tenant(user: User = Depends(get_current_active_user)) -> Tenant:
+    if not user.tenant_id:
+        raise HTTPException(status_code=400, detail="User is not associated with a tenant.")
+    
+    # Optional: Check if tenant is active/paid
+    if not user.tenant.is_active:
+         raise HTTPException(status_code=403, detail="Tenant account is suspended.")
+         
+    return user.tenant

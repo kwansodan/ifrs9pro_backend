@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
 from fastapi.responses import JSONResponse, StreamingResponse
 from app.database import get_db
+from app.dependencies import get_tenant_db
 from app.models import (
     AccessRequest,
     User,
@@ -12,7 +13,7 @@ from app.models import (
     Help,
     RequestStatus,
     Portfolio,
-    UserSubscription,
+    TenantSubscription,
     SubscriptionUsage,
     SubscriptionPlan,
 )
@@ -63,7 +64,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
             operation_id="list_all_access_requests",  
             description="Get all access requests")
 async def get_access_requests(
-    db: Session = Depends(get_db), current_user: User = Depends(is_admin)
+    db: Session = Depends(get_tenant_db), current_user: User = Depends(is_admin)
 ):
     access_requests = (
         db.query(AccessRequest).filter(AccessRequest.is_email_verified == True).all()
@@ -79,7 +80,7 @@ async def get_access_requests(
             response_model=List[UserResponse],
             responses={401: {"description": "Not authenticated"}})
 async def get_users(
-    db: Session = Depends(get_db), current_user: User = Depends(is_admin)
+    db: Session = Depends(get_tenant_db), current_user: User = Depends(is_admin)
 ):
     try:
         users = db.query(User).all()
@@ -96,7 +97,7 @@ async def get_users(
             response_class=StreamingResponse,
             responses={401: {"description": "Not authenticated"}})
 async def export_users_csv(
-    db: Session = Depends(get_db), 
+    db: Session = Depends(get_tenant_db), 
     current_user: User = Depends(is_admin)
 ):
     """
@@ -161,12 +162,14 @@ async def export_users_csv(
                        401: {"description": "Not Authenticated"}},)
 async def create_user(
     user_create: UserCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(is_admin),
-    subscription: UserSubscription = Depends(require_active_subscription),
+    subscription: TenantSubscription = Depends(require_active_subscription),
 ):
     # Check if user with same email already exists
-    existing_user = db.query(User).filter(User.email == user_create.email).first()
+    existing_user = db.query(User).filter(
+        User.email == user_create.email,
+        User.tenant_id == current_user.tenant_id).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
 
@@ -198,15 +201,15 @@ async def create_user(
     if user_data.get("role"):
         user_data["role"] = user_data["role"].value
 
-    new_user = User(**user_data)
+    new_user = User(**user_data, tenant_id=current_user.tenant_id)
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
 
     # Associate new user with same current subscription (team membership) and
     # increment team usage atomically.
-    if current_user.current_subscription_id:
-        new_user.current_subscription_id = current_user.current_subscription_id
+    if subscription:
+        new_user.subscription_id = subscription.id
         new_user.subscription_status = "active"
         usage.current_team_count += 1
         db.add(new_user)
@@ -238,9 +241,10 @@ async def create_user(
 @router.get("/feedback",
             description="Get all feedback entries",
             response_model=List[FeedbackResponse],
-            responses={401: {"description": "Not authenticated"}})
+            responses={401: {"description": "Not authenticated"},
+                     400: {"description": "Failed to retrieve feedback entries"}})
 async def admin_get_all_feedback(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(is_admin),
 ):
     """
@@ -287,7 +291,7 @@ async def admin_get_all_feedback(
             response_model=List[HelpResponse],
             responses={401: {"description": "Not authenticated"}})
 async def admin_get_all_help(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(is_admin),
 ):
     """
@@ -333,7 +337,7 @@ async def admin_get_all_help(
             )
 async def admin_get_help(
     help_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(is_admin),
 ):
     """
@@ -376,7 +380,7 @@ async def admin_get_help(
 async def update_help_status(
     help_id: int,
     status_update: HelpStatusUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(is_admin),
 ):
     """
@@ -423,7 +427,7 @@ async def update_help_status(
 )
 async def admin_delete_help(
     help_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(is_admin),
 ):
     """
@@ -452,7 +456,7 @@ async def admin_delete_help(
             )
 async def delete_access_request(
     request_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -483,7 +487,7 @@ async def delete_access_request(
 async def update_access_request(
     request_id: int,
     request_update: AccessRequestUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(is_admin),
 ):
     access_request = (
@@ -522,7 +526,7 @@ async def update_access_request(
                        405: {"description": "Method not allowed"}},
             response_model=UserResponse)
 async def get_user(
-    user_id: int, db: Session = Depends(get_db), current_user: User = Depends(is_admin)
+    user_id: int, db: Session = Depends(get_tenant_db), current_user: User = Depends(is_admin)
 ):
     user = db.query(User).filter(User.id == user_id).first()
 
@@ -538,7 +542,7 @@ async def get_user(
             )
 async def admin_get_feedback(
     feedback_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(is_admin),
 ):
     """
@@ -580,7 +584,7 @@ async def admin_get_feedback(
 async def update_feedback_status(
     feedback_id: int,
     status_update: FeedbackStatusUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(is_admin),
 ):
     """
@@ -626,7 +630,7 @@ async def update_feedback_status(
                        401: {"description": "Not authenticated"}},)
 async def admin_delete_feedback(
     feedback_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(is_admin),
 ):
     """
@@ -654,7 +658,7 @@ async def admin_delete_feedback(
 async def update_user(
     user_id: int,
     user_update: UserUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(is_admin),
 ):
     user = db.query(User).filter(User.id == user_id).first()
@@ -687,7 +691,7 @@ async def update_user(
                        )
 async def delete_user(
     user_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(is_admin),
 ):
     user = db.query(User).filter(User.id == user_id).first()

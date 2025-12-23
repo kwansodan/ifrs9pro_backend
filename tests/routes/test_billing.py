@@ -12,7 +12,7 @@ from app.routes.billing import (
     get_subscription,
     verify_transaction,
 )
-from app.models import User, UserSubscription
+from app.models import User, TenantSubscription, Tenant
 
 
 @pytest.fixture
@@ -21,18 +21,31 @@ def mock_user():
     user = MagicMock(spec=User)
     user.id = 1
     user.email = "test@example.com"
-    user.current_subscription_id = 1
     user.is_admin = True
+    user.phone_number = "1234567890"
+    user.first_name = "Test"
+    user.last_name = "Admin"
+    
+    # Mock tenant
+    tenant = MagicMock(spec=Tenant)
+    tenant.id = 1
+    tenant.name = "Test Corp"
+    tenant.industry = "Tech"
+    tenant.country = "Ghana"
+    tenant.subscription_id = 1
+    
+    user.tenant = tenant
+    user.tenant_id = 1
     return user
 
 
 @pytest.fixture
 def mock_subscription():
     """Create a mock subscription"""
-    subscription = MagicMock(spec=UserSubscription)
+    subscription = MagicMock(spec=TenantSubscription)
     subscription.id = 1
     subscription.paystack_subscription_code = "SUB_test123"
-    subscription.user_id = 1
+    subscription.tenant_id = 1
     return subscription
 
 
@@ -115,7 +128,7 @@ class TestListPlans:
     async def test_list_plans_with_pagination(self):
         """Test listing plans with custom pagination"""
         with patch("app.routes.billing.paystack_request", new_callable=AsyncMock) as mock_request:
-            mock_request.return_value = {"data": []}
+            mock_request.return_value = {"data": [{"id": 1, "name": "Plan", "amount": 100, "currency": "GHS", "interval": "monthly", "plan_code": "PLN"}]}
 
             await list_plans(page=2, per_page=10)
 
@@ -125,21 +138,14 @@ class TestListPlans:
 class TestCreateCustomer:
     @pytest.mark.asyncio
     async def test_create_customer_success(self, mock_user):
-        """Test successful customer creation"""
-        from app.schemas import CustomerCreate
-
-        customer_data = CustomerCreate(
-            first_name="John",
-            last_name="Doe",
-            phone="1234567890"
-        )
-
+        """Test successful customer creation using tenant details"""
+        
         mock_response = {
             "status": True,
             "data": {
                 "email": "test@example.com",
-                "first_name": "John",
-                "last_name": "Doe",
+                "first_name": "Test Corp", # Should match tenant name
+                "last_name": "Company",
                 "customer_code": "CUS_test123"
             }
         }
@@ -147,7 +153,10 @@ class TestCreateCustomer:
         with patch("app.routes.billing.paystack_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = mock_response
 
-            result = await create_customer(customer_data, mock_user)
+            # We need to mock the db session for the update part
+            mock_db = MagicMock()
+            
+            result = await create_customer(current_user=mock_user, db=mock_db)
 
             assert result["status"] is True
             assert result["data"]["email"] == "test@example.com"
@@ -156,26 +165,27 @@ class TestCreateCustomer:
             call_args = mock_request.call_args
             sent_data = call_args[0][2]
             assert sent_data["email"] == "test@example.com"
-            assert sent_data["first_name"] == "John"
+            assert sent_data["first_name"] == "Test Corp"
+            
+            # Verify tenant was updated
+            assert mock_user.tenant.paystack_customer_code == "CUS_test123"
+            mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
-    async def test_create_customer_uses_authenticated_email(self, mock_user):
-        """Test that authenticated user's email is used, not provided email"""
-        from app.schemas import CustomerCreate
-
-        customer_data = CustomerCreate(
-            first_name="John",
-            last_name="Doe"
-        )
-
+    async def test_create_customer_uses_tenant_details(self, mock_user):
+        """Test that data is pulled from tenant/user correctly"""
+        
         with patch("app.routes.billing.paystack_request", new_callable=AsyncMock) as mock_request:
-            mock_request.return_value = {"status": True, "data": {}}
+            mock_request.return_value = {"status": True, "data": {"customer_code": "CUS_123"}}
+            mock_db = MagicMock()
 
-            await create_customer(customer_data, mock_user)
+            await create_customer(current_user=mock_user, db=mock_db)
 
             call_args = mock_request.call_args
             sent_data = call_args[0][2]
             assert sent_data["email"] == mock_user.email
+            assert sent_data["first_name"] == mock_user.tenant.name
+            assert sent_data["metadata"]["tenant_id"] == mock_user.tenant.id
 
 
 class TestGetMyCustomer:
@@ -270,7 +280,11 @@ class TestGetSubscription:
     @pytest.mark.asyncio
     async def test_get_subscription_success(self, mock_user, mock_subscription, mock_db):
         """Test successful retrieval of subscription details"""
-        mock_db.query.return_value.filter.return_value.first.return_value = mock_subscription
+        # Mock the chained call: db.query(...).filter(...).order_by(...).first()
+        mock_query = mock_db.query.return_value
+        mock_filter = mock_query.filter.return_value
+        mock_order_by = mock_filter.order_by.return_value
+        mock_order_by.first.return_value = mock_subscription
 
         mock_response = {
             "status": True,
@@ -291,27 +305,30 @@ class TestGetSubscription:
             mock_request.assert_called_once_with("GET", "/subscription/SUB_test123")
 
     @pytest.mark.asyncio
-    async def test_get_subscription_no_active_subscription(self, mock_db):
+    async def test_get_subscription_no_active_subscription(self, mock_user, mock_db):
         """Test error when user has no active subscription"""
-        user = MagicMock(spec=User)
-        user.current_subscription_id = None
-
+        # App logic checks if current_user.tenant exists first
+        mock_user.tenant = None
+        
         with pytest.raises(HTTPException) as exc_info:
-            await get_subscription(user, mock_db)
+            await get_subscription(mock_user, mock_db)
 
         assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
-        assert "No active subscription found" in exc_info.value.detail
+        assert "User is not associated with a tenant" in exc_info.value.detail
 
     @pytest.mark.asyncio
     async def test_get_subscription_not_found_in_db(self, mock_user, mock_db):
         """Test error when subscription is not found in database"""
-        mock_db.query.return_value.filter.return_value.first.return_value = None
+        mock_query = mock_db.query.return_value
+        mock_filter = mock_query.filter.return_value
+        mock_order_by = mock_filter.order_by.return_value
+        mock_order_by.first.return_value = None
 
         with pytest.raises(HTTPException) as exc_info:
             await get_subscription(mock_user, mock_db)
 
         assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
-        assert "Subscription not found" in exc_info.value.detail
+        assert "No active subscription found for tenant" in exc_info.value.detail
 
 
 class TestVerifyTransaction:
@@ -368,18 +385,16 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_paystack_api_error_propagation(self, mock_user):
         """Test that Paystack API errors are properly propagated"""
-        from app.schemas import CustomerCreate
-
-        customer_data = CustomerCreate(first_name="John", last_name="Doe")
-
+        
         with patch("app.routes.billing.paystack_request", new_callable=AsyncMock) as mock_request:
             mock_request.side_effect = HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid customer data"
             )
+            mock_db = MagicMock()
 
             with pytest.raises(HTTPException) as exc_info:
-                await create_customer(customer_data, mock_user)
+                await create_customer(current_user=mock_user, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
 

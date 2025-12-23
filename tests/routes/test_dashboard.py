@@ -1,5 +1,6 @@
+
 from app.models import Portfolio, Loan, Client, CalculationResult
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from app.models import Portfolio
 
 
@@ -10,7 +11,7 @@ def test_dashboard_endpoint(client):
     assert "portfolio_overview" in body
     assert "customer_overview" in body
 
-def test_dashboard_empty_state(client, db_session, regular_user):
+def test_dashboard_empty_state(client, db_session, regular_user, tenant):
     """
     When user has no portfolios, dashboard should return zeroed values.
     """
@@ -30,10 +31,11 @@ def test_dashboard_empty_state(client, db_session, regular_user):
     assert body["portfolios"] == []
 
 
-def test_dashboard_with_portfolio_no_data(client, db_session, regular_user):
+def test_dashboard_with_portfolio_no_data(client, db_session, regular_user, tenant):
     # Arrange: Create empty portfolio
     p = Portfolio(
         user_id=regular_user.id,
+        tenant_id=tenant.id,
         name="Test Portfolio",
         description="desc",
         asset_type="loan",
@@ -59,11 +61,12 @@ def test_dashboard_with_portfolio_no_data(client, db_session, regular_user):
     assert pf["local_impairment_amount"] == 0
 
 
-def test_dashboard_full_data(client, db_session, regular_user):
+def test_dashboard_full_data(client, db_session, regular_user, tenant):
 
     # Create portfolio
     p = Portfolio(
         user_id=regular_user.id,
+        tenant_id=tenant.id,
         name="Test Portfolio",
         description="desc",
         asset_type="loan",
@@ -75,6 +78,7 @@ def test_dashboard_full_data(client, db_session, regular_user):
     # Add a loan
     loan = Loan(
         portfolio_id=p.id,
+        tenant_id=tenant.id,
         outstanding_loan_balance=1000,
         loan_amount=2000,
     )
@@ -83,6 +87,7 @@ def test_dashboard_full_data(client, db_session, regular_user):
     # Add a customer
     client_item = Client(
         portfolio_id=p.id,
+        tenant_id=tenant.id,
         client_type="institution"
     )
     db_session.add(client_item)
@@ -96,7 +101,7 @@ def test_dashboard_full_data(client, db_session, regular_user):
         total_provision=300,
         provision_percentage=0.5,
         reporting_date=date.today(),
-        created_at=datetime.utcnow()
+        created_at=datetime.now(timezone.utc) # Use same tz aware/naive logic as in main code if needed
     )
     db_session.add(ecl)
 
@@ -109,7 +114,7 @@ def test_dashboard_full_data(client, db_session, regular_user):
         total_provision=500,
         provision_percentage=0.7,
         reporting_date=date.today(),
-        created_at=datetime.utcnow()
+        created_at=datetime.now(timezone.utc)
     )
     db_session.add(local)
 

@@ -27,7 +27,8 @@ import pandas as pd
 import time
 import io
 from app.database import get_db
-from app.models import Portfolio, User, UserSubscription, SubscriptionUsage, SubscriptionPlan
+from app.dependencies import get_tenant_db
+from app.models import Portfolio, User, TenantSubscription, SubscriptionUsage, SubscriptionPlan
 from app.config import settings
 from app.auth.utils import get_current_active_user
 from app.utils.billing import require_active_subscription
@@ -137,9 +138,9 @@ router = APIRouter(prefix="/portfolios", tags=["portfolios"])
             )
 async def create_portfolio(
     portfolio: PortfolioCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
-    subscription: UserSubscription = Depends(require_active_subscription),
+    subscription: TenantSubscription = Depends(require_active_subscription),
 ):
     """
     Create a new portfolio for the current user.
@@ -177,6 +178,7 @@ async def create_portfolio(
         # loan_assets=portfolio.loan_assets,
         # ecl_impairment_account=portfolio.ecl_impairment_account,
         user_id=current_user.id,
+        tenant_id=current_user.tenant_id,
         subscription_id=subscription.id,
     )
 
@@ -202,7 +204,7 @@ def get_portfolios(
     limit: int = 100,
     asset_type: Optional[str] = None,
     customer_type: Optional[str] = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -280,7 +282,7 @@ def get_portfolios(
             )
 async def get_portfolio(
     portfolio_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -556,7 +558,7 @@ async def get_portfolio(
 async def update_portfolio(
     portfolio_id: int,
     portfolio_update: PortfolioUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -633,7 +635,7 @@ async def update_portfolio(
             )
 def delete_portfolio(
     portfolio_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -677,9 +679,9 @@ async def accept_portfolio_data(
     client_data: Optional[UploadFile] = File(None),
     loan_guarantee_data: Optional[UploadFile] = File(None),
     loan_collateral_data: Optional[UploadFile] = File(None),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
-    subscription: UserSubscription = Depends(require_active_subscription),
+    subscription: TenantSubscription = Depends(require_active_subscription),
 ):
     """
     Upload Excel files to MinIO, auto-extract headers, and return:
@@ -811,7 +813,7 @@ async def accept_portfolio_data(
 async def ingest_portfolio_data(
     portfolio_id: int,
     payload: IngestPayload,  # Use Pydantic model here
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -847,10 +849,19 @@ async def ingest_portfolio_data(
     if dataframes["client_data"] is None or dataframes["client_data"].empty:
         raise HTTPException(status_code=400, detail="client_data is required and cannot be empty")
 
+    #Fetch tenant id from current user 
+    try:
+        tenant_id = current_user.tenant_id
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Fetching tenant id from current user failed {e}"
+        )
     # Pass to ingestion pipeline
     try:
         result = await start_background_ingestion(
             portfolio_id=portfolio_id,
+            tenant_id=tenant_id,
             loan_details=dataframes["loan_details"],
             client_data=dataframes["client_data"],
             loan_guarantee_data=dataframes["loan_guarantee_data"],
@@ -874,7 +885,7 @@ async def ingest_portfolio_data(
 async def calculate_ecl_provision(
     portfolio_id: int,
     reporting_date: Optional[date] = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     
@@ -919,7 +930,7 @@ async def calculate_ecl_provision(
             )
 async def stage_loans_ecl(
     portfolio_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
 
@@ -948,7 +959,7 @@ async def stage_loans_ecl(
             )
 async def stage_loans_local(
     portfolio_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
 
@@ -979,7 +990,7 @@ async def stage_loans_local(
 async def calculate_local_provision(
     portfolio_id: int,
     reporting_date: Optional[date] = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """

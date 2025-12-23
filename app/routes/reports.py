@@ -18,6 +18,7 @@ import asyncio
 from urllib.parse import urlparse
 
 from app.database import get_db
+from app.dependencies import get_tenant_db
 from app.models import Portfolio, User, Report
 from app.auth.utils import get_current_active_user
 from app.utils.report_generators import (
@@ -71,7 +72,7 @@ async def generate_report(
     portfolio_id: int,
     report_request: ReportRequest,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     filename = f"{report_request.report_type.value}_{uuid4().hex}.xlsx"
@@ -127,7 +128,7 @@ async def get_report_history(
     end_date: Optional[date] = None,
     skip: int = 0,
     limit: int = 20,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -176,7 +177,7 @@ async def get_report_history(
 async def get_report(
     portfolio_id: int,
     report_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -219,7 +220,7 @@ async def get_report(
 async def delete_report(
     portfolio_id: int,
     report_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -267,7 +268,7 @@ async def delete_report(
 async def download_report_excel(
     portfolio_id: int,
     report_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -317,7 +318,7 @@ async def download_report_excel(
             description="Check status of a report generation",
             responses={404: {"description": "Report not found"},
                        401: {"description": "Not Authenticated"}},)
-def get_report_status(report_id: int, db: Session = Depends(get_db)):
+def get_report_status(report_id: int, db: Session = Depends(get_tenant_db)):
     status_val = db.query(Report.status).filter(Report.id == report_id).scalar()
 
     if not status_val:

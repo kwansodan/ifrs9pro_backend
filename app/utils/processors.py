@@ -660,21 +660,35 @@ async def process_collateral_data(collateral_data, portfolio_id, db):
         target_columns = {
             "loan no.": "loan_no",
             "security type": "security_type",
-            "security description": "security_description",
-            "security value": "security_value",
-            "valuation date": "valuation_date",
-            "location": "location",
-            "registration details": "registration_details",
-            "ownership": "ownership",
+            "security description": "collateral_description",
+            "security value": "collateral_value",
+            # Fields not in model but in input, map them to something or ignore
+            # "valuation date": "valuation_date", 
+            # "location": "location",
+            # "registration details": "registration_details",
+            # "ownership": "ownership",
+            # Map input "security_type" to "cash_or_non_cash" purely for tracking existance if needed, 
+            # but model has cash_or_non_cash. Let's map it but maybe we need logic?
+            # For now, let's just map description and value which are main fields.
         }
         
         # Get existing securities from the database using raw SQL for performance
+        # Use collateral_description
         existing_securities_query = text("""
-            SELECT * FROM securities 
+            SELECT s.id, c.employee_id, s.collateral_description 
+            FROM securities s
+            JOIN clients c ON s.client_id = c.id
+            WHERE c.portfolio_id = :portfolio_id
         """)
-        result = db.execute(existing_securities_query)
-        existing_securities = {(loan_no, security_type, security_description): security_id for loan_no, security_type, security_description, security_id in result}
+        result = db.execute(existing_securities_query, {"portfolio_id": portfolio_id})
+        # Key: (employee_id, collateral_description) - removed security_type from unique check as it's not simply mapped
+        existing_securities = {(emp_id, col_desc): sec_id for sec_id, emp_id, col_desc in result}
         
+        # Get client mapping: employee_id -> client_id
+        clients_query = text("SELECT employee_id, id FROM clients WHERE portfolio_id = :portfolio_id")
+        clients_result = db.execute(clients_query, {"portfolio_id": portfolio_id})
+        client_map = {emp_id: c_id for emp_id, c_id in clients_result if emp_id}
+
         # Read Excel file with Polars
         df = pl.from_pandas(collateral_data)
         
@@ -690,36 +704,35 @@ async def process_collateral_data(collateral_data, portfolio_id, db):
             if old_col in df.columns:
                 df = df.rename({old_col: new_col})
         
-        # Process date columns
-        if "valuation_date" in df.columns:
-            df = df.with_columns(
-                pl.col("valuation_date").cast(pl.Utf8).str.to_datetime("%Y-%m-%d", strict=False)
-            )
-        
         # Clean numeric columns
-        if "security_value" in df.columns:
+        if "collateral_value" in df.columns:
             df = df.with_columns(
-                pl.col("security_value")
+                pl.col("collateral_value")
                 .cast(pl.Utf8)
                 .str.replace(r"^\s*-\s*$|^\s*$|None|NaN|nan|-", "")
                 .cast(pl.Float64, strict=False)
                 .fill_null(0.0)
             )
         
-        # Filter out rows with no loan_no, security_type, or security_description
-        if all(col in df.columns for col in ["loan_no", "security_type", "security_description"]):
+        # Filter out rows with no loan_no or collateral_description
+        if all(col in df.columns for col in ["loan_no", "collateral_description"]):
             df = df.filter(
                 pl.col("loan_no").is_not_null() & 
-                pl.col("security_type").is_not_null() &
-                pl.col("security_description").is_not_null()
+                pl.col("collateral_description").is_not_null()
             )
             
-            # Convert to pandas for easier processing with existing_securities
+            # Convert to pandas for easier processing
             pdf = df.to_pandas()
             
-            # Create a composite key for matching
+            pdf["loan_no"] = pdf["loan_no"].astype(str)
+            pdf["client_id"] = pdf["loan_no"].map(client_map)
+            
+            # Filter out records where client mapping failed
+            pdf = pdf[pdf["client_id"].notna()]
+            
+            # Create a composite key for matching - simplified to (loan_no, description)
             pdf["composite_key"] = pdf.apply(
-                lambda row: (row["loan_no"], row["security_type"], row["security_description"]), 
+                lambda row: (row["loan_no"], row["collateral_description"]), 
                 axis=1
             )
             
@@ -732,98 +745,79 @@ async def process_collateral_data(collateral_data, portfolio_id, db):
             if not df_update.empty:
                 df_update["id"] = df_update["composite_key"].map(existing_securities)
             
-            # ULTRA-OPTIMIZED: Use PostgreSQL COPY command for bulk inserts
-            # This is much faster than individual INSERT statements
-            
-            # Create a CSV-like string buffer
+            # PostgreSQL COPY command for bulk inserts
             csv_buffer = io.StringIO()
             
             # Write data to the buffer in CSV format
+            # Only writing columns that match the DB model
             for _, row in df_insert.iterrows():
                 values = []
-                for col in ["loan_no", "security_type", "security_description", "security_value", 
-                           "valuation_date", "location", "registration_details", "ownership"]:
-                    if col in row:
-                        if col == "valuation_date" and pd.notna(row[col]):
-                            values.append(str(row[col]))
-                        elif col == "security_value" and pd.notna(row[col]):
+                for col in ["client_id", "collateral_description", "collateral_value"]:
+                    if col == "client_id":
+                         values.append(str(int(row[col]))) 
+                    elif col in row:
+                        if col == "collateral_value" and pd.notna(row[col]):
                             values.append(str(row[col]))
                         elif pd.isna(row[col]):
-                            values.append("")  # NULL in COPY format
+                            values.append("") 
                         else:
                             val = str(row[col])
-                            # Escape special characters for COPY
                             val = val.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")
                             values.append(val)
                     else:
-                        values.append("")  # NULL in COPY format
+                        values.append("") 
                 csv_buffer.write("\t".join(values) + "\n")
-            values.append(str(portfolio_id)) 
-            # Reset buffer position to start
+            
             csv_buffer.seek(0)
             
-            # Get raw connection from SQLAlchemy session
             connection = db.connection().connection
-            
-            # Create a cursor
             cursor = connection.cursor()
             
-            # Execute COPY command
+            # Execute COPY command - removed security_type, valuation_date etc
             cursor.copy_from(
                 csv_buffer,
                 'securities',
-                columns=["loan_no", "security_type", "security_description", "security_value", 
-             "valuation_date", "location", "registration_details", "ownership", "portfolio_id"]
+                columns=["client_id", "collateral_description", "collateral_value"]
             )
             
-            # Prepare SQL templates
+            # Prepare SQL templates for UPDATE
             update_template = """
                 UPDATE securities SET
-                    security_value = data.security_value,
-                    valuation_date = data.valuation_date,
-                    location = data.location,
-                    registration_details = data.registration_details,
-                    ownership = data.ownership
+                    collateral_value = data.collateral_value
                 FROM (VALUES
             """
             
             if not df_update.empty:
-                # Prepare values for SQL UPDATE
                 values_list = []
                 for _, row in df_update.iterrows():
                     values = []
-                    for col in ["id", "security_value", "valuation_date", 
-                               "location", "registration_details", "ownership"]:
+                    for col in ["id", "collateral_value"]:
                         if col in row:
-                            if col == "valuation_date" and pd.notna(row[col]):
-                                values.append(f"'{row[col]}'")
-                            elif col == "security_value" and pd.notna(row[col]):
+                            if col == "collateral_value" and pd.notna(row[col]):
                                 values.append(str(row[col]))
                             elif pd.isna(row[col]):
                                 values.append("NULL")
                             else:
                                 val = str(row[col])
-                                val = val.replace("'", "''")  # SQL standard for escaping single quotes
+                                val = val.replace("'", "''") 
                                 values.append(f"'{val}'")
                         else:
                             values.append("NULL")
                     values_list.append(f"({', '.join(values)})")
                 
-                # Execute in batches of 5000 to avoid transaction issues
                 for i in range(0, len(values_list), 5000):
                     batch_values = values_list[i:i+5000]
-                    update_sql = update_template + ",\n".join(batch_values) + ") AS data(id, security_value, valuation_date, location, registration_details, ownership) WHERE securities.id = data.id"
+                    update_sql = update_template + ",\n".join(batch_values) + ") AS data(id, collateral_value) WHERE securities.id = data.id"
                     db.execute(text(update_sql))
                     db.flush()
         
-        # Commit all changes
         db.commit()
-        
         return {
             "status": "success",
             "rows_processed": len(df) if isinstance(df, pl.DataFrame) else 0,
             "filename": getattr(collateral_data, "filename", "in-memory-file"),
         }
+        
     except Exception as e:
         db.rollback()
         import traceback

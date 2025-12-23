@@ -3,7 +3,13 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from app.database import get_db
-from app.models import AccessRequest, User, RequestStatus, UserRole
+from app.models import (
+    AccessRequest, 
+    User, 
+    RequestStatus, 
+    UserRole,
+    Tenant
+    )
 from app.schemas import (
     EmailVerificationRequest,
     AccessRequestSubmit,
@@ -13,6 +19,9 @@ from app.schemas import (
     Token,
     LoginRequest,
     LoginResponse,
+    TenantRegistrationRequest,
+    TenantCreate,
+    TenantResponse
 )
 from app.auth.utils import (
     create_email_verification_token,
@@ -87,8 +96,11 @@ async def request_access(
                 token = existing_request.token
 
             # Resend verification email
-            await send_verification_email(request_data.email, token)
-            return {"message": "Verification email sent"}
+            try:
+                await send_verification_email(request_data.email, token)
+                return {"message": "Verification email sent"}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
 
 
     # Create new access request
@@ -107,9 +119,14 @@ async def request_access(
 
 
 @router.post("/submit-admin-request", 
-              responses={401: {"description": "Unauthorized"},
-                         404: {"description": "Verified email request not found"}},
-            description="Submit admin email for verified access request",)
+            responses={
+        200: {"description": "Admin request submitted"},
+        401: {"description": "Unauthorized"},
+        404: {"description": "Verified email request not found"},
+        422: {"description": "Invalid request data"},
+        500: {"description": "Internal server error"},
+    },
+        description="Submit admin email for verified access request",)
 async def submit_admin_request(
     request_data: AccessRequestSubmit, db: Session = Depends(get_db)
 ):
@@ -163,6 +180,119 @@ async def get_access_requests(
 
     return access_requests
 
+from sqlalchemy.exc import IntegrityError
+from passlib.exc import PasswordValueError
+
+@router.post("/register-tenant", 
+            response_model=Token,
+            responses={409: {"description": "Organization with this name already exists."}})
+async def register_tenant(request: TenantRegistrationRequest, db: Session = Depends(get_db)):
+    try:
+        # ---- Normalize early (can throw UnicodeError) ----
+        company_name = request.company_name.strip()
+        email = request.email.lower().strip()
+
+        # ---- Uniqueness checks ----
+        if db.query(Tenant).filter(Tenant.name == company_name).first():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Organization with this name already exists.",
+            )
+
+        if db.query(User).filter(User.email == email).first():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="User with this email already exists.",
+            )
+
+        # ---- Slug creation (safe, defensive) ----
+        base_slug = "".join(
+            c for c in company_name.lower() if c.isalnum() or c == " "
+        ).strip().replace(" ", "-")
+
+        slug = base_slug or "tenant"
+
+        if db.query(Tenant).filter(Tenant.slug == slug).first():
+            slug = f"{slug}-{abs(hash(email)) % 10_000}"
+
+        # ---- Create tenant ----
+        new_tenant = Tenant(
+            name=company_name,
+            slug=slug,
+            industry=request.industry,
+            country=request.country,
+            accounting_standard=request.preferred_accounting_standard,
+            is_active=True,
+        )
+        db.add(new_tenant)
+        db.flush()
+
+        # ---- Hash password (can throw) ----
+        hashed_password = get_password_hash(request.password)
+
+        # ---- Create admin user ----
+        new_admin = User(
+            email=email,
+            first_name=request.first_name,
+            last_name=request.last_name,
+            phone_number=request.phone_number,
+            job_role=request.job_role,
+            hashed_password=hashed_password,
+            role=UserRole.ADMIN,
+            tenant_id=new_tenant.id,
+            is_active=True,
+        )
+        db.add(new_admin)
+
+        db.commit()
+        db.refresh(new_admin)
+
+    except HTTPException:
+        raise
+
+    except (UnicodeError, ValueError, PasswordValueError):
+        db.rollback()
+        raise HTTPException(
+            status_code=422,
+            detail=[{"loc": ["body"], "msg": "Invalid registration data", "type": "value_error"}]
+        )
+
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Organization or user already exists.",
+        )
+
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=422,
+            detail=[{"loc": ["body"], "msg": "Invalid registration data", "type": "value_error"}]
+        )
+
+    # ---- Token generation (safe) ----
+    access_token_expires = timedelta(
+        minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
+    )
+
+    token_data = {
+        "sub": new_admin.email,
+        "id": new_admin.id,
+        "role": new_admin.role,
+        "tenant_id": new_tenant.id,
+        "is_active": new_admin.is_active,
+    }
+
+    access_token = create_access_token(
+        data=token_data,
+        expires_delta=access_token_expires,
+    )
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+    }
 
 
 @router.post("/login",  
@@ -351,6 +481,7 @@ async def set_password(
                 email=access_request.email,
                 hashed_password=get_password_hash(password),
                 role=access_request.role,
+                tenant_id=access_request.tenant_id
             )
             db.add(new_user)
 
