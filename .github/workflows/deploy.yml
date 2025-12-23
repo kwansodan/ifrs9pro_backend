@@ -33,27 +33,12 @@ jobs:
           pip install -r requirements.txt
           pip install pytest schemathesis
 
-      # 4️⃣ Create fake site directory for tests 
-      - name: Create fake site directory 
-        run: | 
+      # 4️⃣ Create fake site directory for tests
+      - name: Create fake site directory
+        run: |
           mkdir -p site
 
-      # 4️⃣ Run pytest
-      - name: Run tests
-        run: |
-          echo "Running pytest..."
-          python -m pytest tests || { echo "❌ Pytest failed"; exit 1; }
-
-      # 5️⃣ Run Spectral
-      - name: Run Spectral
-        run: |
-          echo "Running Spectral..."
-          docker run --rm -v "$PWD:/work" -w /work \
-            stoplight/spectral:latest lint \
-            --ruleset /work/.spectral.yaml \
-            /work/openapi.yaml || { echo "❌ Spectral lint failed"; exit 1; }
-
-      # 6️⃣ Create CI-only .env file
+      # 5️⃣ Create CI-only .env file
       - name: Create CI environment file
         run: |
           echo "ACCESS_TOKEN_EXPIRE_HOURS=1" >> .env
@@ -113,7 +98,22 @@ jobs:
           echo "Created CI .env file:"
           cat .env
 
-    # 6️⃣ Start Docker Compose stack
+      # 6️⃣ Run pytest
+      - name: Run tests
+        run: |
+          echo "Running pytest..."
+          python -m pytest tests || { echo "❌ Pytest failed"; exit 1; }
+
+      # 7️⃣ Run Spectral
+      - name: Run Spectral
+        run: |
+          echo "Running Spectral..."
+          docker run --rm -v "$PWD:/work" -w /work \
+            stoplight/spectral:latest lint \
+            --ruleset /work/.spectral.yaml \
+            /work/openapi.yaml || { echo "❌ Spectral lint failed"; exit 1; }
+
+      # 8️⃣ Start Docker Compose stack
       - name: Start API stack (db + minio + fastapi)
         run: |
           echo "Starting docker-compose.local.yml..."
@@ -121,13 +121,13 @@ jobs:
           echo "Waiting 25 seconds for services to be healthy..."
           sleep 25
 
-      # 7️⃣ Verify FastAPI is reachable
+      # 9️⃣ Verify FastAPI is reachable
       - name: Check API health before testing
         run: |
           echo "Checking API at http://localhost:8000/health..."
           curl -f http://localhost:8000/health || { echo "❌ API is not healthy"; exit 1; }
 
-      # 8️⃣ Schemathesis tests
+      # 🔟 Schemathesis tests
       - name: Run Schemathesis API tests
         run: |
           echo "Running Schemathesis API tests..."
@@ -135,47 +135,46 @@ jobs:
             --experimental=openapi-3.1 \
             --checks=not_a_server_error,content_type_conformance,status_code_conformance,response_schema_conformance
 
-      # 7️⃣ Export OpenAPI schema
+      # 1️⃣1️⃣ Export OpenAPI schema
       - name: Export OpenAPI schema
         run: |
-            echo "Saving OpenAPI schema as YAML..."
-            mkdir -p artifacts
-            curl -f http://localhost:8000/openapi.json -o artifacts/openapi.json
-            python - <<'PY'
-            import json, yaml
-            with open("artifacts/openapi.json") as f:
-              data = json.load(f)
-            with open("artifacts/openapi.yaml", "w") as f:
-                yaml.dump(data, f, sort_keys=False)
-            PY
+          echo "Saving OpenAPI schema as YAML..."
+          mkdir -p artifacts
+          curl -f http://localhost:8000/openapi.json -o artifacts/openapi.json
+          python - <<'PY'
+          import json, yaml
+          with open("artifacts/openapi.json") as f:
+            data = json.load(f)
+          with open("artifacts/openapi.yaml", "w") as f:
+            yaml.dump(data, f, sort_keys=False)
+          PY
 
-
+      # 1️⃣2️⃣ Upload OpenAPI schema
       - name: Upload OpenAPI schema
         uses: actions/upload-artifact@v4
         with:
           name: openapi-schema
           path: artifacts/openapi.yaml
 
-      #Publish spec to Github Release
+      # 1️⃣3️⃣ Publish spec to Github Release
       - name: Create release and upload OpenAPI
         uses: softprops/action-gh-release@v2
         with:
           tag_name: api-${{ github.sha }}
-          files: openapi.yaml
+          files: artifacts/openapi.yaml
 
-
-      # 9️⃣ Stop Docker Compose
+      # 1️⃣4️⃣ Stop Docker Compose
       - name: Tear down API stack
         if: always()
         run: docker compose -f docker-compose.local.yml down
 
-      # 🔟 SSH agent
+      # 1️⃣5️⃣ SSH agent
       - name: Start SSH agent
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DROPLET_SSH_KEY }}
 
-      # 1️⃣1️⃣ Determine deploy target
+      # 1️⃣6️⃣ Determine deploy target
       - name: Set deployment variables
         id: vars
         run: |
@@ -188,7 +187,7 @@ jobs:
             echo "SCRIPT=setup_prod.sh" >> $GITHUB_OUTPUT
           fi
 
-      # 1️⃣2️⃣ Deploy via SSH
+      # 1️⃣7️⃣ Deploy via SSH
       - name: Deploy to remote droplet
         env:
           DROPLET_USER: ${{ secrets.DROPLET_USER }}
