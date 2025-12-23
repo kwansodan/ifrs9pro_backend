@@ -74,17 +74,8 @@ fi
 
 # ---------- Alembic migrations (CORRECT) ----------
 echo "🗄️ Running Alembic migrations..."
+dc exec -T web alembic upgrade head
 
-if ! dc exec -T web alembic upgrade head; then
-    echo "⚠️  Alembic upgrade failed. Checking for existing schema..."
-    # Attempt to stamp the DB as head if upgrade failed (likely due to existing tables)
-    if dc exec -T web alembic stamp head; then
-        echo "✅ Database stamped as HEAD (existing schema assumed)."
-    else
-        echo "❌ Alembic migration and stamping failed."
-        exit 1
-    fi
-fi
 
 # ---------- Final status ----------
 echo "🔍 Container status:"
