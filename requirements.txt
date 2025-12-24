@@ -102,7 +102,7 @@ pytest-asyncio==0.21.1
 pytest-cov==4.1.0
 pytest-xdist
 faker==20.0.0
-schemathesis
+schemathesis==4.7.5
 mailjet-rest 
 locust
 dotenv

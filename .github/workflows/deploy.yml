@@ -201,6 +201,12 @@ jobs:
           ssh -o StrictHostKeyChecking=no $DROPLET_USER@$HOST "REMOTE_PATH='$REMOTE_PATH' SCRIPT='$SCRIPT' bash -s" << 'EOF'
             set -euo pipefail
             cd "$REMOTE_PATH" || { echo "Remote path not found: $REMOTE_PATH"; exit 1; }
+            
+            # Pull latest changes from GitHub
+            echo "Pulling latest changes..."
+            git fetch origin
+            git reset --hard origin/$(git rev-parse --abbrev-ref HEAD)
+            
             chmod +x "$SCRIPT" || true
             ./"$SCRIPT"
             echo "✅ Deployment completed successfully."
