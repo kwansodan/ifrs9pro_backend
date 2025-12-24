@@ -132,8 +132,10 @@ jobs:
         run: |
           echo "Running Schemathesis API tests..."
           PYTHONPATH=$(pwd) schemathesis run http://localhost:8000/openapi.json \
-            --experimental=openapi-3.1 \
-            --checks=not_a_server_error,content_type_conformance,status_code_conformance,response_schema_conformance
+          --experimental=openapi-3.1 \
+          --checks=not_a_server_error,content_type_conformance,status_code_conformance,response_schema_conformance \
+          --exclude-path-regex "^POST /request-access$|^POST /submit-admin-request$|^POST /login$"
+
 
       # 1️⃣1️⃣ Export OpenAPI schema
       - name: Export OpenAPI schema

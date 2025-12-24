@@ -1,248 +1,248 @@
 <?xml version="1.0" encoding="utf-8"?>
-<testsuites disabled="0" errors="0" failures="0" tests="83" time="427.9267893730008">
-	<testsuite disabled="0" errors="0" failures="0" name="schemathesis" skipped="80" tests="83" time="427.9267893730008" hostname="joojo-laptop">
-		<testcase name="DELETE /admin/feedback/{feedback_id}" time="3.764404">
+<testsuites disabled="0" errors="0" failures="0" tests="83" time="401.7769601889522">
+	<testsuite disabled="0" errors="0" failures="0" name="schemathesis" skipped="80" tests="83" time="401.7769601889522" hostname="joojo-laptop">
+		<testcase name="DELETE /admin/feedback/{feedback_id}" time="3.586394">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="DELETE /admin/help/{help_id}" time="3.674245">
+		<testcase name="DELETE /admin/help/{help_id}" time="3.401859">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /" time="0.109943">
+		<testcase name="GET /" time="0.128842">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /admin/feedback" time="0.092990">
+		<testcase name="GET /admin/feedback" time="0.108251">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /admin/feedback/{feedback_id}" time="3.718561">
+		<testcase name="GET /admin/feedback/{feedback_id}" time="3.497990">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /admin/help" time="0.126024">
+		<testcase name="GET /admin/help" time="0.144203">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /admin/help/{help_id}" time="3.704103">
+		<testcase name="GET /admin/help/{help_id}" time="3.434129">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /admin/requests" time="0.123530">
+		<testcase name="GET /admin/requests" time="0.105709">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /admin/users" time="0.082468">
+		<testcase name="GET /admin/users" time="0.108908">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /admin/users/export" time="0.094407">
+		<testcase name="GET /admin/users/export" time="0.082830">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /billing/customers/me" time="0.086411">
+		<testcase name="GET /billing/customers/me" time="0.230089">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /billing/plans" time="5.506740">
+		<testcase name="GET /billing/plans" time="5.431194">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /billing/subscriptions" time="0.133941">
+		<testcase name="GET /billing/subscriptions" time="0.135205">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /billing/transactions/verify/{reference}" time="5.811588">
+		<testcase name="GET /billing/transactions/verify/{reference}" time="4.905076">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /dashboard" time="0.116742">
+		<testcase name="GET /dashboard" time="0.116837">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /health" time="0.104778">
+		<testcase name="GET /health" time="0.136454">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /portfolios/" time="7.500692">
+		<testcase name="GET /portfolios/" time="6.444359">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /reports/status/{report_id}" time="3.878644">
+		<testcase name="GET /reports/status/{report_id}" time="3.600038">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /superadmin/stats" time="0.113003">
+		<testcase name="GET /superadmin/stats" time="0.145636">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /superadmin/tenants" time="5.480749">
+		<testcase name="GET /superadmin/tenants" time="5.440344">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /user/feedback" time="8.624726">
+		<testcase name="GET /user/feedback" time="11.462781">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /user/feedback/mine" time="0.120951">
+		<testcase name="GET /user/feedback/mine" time="0.122305">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /user/help" time="8.710765">
+		<testcase name="GET /user/help" time="11.956694">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /user/notifications" time="0.128060">
+		<testcase name="GET /user/notifications" time="0.120873">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /verify-email/{token}" time="6.022613">
+		<testcase name="GET /verify-email/{token}" time="4.865821">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="PATCH /superadmin/tenants/{tenant_id}/status" time="5.659287">
+		<testcase name="PATCH /superadmin/tenants/{tenant_id}/status" time="6.022595">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /billing/customers" time="0.128416">
+		<testcase name="POST /billing/customers" time="0.135221">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /billing/subscriptions/disable" time="3.170898">
+		<testcase name="POST /billing/subscriptions/disable" time="4.129480">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /billing/subscriptions/enable" time="3.268249">
+		<testcase name="POST /billing/subscriptions/enable" time="4.027787">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /billing/transactions/initialize" time="4.096903">
+		<testcase name="POST /billing/transactions/initialize" time="4.914690">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /login" time="4.497636">
+		<testcase name="POST /login" time="4.488982">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /portfolios/" time="5.118016">
+		<testcase name="POST /portfolios/" time="5.884875">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /register-tenant" time="8.256341">
+		<testcase name="POST /register-tenant" time="8.758120">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /request-access" time="74.859451">
+		<testcase name="POST /request-access" time="16.751788">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /set-password/{token}" time="6.121555"/>
-		<testcase name="POST /submit-admin-request" time="3.344303">
+		<testcase name="POST /set-password/{token}" time="5.959196"/>
+		<testcase name="POST /submit-admin-request" time="3.849121">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /superadmin/tenants" time="4.926812">
+		<testcase name="POST /superadmin/tenants" time="3.650314">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /token" time="5.973700">
+		<testcase name="POST /token" time="6.246524">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /user/feedback" time="2.911459">
+		<testcase name="POST /user/feedback" time="4.237458">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /user/feedback/{feedback_id}/like" time="3.821686">
+		<testcase name="POST /user/feedback/{feedback_id}/like" time="3.614374">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /user/help" time="2.937009">
+		<testcase name="POST /user/help" time="3.592664">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /webhooks/billing" time="5.442978">
+		<testcase name="POST /webhooks/billing" time="8.281744">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="PUT /admin/feedback/{feedback_id}/status" time="5.314508">
+		<testcase name="PUT /admin/feedback/{feedback_id}/status" time="5.697993">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="PUT /admin/help/{help_id}/status" time="5.548876">
+		<testcase name="PUT /admin/help/{help_id}/status" time="5.704701">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="PUT /admin/requests/{request_id}" time="6.344457">
+		<testcase name="PUT /admin/requests/{request_id}" time="6.978927">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="DELETE /admin/requests/{request_id}" time="3.784142">
+		<testcase name="DELETE /admin/requests/{request_id}" time="3.709387">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="DELETE /portfolios/{portfolio_id}" time="3.770160">
+		<testcase name="DELETE /portfolios/{portfolio_id}" time="3.618152">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /portfolios/{portfolio_id}" time="3.631188">
+		<testcase name="GET /portfolios/{portfolio_id}" time="3.502277">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /superadmin/tenants/{tenant_id}" time="3.711303">
+		<testcase name="GET /superadmin/tenants/{tenant_id}" time="3.565288">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="PUT /portfolios/{portfolio_id}" time="14.839703"/>
-		<testcase name="DELETE /reports/{portfolio_id}/report/{report_id}" time="2.618654">
+		<testcase name="PUT /portfolios/{portfolio_id}" time="16.307677"/>
+		<testcase name="DELETE /reports/{portfolio_id}/report/{report_id}" time="3.096868">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /portfolios/{portfolio_id}/calculate-ecl" time="4.661213">
+		<testcase name="GET /portfolios/{portfolio_id}/calculate-ecl" time="5.473859">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /portfolios/{portfolio_id}/calculate-local-impairment" time="4.655274">
+		<testcase name="GET /portfolios/{portfolio_id}/calculate-local-impairment" time="5.309848">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /portfolios/{portfolio_id}/quality-issues" time="5.995244">
+		<testcase name="GET /portfolios/{portfolio_id}/quality-issues" time="7.267462">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /portfolios/{portfolio_id}/quality-issues/download" time="6.592654">
+		<testcase name="GET /portfolios/{portfolio_id}/quality-issues/download" time="7.197800">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /portfolios/{portfolio_id}/quality-issues/{issue_id}" time="2.763554">
+		<testcase name="GET /portfolios/{portfolio_id}/quality-issues/{issue_id}" time="3.194201">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /portfolios/{portfolio_id}/quality-issues/{issue_id}/comments" time="2.652505">
+		<testcase name="GET /portfolios/{portfolio_id}/quality-issues/{issue_id}/comments" time="3.024868">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /portfolios/{portfolio_id}/quality-issues/{issue_id}/download" time="5.045080">
+		<testcase name="GET /portfolios/{portfolio_id}/quality-issues/{issue_id}/download" time="5.272718">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /reports/{portfolio_id}/history" time="8.689015">
+		<testcase name="GET /reports/{portfolio_id}/history" time="9.638870">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /reports/{portfolio_id}/report/{report_id}" time="2.651544">
+		<testcase name="GET /reports/{portfolio_id}/report/{report_id}" time="3.019016">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /reports/{portfolio_id}/report/{report_id}/download" time="2.593288">
+		<testcase name="GET /reports/{portfolio_id}/report/{report_id}/download" time="3.102209">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /admin/users" time="6.340316">
+		<testcase name="POST /admin/users" time="7.687871">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /portfolios/{portfolio_id}/approve-all-quality-issues" time="5.747458">
+		<testcase name="POST /portfolios/{portfolio_id}/approve-all-quality-issues" time="8.074393">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /portfolios/{portfolio_id}/ingest" time="8.170010">
+		<testcase name="POST /portfolios/{portfolio_id}/ingest" time="14.061480">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /portfolios/{portfolio_id}/ingest/save" time="6.151208">
+		<testcase name="POST /portfolios/{portfolio_id}/ingest/save" time="4.599216">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /portfolios/{portfolio_id}/quality-issues/{issue_id}/approve" time="5.623089">
+		<testcase name="POST /portfolios/{portfolio_id}/quality-issues/{issue_id}/approve" time="6.630352">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /portfolios/{portfolio_id}/quality-issues/{issue_id}/comments" time="5.132803">
+		<testcase name="POST /portfolios/{portfolio_id}/quality-issues/{issue_id}/comments" time="6.140578">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /portfolios/{portfolio_id}/recheck-quality" time="3.819440">
+		<testcase name="POST /portfolios/{portfolio_id}/recheck-quality" time="3.598938">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /portfolios/{portfolio_id}/stage-loans-ecl" time="3.782819">
+		<testcase name="POST /portfolios/{portfolio_id}/stage-loans-ecl" time="3.568248">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /portfolios/{portfolio_id}/stage-loans-local" time="3.792247">
+		<testcase name="POST /portfolios/{portfolio_id}/stage-loans-local" time="3.544820">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="POST /reports/{portfolio_id}/generate" time="5.992652">
+		<testcase name="POST /reports/{portfolio_id}/generate" time="6.385837">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="PUT /portfolios/{portfolio_id}/quality-issues/{issue_id}" time="5.117865">
+		<testcase name="PUT /portfolios/{portfolio_id}/quality-issues/{issue_id}" time="5.739843">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="PUT /portfolios/{portfolio_id}/quality-issues/{issue_id}/comments/{comment_id}" time="4.583067">
+		<testcase name="PUT /portfolios/{portfolio_id}/quality-issues/{issue_id}/comments/{comment_id}" time="5.381657">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="DELETE /admin/users/{user_id}" time="3.694168">
+		<testcase name="DELETE /admin/users/{user_id}" time="3.774013">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="DELETE /user/feedback/{feedback_id}" time="3.831102">
+		<testcase name="DELETE /user/feedback/{feedback_id}" time="3.489819">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="DELETE /user/help/{help_id}" time="3.822727">
+		<testcase name="DELETE /user/help/{help_id}" time="3.709569">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /admin/users/{user_id}" time="3.790412">
+		<testcase name="GET /admin/users/{user_id}" time="3.452316">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /user/feedback/{feedback_id}" time="3.563231">
+		<testcase name="GET /user/feedback/{feedback_id}" time="3.561269">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="GET /user/help/{help_id}" time="3.819935">
+		<testcase name="GET /user/help/{help_id}" time="3.899227">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="PUT /admin/users/{user_id}" time="7.103630">
+		<testcase name="PUT /admin/users/{user_id}" time="8.224636">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="PUT /user/feedback/{feedback_id}" time="5.697427">
+		<testcase name="PUT /user/feedback/{feedback_id}" time="6.288686">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="PUT /user/help/{help_id}" time="6.050833">
+		<testcase name="PUT /user/help/{help_id}" time="6.148191">
 			<skipped type="skipped">No examples in schema</skipped>
 		</testcase>
-		<testcase name="Stateful tests" time="14.072211"/>
+		<testcase name="Stateful tests" time="14.876124"/>
 	</testsuite>
 </testsuites>
