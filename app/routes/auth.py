@@ -290,7 +290,7 @@ async def register_tenant(request: TenantRegistrationRequest, db: Session = Depe
     )
 
     return {
-        "access_token": access_token,
+        "billing_token": access_token,
         "token_type": "bearer",
     }
 
