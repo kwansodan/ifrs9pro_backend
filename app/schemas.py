@@ -83,6 +83,10 @@ class TenantRegistrationRequest(BaseModel):
 
     password: str = Field(min_length=8, max_length=128)
 
+    # Terms and Conditions
+    tnd: Optional[bool] = False
+    dpa: Optional[bool] = False
+
 
 # ==================== AUTH MODELS ====================
 
@@ -154,6 +158,9 @@ class Token(BaseModel):
     access_token: str
     token_type: str
 
+class TenantToken(BaseModel):
+    billing_token: str
+    token_type: str
 
 class TokenData(BaseModel):
     email: Optional[EmailStr] = None

@@ -17,6 +17,7 @@ from app.schemas import (
     AccessRequestUpdate,
     PasswordSetup,
     Token,
+    TenantToken,
     LoginRequest,
     LoginResponse,
     TenantRegistrationRequest,
@@ -184,10 +185,16 @@ from sqlalchemy.exc import IntegrityError
 from passlib.exc import PasswordValueError
 
 @router.post("/register-tenant", 
-            response_model=Token,
+            response_model=TenantToken,
             responses={409: {"description": "Organization with this name already exists."}})
 async def register_tenant(request: TenantRegistrationRequest, db: Session = Depends(get_db)):
     try:
+        # Require acceptance of Terms and Conditions and Data Processing Agreement
+        if not getattr(request, "tnd", False) or not getattr(request, "dpa", False):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="You must accept the Terms and Conditions (tnd) and Data Processing Agreement (dpa) to register."
+            )
         # ---- Normalize early (can throw UnicodeError) ----
         company_name = request.company_name.strip()
         email = request.email.lower().strip()

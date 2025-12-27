@@ -71,6 +71,7 @@ class Tenant(Base):
     industry = Column(String, nullable=True)
     country = Column(String, nullable=True)
     accounting_standard = Column(String, nullable=True)
+
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
