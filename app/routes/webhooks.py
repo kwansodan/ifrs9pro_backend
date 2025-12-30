@@ -97,59 +97,66 @@ async def paystack_webhook(
             
         elif event_type == "subscription.create":
             subscription_code = data.get("subscription_code")
+
             customer = data.get("customer") or {}
             customer_email = customer.get("email")
             customer_code = customer.get("customer_code")
 
             plan_data = data.get("plan") or {}
             plan_code = plan_data.get("plan_code") or plan_data.get("code")
-            # plan_name = plan_data.get("name")
 
             next_payment_date_raw = data.get("next_payment_date")
 
-            logger.info(
-                f"subscription.create | sub={subscription_code} "
-                f"plan={plan_code} user={customer_email}"
-            )
-        
             if not subscription_code or not customer_email or not plan_code:
-                logger.error("Webhook payload missing required fields")
+                logger.error("subscription.create: missing required fields")
                 return {"status": "ignored", "reason": "invalid payload"}
 
             try:
-                # 1. Resolve user and their Tenant
-                # We assume the email belongs to a user in the correct tenant.
+                # 1. Resolve user + tenant
                 user = (
                     db.query(User)
                     .filter(User.email == customer_email)
                     .one_or_none()
                 )
-                if not user:
-                    logger.error(f"No local user for email={customer_email}")
-                    return {"status": "ignored", "reason": "user not found"}
-                
-                if not user.tenant:
-                    logger.error(f"User {customer_email} is not associated with any tenant.")
-                    return {"status": "ignored", "reason": "user has no tenant"}
+                if not user or not user.tenant:
+                    logger.error(
+                        f"subscription.create: unresolved tenant for {customer_email}"
+                    )
+                    return {"status": "ignored", "reason": "tenant not found"}
 
                 tenant = user.tenant
 
                 # 2. Resolve plan (MANDATORY)
                 plan = (
                     db.query(SubscriptionPlan)
-                    .filter(SubscriptionPlan.paystack_plan_code == plan_code)
+                    .filter(
+                        SubscriptionPlan.paystack_plan_code == plan_code
+                    )
                     .one_or_none()
                 )
                 if not plan:
                     logger.critical(
-                        f"Rejecting subscription.create: unknown plan_code={plan_code}"
+                        f"subscription.create: unmapped plan_code={plan_code}"
                     )
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Unmapped Paystack plan_code={plan_code}"
-                    )
+                    raise RuntimeError("Unmapped Paystack plan")
 
-                # 3. Idempotent subscription upsert (TenantSubscription)
+                # 3. Close existing active subscriptions (CRITICAL)
+                previous_subscriptions = (
+                    db.query(TenantSubscription)
+                    .filter(
+                        TenantSubscription.tenant_id == tenant.id,
+                        TenantSubscription.status.in_(
+                            ["active", "past_due", "non-renewing"]
+                        ),
+                    )
+                    .all()
+                )
+
+                for old_sub in previous_subscriptions:
+                    old_sub.status = "expired"
+                    old_sub.ended_at = datetime.now(timezone.utc)
+
+                # 4. Idempotent upsert for new subscription
                 subscription = (
                     db.query(TenantSubscription)
                     .filter(
@@ -161,23 +168,20 @@ async def paystack_webhook(
 
                 if not subscription:
                     subscription = TenantSubscription(
-                        tenant_id=tenant.id,  # Linked to Tenant
+                        tenant_id=tenant.id,
                         plan_id=plan.id,
                         paystack_subscription_code=subscription_code,
                         paystack_customer_code=customer_code,
-                        status="active",  # MUST exist in enum
+                        status="active",
                         started_at=datetime.now(timezone.utc),
                     )
                     db.add(subscription)
                     db.flush()
                 else:
                     subscription.plan_id = plan.id
-                    subscription.paystack_customer_code = (
-                        customer_code or subscription.paystack_customer_code
-                    )
                     subscription.status = "active"
 
-                # 4. Billing dates (best effort)
+                # 5. Billing date (best effort)
                 if next_payment_date_raw:
                     try:
                         subscription.next_billing_date = datetime.fromisoformat(
@@ -188,7 +192,7 @@ async def paystack_webhook(
                             f"Invalid next_payment_date: {next_payment_date_raw}"
                         )
 
-                # 5. Ensure usage row
+                # 6. Ensure usage row
                 usage = (
                     db.query(SubscriptionUsage)
                     .filter(
@@ -206,32 +210,18 @@ async def paystack_webhook(
                         )
                     )
 
-                # 6. Update Tenant linkage 
-                # Store customer code on Tenant for future billing reference
+                # 7. Tenant denormalized state
                 tenant.paystack_customer_code = (
                     customer_code or tenant.paystack_customer_code
                 )
-                
-                # Update denormalized status on Tenant
-                # (Active subscription means tenant is active)
                 tenant.subscription_status = "active"
 
-                db.add(tenant)
                 db.commit()
 
-            except Exception as e:
+            except Exception:
                 db.rollback()
-                logger.exception("subscription.create webhook failed")
+                logger.exception("subscription.create failed")
                 raise
-
-            response_details["details"] = {
-                "status": "processed",
-                "subscription_code": subscription_code,
-                "plan_code": plan_code,
-                "user": customer_email,
-                "tenant": tenant.name
-            }
-            logger.info(response_details)
 
 
         elif event_type in ("subscription.not_renew", "subscription.disable"):
@@ -381,7 +371,54 @@ async def paystack_webhook(
                 "refund_amount": amount,
                 "status": data.get("status")
             }
-            
+        elif event_type == "invoice.payment_failed":
+            subscription_code = data.get("subscription", {}).get("subscription_code")
+
+            try:
+                subscription = (
+                    db.query(TenantSubscription)
+                    .filter(
+                        TenantSubscription.paystack_subscription_code
+                        == subscription_code
+                    )
+                    .one_or_none()
+                )
+
+                if not subscription:
+                    return {"status": "ignored", "reason": "subscription not found"}
+
+                # Mark new subscription as failed
+                subscription.status = "cancelled"
+                subscription.ended_at = datetime.now(timezone.utc)
+
+                tenant = subscription.tenant
+
+                # Reactivate most recent superseded subscription
+                previous = (
+                    db.query(TenantSubscription)
+                    .filter(
+                        TenantSubscription.tenant_id == tenant.id,
+                        TenantSubscription.status == "superseded",
+                    )
+                    .order_by(TenantSubscription.ended_at.desc())
+                    .first()
+                )
+
+                if previous:
+                    previous.status = "active"
+                    previous.ended_at = None
+                    tenant.subscription_status = "active"
+                else:
+                    tenant.subscription_status = "inactive"
+
+                db.commit()
+
+            except Exception:
+                db.rollback()
+                logger.exception("invoice.payment_failed rollback failed")
+                raise
+
+                
         else:
             logger.warning(f"Unhandled webhook event type: {event_type}")
             response_details["details"] = {

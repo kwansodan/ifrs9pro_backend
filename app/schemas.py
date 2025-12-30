@@ -1007,6 +1007,9 @@ class SubscriptionDisable(BaseModel):
     code: str = Field(..., description="Subscription code")
     token: str = Field(..., description="Email token")
 
+class ChangeSubscriptionRequest(BaseModel):
+    new_plan_code: str
+    old_subscription_token: str
 
 class SubscriptionEnable(BaseModel):
     code: str = Field(..., description="Subscription code")
