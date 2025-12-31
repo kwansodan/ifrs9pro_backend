@@ -16,7 +16,7 @@ from app.models import (
     SubscriptionUsage,
 )
 
-router = APIRouter(prefix="/webhooks", 
+router = APIRouter(prefix="/webhooks",
                    tags=["webhooks"],
 )
 
@@ -28,7 +28,7 @@ logger = logging.getLogger("uvicorn.error")  # attach to Uvicorn
 logger.setLevel(logging.INFO)
 
 
-@router.post("/billing", 
+@router.post("/billing",
              status_code=status.HTTP_200_OK,
              responses={400: {"description": "Bad request"},
                         401: {"description": "Unauthorized - invalid signature"},
@@ -55,174 +55,165 @@ async def paystack_webhook(
 ):
     """Handle Paystack webhook events"""
     body = await request.body()
-    
+
     if not x_paystack_signature:
         logger.warning("Webhook received without signature header")
         raise HTTPException(status_code=401, detail="Missing signature header")
-    
+
     try:
         event_data = await request.json()
         event_type = event_data.get("event")
         data = event_data.get("data", {})
-        
+
         # Verify signature
         if not verify_paystack_signature(body, x_paystack_signature):
             raise HTTPException(status_code=400, detail="Invalid signature")
-        
+
         logger.info(f"Webhook received - Event type: {event_type}")
-        
+
         response_details = {
             "status": "success",
             "event_type": event_type,
             "processed_at": data.get("created_at") or data.get("createdAt"),
             "details": {}
         }
-        
+
         # Handle different event types
-        if event_type == "charge.success":
-            reference = data.get("reference")
-            amount = data.get("amount")
-            customer_email = data.get("customer", {}).get("email")
-            currency = data.get("currency")
-            
-            logger.info(f"Payment successful - Reference: {reference}, Amount: {amount} {currency}, Customer: {customer_email}")
-            
-            response_details["details"] = {
-                "reference": reference,
-                "amount": amount,
-                "currency": currency,
-                "customer_email": customer_email,
-                "status": data.get("status")
-            }
-            
-        elif event_type == "subscription.create":
-            subscription_code = data.get("subscription_code")
+        if event_type == "subscription.create":
+                subscription_code = data.get("subscription_code")
+                customer = data.get("customer") or {}
+                customer_email = customer.get("email")
+                customer_code = customer.get("customer_code")
+                plan_data = data.get("plan") or {}
+                plan_code = plan_data.get("plan_code") or plan_data.get("code")
 
-            customer = data.get("customer") or {}
-            customer_email = customer.get("email")
-            customer_code = customer.get("customer_code")
+                if not subscription_code or not customer_email or not plan_code:
+                    logger.error("subscription.create: missing required fields")
+                    return {"status": "ignored", "reason": "invalid payload"}
 
-            plan_data = data.get("plan") or {}
-            plan_code = plan_data.get("plan_code") or plan_data.get("code")
+                try:
+                    user = db.query(User).filter(User.email == customer_email).one_or_none()
+                    if not user or not user.tenant:
+                        logger.warning(f"subscription.create: unresolved tenant for {customer_email}")
+                        return {"status": "ignored", "reason": "tenant not found"}
 
-            next_payment_date_raw = data.get("next_payment_date")
+                    tenant = user.tenant
 
-            if not subscription_code or not customer_email or not plan_code:
-                logger.error("subscription.create: missing required fields")
-                return {"status": "ignored", "reason": "invalid payload"}
-
-            try:
-                # 1. Resolve user + tenant
-                user = (
-                    db.query(User)
-                    .filter(User.email == customer_email)
-                    .one_or_none()
-                )
-                if not user or not user.tenant:
-                    logger.error(
-                        f"subscription.create: unresolved tenant for {customer_email}"
-                    )
-                    return {"status": "ignored", "reason": "tenant not found"}
-
-                tenant = user.tenant
-
-                # 2. Resolve plan (MANDATORY)
-                plan = (
-                    db.query(SubscriptionPlan)
-                    .filter(
+                    plan = db.query(SubscriptionPlan).filter(
                         SubscriptionPlan.paystack_plan_code == plan_code
-                    )
-                    .one_or_none()
-                )
-                if not plan:
-                    logger.critical(
-                        f"subscription.create: unmapped plan_code={plan_code}"
-                    )
-                    raise RuntimeError("Unmapped Paystack plan")
+                    ).one_or_none()
+                    if not plan:
+                        logger.critical(f"subscription.create: unmapped plan_code={plan_code}")
+                        raise RuntimeError("Unmapped Paystack plan")
 
-                # 3. Close existing active subscriptions (CRITICAL)
-                previous_subscriptions = (
-                    db.query(TenantSubscription)
-                    .filter(
+                    # Idempotent insert (status = pending)
+                    subscription = db.query(TenantSubscription).filter(
+                        TenantSubscription.paystack_subscription_code == subscription_code
+                    ).one_or_none()
+
+                    if not subscription:
+                        subscription = TenantSubscription(
+                            tenant_id=tenant.id,
+                            plan_id=plan.id,
+                            paystack_subscription_code=subscription_code,
+                            paystack_customer_code=customer_code,
+                            status="pending",  # ⬅️ never active yet
+                        )
+                        db.add(subscription)
+
+                    # Keep tenant linked
+                    tenant.paystack_customer_code = customer_code or tenant.paystack_customer_code
+
+                    db.commit()
+                    return {"status": "acknowledged"}
+
+                except Exception:
+                    db.rollback()
+                    logger.exception("subscription.create failed")
+                    raise
+
+
+        elif event_type == "charge.success":
+                if data.get("status") != "success":
+                    return {"status": "ignored", "reason": "charge not successful"}
+
+                reference = data.get("reference")
+                customer = data.get("customer") or {}
+                customer_email = customer.get("email")
+                customer_code = customer.get("customer_code")
+
+                # Extract subscription_code from multiple possible locations
+                subscription_code = (
+                    data.get("subscription_code")
+                    or data.get("authorization", {}).get("subscription_code")
+                    or data.get("metadata", {}).get("subscription_code")
+                )
+
+                if not reference or not customer_email or not subscription_code:
+                    logger.error("charge.success: missing linkage fields")
+                    return {"status": "ignored", "reason": "unresolvable charge"}
+
+                logger.info(f"Payment successful - Reference: {reference}, Amount: {data.get('amount')} {data.get('currency')}, Customer: {customer_email}")
+
+                try:
+                    # Resolve user + tenant
+                    user = db.query(User).filter(User.email == customer_email).one_or_none()
+                    if not user or not user.tenant:
+                        logger.error(f"charge.success: unresolved tenant for {customer_email}")
+                        return {"status": "ignored", "reason": "tenant not found"}
+
+                    tenant = user.tenant
+
+                    # Resolve existing subscription
+                    subscription = db.query(TenantSubscription).filter(
+                        TenantSubscription.paystack_subscription_code == subscription_code
+                    ).one_or_none()
+
+                    if not subscription:
+                        logger.critical(f"charge.success: no subscription found for {subscription_code}")
+                        raise RuntimeError("Charge without subscription")
+
+                    plan = subscription.plan
+
+                    # Expire previous active subscriptions
+                    previous_subscriptions = db.query(TenantSubscription).filter(
                         TenantSubscription.tenant_id == tenant.id,
-                        TenantSubscription.status.in_(
-                            ["active", "past_due", "non-renewing"]
-                        ),
-                    )
-                    .all()
-                )
+                        TenantSubscription.status.in_(["active", "past_due", "non-renewing"])
+                    ).all()
 
-                for old_sub in previous_subscriptions:
-                    old_sub.status = "expired"
-                    old_sub.ended_at = datetime.now(timezone.utc)
+                    for old_sub in previous_subscriptions:
+                        old_sub.status = "expired"
+                        old_sub.ended_at = datetime.now(timezone.utc)
 
-                # 4. Idempotent upsert for new subscription
-                subscription = (
-                    db.query(TenantSubscription)
-                    .filter(
-                        TenantSubscription.paystack_subscription_code
-                        == subscription_code
-                    )
-                    .one_or_none()
-                )
-
-                if not subscription:
-                    subscription = TenantSubscription(
-                        tenant_id=tenant.id,
-                        plan_id=plan.id,
-                        paystack_subscription_code=subscription_code,
-                        paystack_customer_code=customer_code,
-                        status="active",
-                        started_at=datetime.now(timezone.utc),
-                    )
-                    db.add(subscription)
-                    db.flush()
-                else:
-                    subscription.plan_id = plan.id
+                    # Activate this subscription
                     subscription.status = "active"
+                    subscription.started_at = datetime.now(timezone.utc)
 
-                # 5. Billing date (best effort)
-                if next_payment_date_raw:
-                    try:
-                        subscription.next_billing_date = datetime.fromisoformat(
-                            next_payment_date_raw
-                        )
-                    except ValueError:
-                        logger.warning(
-                            f"Invalid next_payment_date: {next_payment_date_raw}"
-                        )
-
-                # 6. Ensure usage row
-                usage = (
-                    db.query(SubscriptionUsage)
-                    .filter(
+                    # Ensure usage row exists
+                    usage = db.query(SubscriptionUsage).filter(
                         SubscriptionUsage.subscription_id == subscription.id
-                    )
-                    .one_or_none()
-                )
-                if not usage:
-                    db.add(
-                        SubscriptionUsage(
-                            subscription_id=subscription.id,
-                            current_loan_count=0,
-                            current_portfolio_count=0,
-                            current_team_count=0,
+                    ).one_or_none()
+                    if not usage:
+                        db.add(
+                            SubscriptionUsage(
+                                subscription_id=subscription.id,
+                                current_loan_count=0,
+                                current_portfolio_count=0,
+                                current_team_count=0,
+                            )
                         )
-                    )
 
-                # 7. Tenant denormalized state
-                tenant.paystack_customer_code = (
-                    customer_code or tenant.paystack_customer_code
-                )
-                tenant.subscription_status = "active"
+                    # Update tenant denormalized state
+                    tenant.subscription_status = "active"
+                    tenant.paystack_customer_code = customer_code or tenant.paystack_customer_code
 
-                db.commit()
+                    db.commit()
+                    return {"status": "activated", "reference": reference}
 
-            except Exception:
-                db.rollback()
-                logger.exception("subscription.create failed")
-                raise
-
+                except Exception:
+                    db.rollback()
+                    logger.exception("charge.success activation failed")
+                    raise
 
         elif event_type in ("subscription.not_renew", "subscription.disable"):
             subscription_code = data.get("subscription_code")
@@ -248,8 +239,8 @@ async def paystack_webhook(
             if event_type == "subscription.not_renew":
                 subscription.status = "cancelled"   # non-renewing / cancelled
                 subscription.cancelled_at = now
-                
-                # Tenant status usually remains active until grace period ends, 
+
+                # Tenant status usually remains active until grace period ends,
                 # but we can mark it as 'cancelled' (meaning: won't renew)
                 if tenant:
                     tenant.subscription_status = "cancelled"
@@ -290,16 +281,16 @@ async def paystack_webhook(
             invoice_code = data.get("invoice_code")
             customer_email = data.get("customer", {}).get("email")
             amount = data.get("amount")
-            
+
             logger.info(f"Invoice created - Code: {invoice_code}, Amount: {amount}, Customer: {customer_email}")
-            
+
             response_details["details"] = {
                 "invoice_code": invoice_code,
                 "customer_email": customer_email,
                 "amount": amount,
                 "status": data.get("status")
             }
-            
+
         elif event_type == "invoice.payment_failed":
             invoice_code = data.get("invoice_code")
             customer_email = data.get("customer", {}).get("email")
@@ -333,39 +324,39 @@ async def paystack_webhook(
                 "failure_reason": data.get("gateway_response"),
                 "subscription_code": subscription_code,
             }
-            
+
         elif event_type == "transfer.success":
             reference = data.get("reference")
             amount = data.get("amount")
             recipient_details = data.get("recipient", {})
-            
+
             logger.info(f"Transfer successful - Reference: {reference}, Amount: {amount}")
-            
+
             response_details["details"] = {
                 "reference": reference,
                 "amount": amount,
                 "recipient_name": recipient_details.get("name"),
                 "status": data.get("status")
             }
-            
+
         elif event_type == "transfer.failed":
             reference = data.get("reference")
             amount = data.get("amount")
-            
+
             logger.error(f"Transfer failed - Reference: {reference}, Amount: {amount}")
-            
+
             response_details["details"] = {
                 "reference": reference,
                 "amount": amount,
                 "failure_reason": data.get("gateway_response")
             }
-            
+
         elif event_type == "refund.processed":
             reference = data.get("transaction_reference")
             amount = data.get("amount")
-            
+
             logger.info(f"Refund processed - Transaction: {reference}, Amount: {amount}")
-            
+
             response_details["details"] = {
                 "transaction_reference": reference,
                 "refund_amount": amount,
@@ -418,14 +409,14 @@ async def paystack_webhook(
                 logger.exception("invoice.payment_failed rollback failed")
                 raise
 
-                
+
         else:
             logger.warning(f"Unhandled webhook event type: {event_type}")
             response_details["details"] = {
                 "message": "Event type not specifically handled",
                 "raw_data": data
             }
-        
+
         return response_details
     except HTTPException:
         raise  # Re-raise HTTP exceptions
