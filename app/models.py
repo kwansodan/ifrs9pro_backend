@@ -135,7 +135,7 @@ class TenantSubscription(Base):
     paystack_customer_code = Column(String, nullable=True, index=True)
     authorization_code = Column(String, nullable=True)
 
-    # active | cancelled | expired | past_due
+    # active | cancelled | expired | past_due | pending
     status = Column(String, nullable=False, default="active")
     current_period_start = Column(DateTime(timezone=True), nullable=True)
     current_period_end = Column(DateTime(timezone=True), nullable=True)
