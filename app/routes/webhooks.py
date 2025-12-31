@@ -138,9 +138,15 @@ async def paystack_webhook(
                     return {"status": "ignored", "reason": "charge not successful"}
 
                 reference = data.get("reference")
-                customer = data.get("customer") or {}
-                customer_email = customer.get("email")
-                customer_code = customer.get("customer_code")
+                # Defensive extraction
+                customer_raw = data.get("customer")
+                if isinstance(customer_raw, dict):
+                    customer_email = customer_raw.get("email")
+                    customer_code = customer_raw.get("customer_code")
+                else:
+                    logger.warning(f"charge.success: unexpected customer format: {customer_raw}")
+                    customer_email = None
+                    customer_code = None
 
                 # Extract subscription_code from multiple possible locations
                 subscription_code = (
