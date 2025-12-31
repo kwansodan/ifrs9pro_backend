@@ -77,9 +77,12 @@ async def paystack_webhook(
 
         # Handle different event types
         if event_type == "charge.success":
+            data = payload.get("data", {})
             reference = data.get("reference")
             amount = data.get("amount")
-            customer_email = data.get("customer", {}).get("email")
+            customer = data.get("customer", {})
+            customer_email = customer.get("email")
+            customer_code = customer.get("customer_code")
             currency = data.get("currency")
 
             logger.info(
@@ -94,28 +97,42 @@ async def paystack_webhook(
                 "status": data.get("status"),
             }
 
-            # Activate pending subscription when payment succeeds
             try:
-                metadata = data.get("metadata", {})
-                subscription_code = metadata.get("subscription_code")
-                customer_code = data.get("customer", {}).get("customer_code")
+                # Normalize metadata
+                metadata_raw = data.get("metadata")
+                metadata = {}
+                if isinstance(metadata_raw, dict):
+                    metadata = metadata_raw
+                elif isinstance(metadata_raw, str):
+                    try:
+                        import json
 
+                        parsed = json.loads(metadata_raw)
+                        if isinstance(parsed, dict):
+                            metadata = parsed
+                        else:
+                            logger.warning("Webhook metadata parsed but is not an object; ignoring")
+                    except Exception:
+                        logger.warning("Failed to parse metadata JSON string; ignoring")
+                elif metadata_raw not in (None, 0):
+                    logger.warning(f"Unexpected metadata type: {type(metadata_raw)}; ignoring")
+
+                subscription_code = metadata.get("subscription_code")
                 subscription = None
 
+                # Find subscription by subscription_code first
                 if subscription_code:
-                    # Find by subscription code
                     subscription = (
                         db.query(TenantSubscription)
                         .filter(
-                            TenantSubscription.paystack_subscription_code
-                            == subscription_code,
+                            TenantSubscription.paystack_subscription_code == subscription_code,
                             TenantSubscription.status == "pending",
                         )
                         .one_or_none()
                     )
 
+                # Fallback: find the most recent pending subscription for the customer_code
                 if not subscription and customer_code:
-                    # Fallback: most recent pending subscription for customer
                     subscription = (
                         db.query(TenantSubscription)
                         .filter(
@@ -131,15 +148,11 @@ async def paystack_webhook(
                     if subscription.tenant:
                         subscription.tenant.subscription_status = "active"
                     db.commit()
-                    logger.info(
-                        f"Activated subscription {subscription.paystack_subscription_code} after payment"
-                    )
+                    logger.info(f"Activated subscription {subscription.paystack_subscription_code} after payment")
                 else:
-                    logger.warning(
-                        f"No pending subscription found for charge.success - customer_code: {customer_code}"
-                    )
+                    logger.warning(f"No pending subscription found for charge.success - customer_code: {customer_code}")
 
-            except Exception as e:
+            except Exception:
                 logger.exception("Failed to activate subscription after charge.success")
                 db.rollback()
 
