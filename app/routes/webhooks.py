@@ -79,89 +79,29 @@ async def paystack_webhook(
         if event_type == "charge.success":
             reference = data.get("reference")
             amount = data.get("amount")
-            customer = data.get("customer", {})
-            customer_email = customer.get("email")
-            customer_code = customer.get("customer_code")
+            customer_email = data.get("customer", {}).get("email")
             currency = data.get("currency")
-
-            logger.info(
-                f"Payment successful - Reference: {reference}, Amount: {amount} {currency}, Customer: {customer_email}"
-            )
-
+            
+            logger.info(f"Payment successful - Reference: {reference}, Amount: {amount} {currency}, Customer: {customer_email}")
+            
             response_details["details"] = {
                 "reference": reference,
                 "amount": amount,
                 "currency": currency,
                 "customer_email": customer_email,
-                "status": data.get("status"),
+                "status": data.get("status")
             }
-
-            try:
-                # Normalize metadata
-                metadata_raw = data.get("metadata")
-                metadata = {}
-                if isinstance(metadata_raw, dict):
-                    metadata = metadata_raw
-                elif isinstance(metadata_raw, str):
-                    try:
-                        import json
-
-                        parsed = json.loads(metadata_raw)
-                        if isinstance(parsed, dict):
-                            metadata = parsed
-                        else:
-                            logger.warning("Webhook metadata parsed but is not an object; ignoring")
-                    except Exception:
-                        logger.warning("Failed to parse metadata JSON string; ignoring")
-                elif metadata_raw not in (None, 0):
-                    logger.warning(f"Unexpected metadata type: {type(metadata_raw)}; ignoring")
-
-                subscription_code = metadata.get("subscription_code")
-                subscription = None
-
-                # Find subscription by subscription_code first
-                if subscription_code:
-                    subscription = (
-                        db.query(TenantSubscription)
-                        .filter(
-                            TenantSubscription.paystack_subscription_code == subscription_code,
-                            TenantSubscription.status == "pending",
-                        )
-                        .one_or_none()
-                    )
-
-                # Fallback: find the most recent pending subscription for the customer_code
-                if not subscription and customer_code:
-                    subscription = (
-                        db.query(TenantSubscription)
-                        .filter(
-                            TenantSubscription.paystack_customer_code == customer_code,
-                            TenantSubscription.status == "pending",
-                        )
-                        .order_by(TenantSubscription.created_at.desc())
-                        .first()
-                    )
-
-                if subscription:
-                    subscription.status = "active"
-                    if subscription.tenant:
-                        subscription.tenant.subscription_status = "active"
-                    db.commit()
-                    logger.info(f"Activated subscription {subscription.paystack_subscription_code} after payment")
-                else:
-                    logger.warning(f"No pending subscription found for charge.success - customer_code: {customer_code}")
-
-            except Exception:
-                logger.exception("Failed to activate subscription after charge.success")
-                db.rollback()
 
         elif event_type == "subscription.create":
             subscription_code = data.get("subscription_code")
+
             customer = data.get("customer") or {}
             customer_email = customer.get("email")
             customer_code = customer.get("customer_code")
+
             plan_data = data.get("plan") or {}
             plan_code = plan_data.get("plan_code") or plan_data.get("code")
+
             next_payment_date_raw = data.get("next_payment_date")
 
             if not subscription_code or not customer_email or not plan_code:
@@ -171,7 +111,9 @@ async def paystack_webhook(
             try:
                 # 1. Resolve user + tenant
                 user = (
-                    db.query(User).filter(User.email == customer_email).one_or_none()
+                    db.query(User)
+                    .filter(User.email == customer_email)
+                    .one_or_none()
                 )
                 if not user or not user.tenant:
                     logger.error(
@@ -184,7 +126,9 @@ async def paystack_webhook(
                 # 2. Resolve plan (MANDATORY)
                 plan = (
                     db.query(SubscriptionPlan)
-                    .filter(SubscriptionPlan.paystack_plan_code == plan_code)
+                    .filter(
+                        SubscriptionPlan.paystack_plan_code == plan_code
+                    )
                     .one_or_none()
                 )
                 if not plan:
@@ -193,17 +137,18 @@ async def paystack_webhook(
                     )
                     raise RuntimeError("Unmapped Paystack plan")
 
-                # 3. Close existing subscriptions (including pending ones)
+                # 3. Close existing active subscriptions (CRITICAL)
                 previous_subscriptions = (
                     db.query(TenantSubscription)
                     .filter(
                         TenantSubscription.tenant_id == tenant.id,
                         TenantSubscription.status.in_(
-                            ["active", "past_due", "non-renewing", "pending"]
+                            ["active", "past_due", "non-renewing"]
                         ),
                     )
                     .all()
                 )
+
                 for old_sub in previous_subscriptions:
                     old_sub.status = "expired"
                     old_sub.ended_at = datetime.now(timezone.utc)
@@ -224,14 +169,14 @@ async def paystack_webhook(
                         plan_id=plan.id,
                         paystack_subscription_code=subscription_code,
                         paystack_customer_code=customer_code,
-                        status="pending",
+                        status="active",
                         started_at=datetime.now(timezone.utc),
                     )
                     db.add(subscription)
                     db.flush()
                 else:
                     subscription.plan_id = plan.id
-                    subscription.status = "pending"
+                    subscription.status = "active"
 
                 # 5. Billing date (best effort)
                 if next_payment_date_raw:
@@ -247,7 +192,9 @@ async def paystack_webhook(
                 # 6. Ensure usage row
                 usage = (
                     db.query(SubscriptionUsage)
-                    .filter(SubscriptionUsage.subscription_id == subscription.id)
+                    .filter(
+                        SubscriptionUsage.subscription_id == subscription.id
+                    )
                     .one_or_none()
                 )
                 if not usage:
@@ -264,21 +211,15 @@ async def paystack_webhook(
                 tenant.paystack_customer_code = (
                     customer_code or tenant.paystack_customer_code
                 )
-                tenant.subscription_status = "pending"
+                tenant.subscription_status = "active"
 
                 db.commit()
-
-                response_details["details"] = {
-                    "subscription_code": subscription_code,
-                    "customer_email": customer_email,
-                    "plan_code": plan_code,
-                    "status": "pending",
-                }
 
             except Exception:
                 db.rollback()
                 logger.exception("subscription.create failed")
                 raise
+
 
         elif event_type in ("subscription.not_renew", "subscription.disable"):
             subscription_code = data.get("subscription_code")
