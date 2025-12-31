@@ -77,7 +77,6 @@ async def paystack_webhook(
 
         # Handle different event types
         if event_type == "charge.success":
-            data = payload.get("data", {})
             reference = data.get("reference")
             amount = data.get("amount")
             customer = data.get("customer", {})
