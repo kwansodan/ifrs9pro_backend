@@ -18,7 +18,6 @@ from app.routes import (
     websocket, 
     billing,
     webhooks,
-    webhooks,
     superadmin,
 )
 from app.models import User, UserRole, Tenant
@@ -191,6 +190,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://do-site-staging.service4gh.com",
         "https://ifrs9pro.service4gh.com",
         "https://www.ifrs9pro.service4gh.com",
         "http://localhost:5173",
