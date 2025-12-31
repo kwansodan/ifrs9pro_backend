@@ -168,11 +168,8 @@ def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
     openapi_schema = original_openapi() 
-    openapi_schema["servers"] = [
-        {"url": "http://localhost:8000", "description": "Localhost"},
-        {"url": "https://do-site.service4gh.com", "description": "Production"},
-        {"url": "https://do-site-staging.service4gh.com", "description": "Staging"}
-    ]
+    # Use a relative server URL so the browser calls the same origin the docs were loaded from
+    openapi_schema["servers"] = [{"url": "/"}]
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 
