@@ -23,7 +23,9 @@ from app.schemas import (
     LoginResponse,
     TenantRegistrationRequest,
     TenantCreate,
-    TenantResponse
+    TenantResponse,
+    ForgotPasswordRequest,
+    ResetPasswordRequest
 )
 from app.auth.utils import (
     create_email_verification_token,
@@ -34,11 +36,13 @@ from app.auth.utils import (
     get_current_active_user,
     is_admin,
     decode_token,
+    create_password_reset_token,
 )
 from app.auth.email import (
     send_verification_email,
     send_admin_notification,
     send_invitation_email,
+    send_password_reset_email,
 )
 from typing import List
 from app.config import settings
@@ -187,7 +191,8 @@ from passlib.exc import PasswordValueError
 
 @router.post("/register-tenant", 
             response_model=TenantToken,
-            responses={409: {"description": "Organization with this name already exists."}})
+            responses={409: {"description": "Organization with this name already exists."},
+                       400: {"description": "You must accept the Terms and Conditions (tnd) and Data Processing Agreement (dpa) to register."}})
 async def register_tenant(request: TenantRegistrationRequest, db: Session = Depends(get_db)):
     try:
         # Require acceptance of Terms and Conditions and Data Processing Agreement
@@ -536,3 +541,45 @@ async def set_password(
                 detail="An account with this email already exists. If you've already set up your password, please log in.",
             )
         raise HTTPException(status_code=400, detail=f"Error setting password: {str(e)}")
+
+
+@router.post("/forgot-password", description="Request password reset token via email")
+async def forgot_password(request: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == request.email).first()
+    if not user:
+        # For security reasons, don't reveal if the user exists
+        return {"message": "If your email is registered, you will receive a password reset link shortly."}
+
+    token = create_password_reset_token(user.email)
+    await send_password_reset_email(user.email, token)
+    return {"message": "If your email is registered, you will receive a password reset link shortly."}
+
+
+@router.post("/reset-password", 
+            responses={400: {"description": "Passwords do not match"},
+                       401: {"description": "Invalid token"}},
+description="Reset password using token")
+async def reset_password(request: ResetPasswordRequest, db: Session = Depends(get_db)):
+    if request.password != request.confirm_password:
+        raise HTTPException(status_code=400, detail="Passwords do not match")
+
+    if len(request.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    try:
+        token_data, token_type = decode_token(request.token)
+        if token_type != "password_reset":
+            raise HTTPException(status_code=400, detail="Invalid token type")
+
+        user = db.query(User).filter(User.email == token_data.email).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        user.hashed_password = get_password_hash(request.password)
+        db.commit()
+
+        return {"message": "Password reset successfully"}
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=400, detail=f"Error resetting password: {str(e)}")

@@ -93,6 +93,15 @@ def create_invitation_token(email: str, tenant_id: Optional[int] = None):
     return encoded_jwt
 
 
+def create_password_reset_token(email: str):
+    """Create a password reset token."""
+    to_encode = {"sub": email, "type": "password_reset"}
+    expire = datetime.utcnow() + timedelta(hours=1)  # Password reset tokens expire in 1 hour
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+
 def decode_token(token: str):
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])

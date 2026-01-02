@@ -154,6 +154,14 @@ class PasswordSetup(BaseModel):
     confirm_password: str = Field(..., min_length=8, example="MyS3cur3Pwd")
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(PasswordSetup):
+    token: str
+
+
 class Token(BaseModel):
     access_token: str
     token_type: str
