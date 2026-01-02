@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from fastapi.responses import JSONResponse, StreamingResponse
 from app.database import get_db
 from app.dependencies import get_tenant_db
+from sqlalchemy.exc import IntegrityError
 from app.models import (
     AccessRequest,
     User,
@@ -166,10 +167,8 @@ async def create_user(
     current_user: User = Depends(is_admin),
     subscription: TenantSubscription = Depends(require_active_subscription),
 ):
-    # Check if user with same email already exists
-    existing_user = db.query(User).filter(
-        User.email == user_create.email,
-        User.tenant_id == current_user.tenant_id).first()
+    # Check if user with same email already exists (global check)
+    existing_user = db.query(User).filter(User.email == user_create.email).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
 
@@ -203,8 +202,13 @@ async def create_user(
 
     new_user = User(**user_data, tenant_id=current_user.tenant_id)
     db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
+    try:
+        db.commit()
+        db.refresh(new_user)
+    except IntegrityError as e:
+        db.rollback()
+        # Handle possible unique constraint violation on email
+        raise HTTPException(status_code=400, detail="Email already registered")
 
     # Associate new user with same current subscription (team membership) and
     # increment team usage atomically.
@@ -214,7 +218,11 @@ async def create_user(
         usage.current_team_count += 1
         db.add(new_user)
         db.add(usage)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=500, detail="Failed to associate subscription with new user")
 
     # Link portfolio if provided
     if user_create.portfolio_id:
@@ -228,8 +236,8 @@ async def create_user(
         portfolio.user_id = new_user.id
         db.commit()
 
-    # create token containing users email
-    token = create_invitation_token(new_user.email)
+    # create token containing users email and tenant so it's bound to this tenant
+    token = create_invitation_token(new_user.email, tenant_id=current_user.tenant_id)
 
     # Send email for password setup
     await send_password_setup_email(new_user.email, token)
@@ -504,9 +512,18 @@ async def update_access_request(
     if request_update.status == RequestStatus.APPROVED and request_update.role:
         access_request.role = request_update.role
 
+        # Assign tenant of approving admin to the access request so the
+        # eventual created user will be a member of the approver's tenant.
+        try:
+            access_request.tenant_id = current_user.tenant_id
+        except Exception:
+            # In case the model doesn't have tenant_id attribute, skip silently.
+            pass
+
         # Generate invitation token
-        token = create_invitation_token(access_request.email)
+        token = create_invitation_token(access_request.email, tenant_id=access_request.tenant_id)
         access_request.token = token
+        # Use timezone-aware expiry
         access_request.token_expiry = datetime.now(timezone.utc) + timedelta(
             hours=settings.INVITATION_EXPIRE_HOURS
         )

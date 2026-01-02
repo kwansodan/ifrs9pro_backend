@@ -36,7 +36,9 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
         expire = datetime.utcnow() + timedelta(
             minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
         )
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expire,
+                    "tenant_id": data.get("tenant_id")
+                    })
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
@@ -78,8 +80,13 @@ def verify_token(token: str) -> dict:
     return payload
 
 
-def create_invitation_token(email: str):
+def create_invitation_token(email: str, tenant_id: Optional[int] = None):
+    """Create an invitation token. Optionally include tenant_id so the
+    invitation is bound to the approver's tenant and cannot be used across tenants.
+    """
     to_encode = {"sub": email, "type": "invitation"}
+    if tenant_id is not None:
+        to_encode.update({"tenant_id": tenant_id})
     expire = datetime.utcnow() + timedelta(hours=settings.INVITATION_EXPIRE_HOURS)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
@@ -92,6 +99,7 @@ def decode_token(token: str):
         email: str = payload.get("sub")
         exp: datetime = datetime.fromtimestamp(payload.get("exp"))
         token_type: str = payload.get("type", "access")
+        tenant_id = payload.get("tenant_id")
 
         if email is None:
             raise HTTPException(
@@ -103,7 +111,7 @@ def decode_token(token: str):
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired"
             )
 
-        token_data = TokenData(email=email, exp=exp)
+        token_data = TokenData(email=email, exp=exp, tenant_id=tenant_id)
         return token_data, token_type
     except JWTError:
         raise HTTPException(

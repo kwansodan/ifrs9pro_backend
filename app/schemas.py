@@ -165,6 +165,7 @@ class TenantToken(BaseModel):
 class TokenData(BaseModel):
     email: Optional[EmailStr] = None
     exp: Optional[datetime] = None
+    tenant_id: Optional[int] = None
 
 
 # ==================== ACCESS REQUEST MODELS ====================

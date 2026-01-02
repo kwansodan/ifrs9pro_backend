@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Form, Body
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app.models import (
     AccessRequest, 
@@ -332,6 +333,7 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
         "id": user.id,
         "role": user.role,
         "is_active": user.is_active,
+        "tenant_id": user.tenant_id
     }
 
     access_token = create_access_token(
@@ -419,9 +421,17 @@ async def update_access_request(
         access_request.role = request_update.role
 
         # Generate invitation token
-        token = create_invitation_token(access_request.email)
+        token = create_invitation_token(access_request.email, tenant_id=access_request.tenant_id)
         access_request.token = token
-        access_request.token_expiry = datetime.utcnow() + timedelta(
+        # Assign tenant of approving admin so the new user will belong to the
+        # approver's tenant. Keep a fallback if model lacks tenant_id.
+        try:
+            access_request.tenant_id = current_user.tenant_id
+        except Exception:
+            pass
+
+        # Use timezone-aware expiry
+        access_request.token_expiry = datetime.now(timezone.utc) + timedelta(
             hours=settings.INVITATION_EXPIRE_HOURS
         )
 
@@ -462,10 +472,13 @@ async def set_password(
         if token_type != "invitation":
             raise HTTPException(status_code=400, detail="Invalid token type")
 
+        # Look up the access request by token to ensure we use the same approval
+        # context (tenant) encoded into the invitation token.
         access_request = (
             db.query(AccessRequest)
             .filter(
                 AccessRequest.email == token_data.email,
+                AccessRequest.token == token,
                 AccessRequest.status == RequestStatus.APPROVED,
             )
             .first()
@@ -475,22 +488,28 @@ async def set_password(
             raise HTTPException(status_code=404, detail="Approved request not found")
 
         # Check if user already exists
-        existing_user = (
-            db.query(User).filter(User.email == access_request.email).first()
-        )
+        existing_user = db.query(User).filter(User.email == access_request.email).first()
         if existing_user:
             # Update existing user's password instead of creating new user
             existing_user.hashed_password = get_password_hash(password)
-            # You might want to update other fields as needed
         else:
-            # Create the user
+            # Prefer tenant from the token payload (set at approval time). Fall back
+            # to the access_request.tenant_id if token lacks it.
+            tenant_for_new_user = getattr(token_data, "tenant_id", None) or access_request.tenant_id
+
             new_user = User(
                 email=access_request.email,
                 hashed_password=get_password_hash(password),
                 role=access_request.role,
-                tenant_id=access_request.tenant_id
+                tenant_id=tenant_for_new_user,
             )
             db.add(new_user)
+            try:
+                db.commit()
+                db.refresh(new_user)
+            except IntegrityError:
+                db.rollback()
+                raise HTTPException(status_code=400, detail="An account with this email already exists.")
 
         # Mark the request as complete
         access_request.status = RequestStatus.APPROVED
