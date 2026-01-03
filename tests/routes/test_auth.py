@@ -62,7 +62,7 @@ def test_submit_admin_request_updates_admin_email(client, db_session):
 
 
 
-def test_set_password_creates_user(client, db_session):
+def test_set_password_creates_user(client, db_session, tenant):
     email = "invitee@example.com"
     token = create_invitation_token(email)
     req = AccessRequest(
@@ -70,6 +70,7 @@ def test_set_password_creates_user(client, db_session):
         status=RequestStatus.APPROVED,
         token=token,
         token_expiry=datetime.utcnow() + timedelta(hours=2),
+        tenant_id=tenant.id
     )
     db_session.add(req)
     db_session.commit()

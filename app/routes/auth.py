@@ -1,9 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Form, Body
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from sqlalchemy.exc import IntegrityError
 from app.database import get_db
-from app.models import AccessRequest, User, RequestStatus, UserRole
+from app.models import (
+    AccessRequest, 
+    User, 
+    RequestStatus, 
+    UserRole,
+    Tenant
+    )
 from app.schemas import (
     EmailVerificationRequest,
     AccessRequestSubmit,
@@ -11,8 +18,14 @@ from app.schemas import (
     AccessRequestUpdate,
     PasswordSetup,
     Token,
+    TenantToken,
     LoginRequest,
     LoginResponse,
+    TenantRegistrationRequest,
+    TenantCreate,
+    TenantResponse,
+    ForgotPasswordRequest,
+    ResetPasswordRequest
 )
 from app.auth.utils import (
     create_email_verification_token,
@@ -23,11 +36,13 @@ from app.auth.utils import (
     get_current_active_user,
     is_admin,
     decode_token,
+    create_password_reset_token,
 )
 from app.auth.email import (
     send_verification_email,
     send_admin_notification,
     send_invitation_email,
+    send_password_reset_email,
 )
 from typing import List
 from app.config import settings
@@ -87,8 +102,11 @@ async def request_access(
                 token = existing_request.token
 
             # Resend verification email
-            await send_verification_email(request_data.email, token)
-            return {"message": "Verification email sent"}
+            try:
+                await send_verification_email(request_data.email, token)
+                return {"message": "Verification email sent"}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
 
 
     # Create new access request
@@ -107,9 +125,14 @@ async def request_access(
 
 
 @router.post("/submit-admin-request", 
-              responses={401: {"description": "Unauthorized"},
-                         404: {"description": "Verified email request not found"}},
-            description="Submit admin email for verified access request",)
+            responses={
+        200: {"description": "Admin request submitted"},
+        401: {"description": "Unauthorized"},
+        404: {"description": "Verified email request not found"},
+        422: {"description": "Invalid request data"},
+        500: {"description": "Internal server error"},
+    },
+        description="Submit admin email for verified access request",)
 async def submit_admin_request(
     request_data: AccessRequestSubmit, db: Session = Depends(get_db)
 ):
@@ -163,6 +186,126 @@ async def get_access_requests(
 
     return access_requests
 
+from sqlalchemy.exc import IntegrityError
+from passlib.exc import PasswordValueError
+
+@router.post("/register-tenant", 
+            response_model=TenantToken,
+            responses={409: {"description": "Organization with this name already exists."},
+                       400: {"description": "You must accept the Terms and Conditions (tnd) and Data Processing Agreement (dpa) to register."}})
+async def register_tenant(request: TenantRegistrationRequest, db: Session = Depends(get_db)):
+    try:
+        # Require acceptance of Terms and Conditions and Data Processing Agreement
+        if not getattr(request, "tnd", False) or not getattr(request, "dpa", False):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="You must accept the Terms and Conditions (tnd) and Data Processing Agreement (dpa) to register."
+            )
+        # ---- Normalize early (can throw UnicodeError) ----
+        company_name = request.company_name.strip()
+        email = request.email.lower().strip()
+
+        # ---- Uniqueness checks ----
+        if db.query(Tenant).filter(Tenant.name == company_name).first():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Organization with this name already exists.",
+            )
+
+        if db.query(User).filter(User.email == email).first():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="User with this email already exists.",
+            )
+
+        # ---- Slug creation (safe, defensive) ----
+        base_slug = "".join(
+            c for c in company_name.lower() if c.isalnum() or c == " "
+        ).strip().replace(" ", "-")
+
+        slug = base_slug or "tenant"
+
+        if db.query(Tenant).filter(Tenant.slug == slug).first():
+            slug = f"{slug}-{abs(hash(email)) % 10_000}"
+
+        # ---- Create tenant ----
+        new_tenant = Tenant(
+            name=company_name,
+            slug=slug,
+            industry=request.industry,
+            country=request.country,
+            accounting_standard=request.preferred_accounting_standard,
+            is_active=True,
+        )
+        db.add(new_tenant)
+        db.flush()
+
+        # ---- Hash password (can throw) ----
+        hashed_password = get_password_hash(request.password)
+
+        # ---- Create admin user ----
+        new_admin = User(
+            email=email,
+            first_name=request.first_name,
+            last_name=request.last_name,
+            phone_number=request.phone_number,
+            job_role=request.job_role,
+            hashed_password=hashed_password,
+            role=UserRole.ADMIN,
+            tenant_id=new_tenant.id,
+            is_active=True,
+        )
+        db.add(new_admin)
+
+        db.commit()
+        db.refresh(new_admin)
+
+    except HTTPException:
+        raise
+
+    except (UnicodeError, ValueError, PasswordValueError):
+        db.rollback()
+        raise HTTPException(
+            status_code=422,
+            detail=[{"loc": ["body"], "msg": "Invalid registration data", "type": "value_error"}]
+        )
+
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Organization or user already exists.",
+        )
+
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=422,
+            detail=[{"loc": ["body"], "msg": "Invalid registration data", "type": "value_error"}]
+        )
+
+    # ---- Token generation (safe) ----
+    access_token_expires = timedelta(
+        minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
+    )
+
+    token_data = {
+        "sub": new_admin.email,
+        "id": new_admin.id,
+        "role": new_admin.role,
+        "tenant_id": new_tenant.id,
+        "is_active": new_admin.is_active,
+    }
+
+    access_token = create_access_token(
+        data=token_data,
+        expires_delta=access_token_expires,
+    )
+
+    return {
+        "billing_token": access_token,
+        "token_type": "bearer",
+    }
 
 
 @router.post("/login",  
@@ -195,6 +338,7 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
         "id": user.id,
         "role": user.role,
         "is_active": user.is_active,
+        "tenant_id": user.tenant_id
     }
 
     access_token = create_access_token(
@@ -282,9 +426,17 @@ async def update_access_request(
         access_request.role = request_update.role
 
         # Generate invitation token
-        token = create_invitation_token(access_request.email)
+        token = create_invitation_token(access_request.email, tenant_id=access_request.tenant_id)
         access_request.token = token
-        access_request.token_expiry = datetime.utcnow() + timedelta(
+        # Assign tenant of approving admin so the new user will belong to the
+        # approver's tenant. Keep a fallback if model lacks tenant_id.
+        try:
+            access_request.tenant_id = current_user.tenant_id
+        except Exception:
+            pass
+
+        # Use timezone-aware expiry
+        access_request.token_expiry = datetime.now(timezone.utc) + timedelta(
             hours=settings.INVITATION_EXPIRE_HOURS
         )
 
@@ -325,10 +477,13 @@ async def set_password(
         if token_type != "invitation":
             raise HTTPException(status_code=400, detail="Invalid token type")
 
+        # Look up the access request by token to ensure we use the same approval
+        # context (tenant) encoded into the invitation token.
         access_request = (
             db.query(AccessRequest)
             .filter(
                 AccessRequest.email == token_data.email,
+                AccessRequest.token == token,
                 AccessRequest.status == RequestStatus.APPROVED,
             )
             .first()
@@ -338,21 +493,28 @@ async def set_password(
             raise HTTPException(status_code=404, detail="Approved request not found")
 
         # Check if user already exists
-        existing_user = (
-            db.query(User).filter(User.email == access_request.email).first()
-        )
+        existing_user = db.query(User).filter(User.email == access_request.email).first()
         if existing_user:
             # Update existing user's password instead of creating new user
             existing_user.hashed_password = get_password_hash(password)
-            # You might want to update other fields as needed
         else:
-            # Create the user
+            # Prefer tenant from the token payload (set at approval time). Fall back
+            # to the access_request.tenant_id if token lacks it.
+            tenant_for_new_user = getattr(token_data, "tenant_id", None) or access_request.tenant_id
+
             new_user = User(
                 email=access_request.email,
                 hashed_password=get_password_hash(password),
                 role=access_request.role,
+                tenant_id=tenant_for_new_user,
             )
             db.add(new_user)
+            try:
+                db.commit()
+                db.refresh(new_user)
+            except IntegrityError:
+                db.rollback()
+                raise HTTPException(status_code=400, detail="An account with this email already exists.")
 
         # Mark the request as complete
         access_request.status = RequestStatus.APPROVED
@@ -379,3 +541,45 @@ async def set_password(
                 detail="An account with this email already exists. If you've already set up your password, please log in.",
             )
         raise HTTPException(status_code=400, detail=f"Error setting password: {str(e)}")
+
+
+@router.post("/forgot-password", description="Request password reset token via email")
+async def forgot_password(request: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == request.email).first()
+    if not user:
+        # For security reasons, don't reveal if the user exists
+        return {"message": "If your email is registered, you will receive a password reset link shortly."}
+
+    token = create_password_reset_token(user.email)
+    await send_password_reset_email(user.email, token)
+    return {"message": "If your email is registered, you will receive a password reset link shortly."}
+
+
+@router.post("/reset-password", 
+            responses={400: {"description": "Passwords do not match"},
+                       401: {"description": "Invalid token"}},
+description="Reset password using token")
+async def reset_password(request: ResetPasswordRequest, db: Session = Depends(get_db)):
+    if request.password != request.confirm_password:
+        raise HTTPException(status_code=400, detail="Passwords do not match")
+
+    if len(request.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    try:
+        token_data, token_type = decode_token(request.token)
+        if token_type != "password_reset":
+            raise HTTPException(status_code=400, detail="Invalid token type")
+
+        user = db.query(User).filter(User.email == token_data.email).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        user.hashed_password = get_password_hash(request.password)
+        db.commit()
+
+        return {"message": "Password reset successfully"}
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=400, detail=f"Error resetting password: {str(e)}")

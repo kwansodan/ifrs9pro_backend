@@ -3,11 +3,12 @@ from app.models import Portfolio, QualityIssue, QualityIssueComment
 
 
 @pytest.fixture
-def portfolio(db_session, regular_user):
+def portfolio(db_session, regular_user, tenant):
     """Create a test portfolio"""
     portfolio = Portfolio(
         name="Test Portfolio",
         user_id=regular_user.id,
+        tenant_id=tenant.id,
         description="Test description",
     )
     db_session.add(portfolio)
@@ -17,10 +18,11 @@ def portfolio(db_session, regular_user):
 
 
 @pytest.fixture
-def quality_issue(db_session, portfolio):
+def quality_issue(db_session, portfolio, tenant):
     """Create a test quality issue"""
     issue = QualityIssue(
         portfolio_id=portfolio.id,
+        tenant_id=tenant.id,
         issue_type="duplicate_customer_ids",
         description="Test duplicate customer IDs found",
         severity="high",

@@ -1,0 +1,364 @@
+<?xml version="1.0" encoding="utf-8"?>
+<testsuites disabled="0" errors="0" failures="2" tests="88" time="508.59297630097535">
+	<testsuite disabled="0" errors="0" failures="2" name="schemathesis" skipped="85" tests="88" time="508.59297630097535" hostname="joojo-laptop">
+		<testcase name="DELETE /admin/feedback/{feedback_id}" time="4.816885">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="DELETE /admin/help/{help_id}" time="4.037512">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /" time="0.184388">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /admin/feedback" time="0.117190">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /admin/feedback/{feedback_id}" time="4.811870">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /admin/help" time="0.143605">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /admin/help/{help_id}" time="4.201886">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /admin/requests" time="0.147442">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /admin/users" time="0.095710">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /admin/users/export" time="0.115261">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /billing/customers/me" time="0.092427">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /billing/overview" time="0.123674">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /billing/plans" time="6.711998">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /billing/pricing" time="7.533058">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /billing/subscriptions" time="0.143504">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /billing/subscriptions/manage-link" time="0.148108">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /billing/transactions/verify/{reference}" time="6.007031">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /dashboard" time="0.133677">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /health" time="0.101792">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /portfolios/" time="8.282466">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /reports/status/{report_id}" time="4.280400">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /superadmin/stats" time="0.156876">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /superadmin/tenants" time="7.342741">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /user/feedback" time="12.042297">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /user/feedback/mine" time="0.141558">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /user/help" time="11.326876">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /user/notifications" time="0.128437">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /verify-email/{token}" time="6.099441">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="PATCH /superadmin/tenants/{tenant_id}/status" time="9.207207">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /billing/customers" time="0.162820">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /billing/subscriptions/change" time="5.004831">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /billing/subscriptions/disable" time="4.389626">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /billing/subscriptions/enable" time="4.399378">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /billing/transactions/initialize" time="6.204007">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /forgot-password" time="7.956423">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /login" time="6.762505">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /portfolios/" time="7.768872">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /register-tenant" time="0.362575">
+			<failure type="failure" message="1. Test Case ID: nz2J8J
+
+- Undocumented HTTP status code
+
+    Received: 400
+    Documented: 200, 409, 422
+
+[400] Bad Request:
+
+    `{&quot;detail&quot;:&quot;You must accept the Terms and Conditions (tnd) and Data Processing Agreement (dpa) to register.&quot;}`
+
+Reproduce with: 
+
+    curl -X POST -H 'Content-Type: application/json' -d '{&quot;company_name&quot;: &quot;00&quot;, &quot;country&quot;: &quot;00&quot;, &quot;dpa&quot;: 0, &quot;email&quot;: &quot;0@A.COM&quot;, &quot;first_name&quot;: &quot;0&quot;, &quot;industry&quot;: &quot;00&quot;, &quot;job_role&quot;: &quot;00&quot;, &quot;last_name&quot;: &quot;0&quot;, &quot;password&quot;: &quot;00000000&quot;, &quot;phone_number&quot;: &quot;0000000&quot;, &quot;preferred_accounting_standard&quot;: &quot;IFRS9&quot;, &quot;tnd&quot;: false}' http://localhost:8000/register-tenant"/>
+			<failure type="failure" message="1. Test Case ID: nz2J8J
+
+- Undocumented HTTP status code
+
+    Received: 400
+    Documented: 200, 409, 422
+
+[400] Bad Request:
+
+    `{&quot;detail&quot;:&quot;You must accept the Terms and Conditions (tnd) and Data Processing Agreement (dpa) to register.&quot;}`
+
+Reproduce with: 
+
+    curl -X POST -H 'Content-Type: application/json' -d '{&quot;company_name&quot;: &quot;00&quot;, &quot;country&quot;: &quot;00&quot;, &quot;dpa&quot;: 0, &quot;email&quot;: &quot;0@A.COM&quot;, &quot;first_name&quot;: &quot;0&quot;, &quot;industry&quot;: &quot;00&quot;, &quot;job_role&quot;: &quot;00&quot;, &quot;last_name&quot;: &quot;0&quot;, &quot;password&quot;: &quot;00000000&quot;, &quot;phone_number&quot;: &quot;0000000&quot;, &quot;preferred_accounting_standard&quot;: &quot;IFRS9&quot;, &quot;tnd&quot;: false}' http://localhost:8000/register-tenant"/>
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /request-access" time="143.477454">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /reset-password" time="0.602447">
+			<failure type="failure" message="1. Test Case ID: 1YenJd
+
+- Undocumented HTTP status code
+
+    Received: 401
+    Documented: 200, 422
+
+[401] Unauthorized:
+
+    `{&quot;detail&quot;:&quot;Invalid token&quot;}`
+
+Reproduce with: 
+
+    curl -X POST -H 'Content-Type: application/json' -d '{&quot;password&quot;: &quot;MyS3cur3Pwd&quot;, &quot;confirm_password&quot;: &quot;MyS3cur3Pwd&quot;, &quot;token&quot;: &quot;&quot;}' http://localhost:8000/reset-password"/>
+			<failure type="failure" message="1. Test Case ID: 1YenJd
+
+- Undocumented HTTP status code
+
+    Received: 401
+    Documented: 200, 422
+
+[401] Unauthorized:
+
+    `{&quot;detail&quot;:&quot;Invalid token&quot;}`
+
+Reproduce with: 
+
+    curl -X POST -H 'Content-Type: application/json' -d '{&quot;password&quot;: &quot;MyS3cur3Pwd&quot;, &quot;confirm_password&quot;: &quot;MyS3cur3Pwd&quot;, &quot;token&quot;: &quot;&quot;}' http://localhost:8000/reset-password
+
+2. Test Case ID: EtbmPW
+
+- Undocumented HTTP status code
+
+    Received: 400
+    Documented: 200, 422
+
+[400] Bad Request:
+
+    `{&quot;detail&quot;:&quot;Passwords do not match&quot;}`
+
+Reproduce with: 
+
+    curl -X POST -H 'Content-Type: application/json' -d '{&quot;confirm_password&quot;: &quot;000000000&quot;, &quot;password&quot;: &quot;MyS3cur3Pwd&quot;, &quot;token&quot;: &quot;&quot;}' http://localhost:8000/reset-password"/>
+			<failure type="failure" message="1. Test Case ID: 1YenJd
+
+- Undocumented HTTP status code
+
+    Received: 401
+    Documented: 200, 422
+
+[401] Unauthorized:
+
+    `{&quot;detail&quot;:&quot;Invalid token&quot;}`
+
+Reproduce with: 
+
+    curl -X POST -H 'Content-Type: application/json' -d '{&quot;password&quot;: &quot;MyS3cur3Pwd&quot;, &quot;confirm_password&quot;: &quot;MyS3cur3Pwd&quot;, &quot;token&quot;: &quot;&quot;}' http://localhost:8000/reset-password
+
+2. Test Case ID: EtbmPW
+
+- Undocumented HTTP status code
+
+    Received: 400
+    Documented: 200, 422
+
+[400] Bad Request:
+
+    `{&quot;detail&quot;:&quot;Passwords do not match&quot;}`
+
+Reproduce with: 
+
+    curl -X POST -H 'Content-Type: application/json' -d '{&quot;confirm_password&quot;: &quot;000000000&quot;, &quot;password&quot;: &quot;MyS3cur3Pwd&quot;, &quot;token&quot;: &quot;&quot;}' http://localhost:8000/reset-password"/>
+		</testcase>
+		<testcase name="POST /set-password/{token}" time="6.308601"/>
+		<testcase name="POST /submit-admin-request" time="5.509775">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /superadmin/tenants" time="5.362360">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /token" time="8.691213">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /user/feedback" time="5.391643">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /user/feedback/{feedback_id}/like" time="4.448252">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /user/help" time="3.568288">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /webhooks/billing" time="9.306418">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="PUT /admin/feedback/{feedback_id}/status" time="6.974218">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="PUT /admin/help/{help_id}/status" time="7.688904">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="PUT /admin/requests/{request_id}" time="9.114972">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="DELETE /admin/requests/{request_id}" time="5.052961">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="DELETE /portfolios/{portfolio_id}" time="4.132484">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /portfolios/{portfolio_id}" time="4.239553">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /superadmin/tenants/{tenant_id}" time="5.268418">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="PUT /portfolios/{portfolio_id}" time="23.170669"/>
+		<testcase name="DELETE /reports/{portfolio_id}/report/{report_id}" time="3.513337">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /portfolios/{portfolio_id}/calculate-ecl" time="6.059601">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /portfolios/{portfolio_id}/calculate-local-impairment" time="6.366213">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /portfolios/{portfolio_id}/quality-issues" time="7.746295">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /portfolios/{portfolio_id}/quality-issues/download" time="10.331686">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /portfolios/{portfolio_id}/quality-issues/{issue_id}" time="3.791832">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /portfolios/{portfolio_id}/quality-issues/{issue_id}/comments" time="5.415764">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /portfolios/{portfolio_id}/quality-issues/{issue_id}/download" time="6.956514">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /reports/{portfolio_id}/history" time="10.590011">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /reports/{portfolio_id}/report/{report_id}" time="3.711990">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /reports/{portfolio_id}/report/{report_id}/download" time="3.382809">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /admin/users" time="8.056796">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /portfolios/{portfolio_id}/approve-all-quality-issues" time="9.221254">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /portfolios/{portfolio_id}/ingest" time="12.468312">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /portfolios/{portfolio_id}/ingest/save" time="7.225588">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /portfolios/{portfolio_id}/quality-issues/{issue_id}/approve" time="0.240945">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /portfolios/{portfolio_id}/quality-issues/{issue_id}/comments" time="0.312076">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /portfolios/{portfolio_id}/recheck-quality" time="0.092091">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /portfolios/{portfolio_id}/stage-loans-ecl" time="0.139482">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /portfolios/{portfolio_id}/stage-loans-local" time="0.108199">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="POST /reports/{portfolio_id}/generate" time="0.309715">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="PUT /portfolios/{portfolio_id}/quality-issues/{issue_id}" time="0.383863">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="PUT /portfolios/{portfolio_id}/quality-issues/{issue_id}/comments/{comment_id}" time="0.506382">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="DELETE /admin/users/{user_id}" time="0.081672">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="DELETE /user/feedback/{feedback_id}" time="0.079757">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="DELETE /user/help/{help_id}" time="0.099115">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /admin/users/{user_id}" time="0.092819">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /user/feedback/{feedback_id}" time="0.081155">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="GET /user/help/{help_id}" time="0.113882">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="PUT /admin/users/{user_id}" time="0.599952">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="PUT /user/feedback/{feedback_id}" time="0.249296">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+		<testcase name="PUT /user/help/{help_id}" time="0.269589">
+			<skipped type="skipped">No examples in schema</skipped>
+		</testcase>
+	</testsuite>
+</testsuites>

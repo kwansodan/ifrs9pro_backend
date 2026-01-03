@@ -1,7 +1,8 @@
-from pydantic import BaseModel, EmailStr, Field
+from typing import Annotated, Literal
+from pydantic import BaseModel, Field, EmailStr, SecretStr, field_validator, ValidationError
 from pydantic.types import StrictBool
 from typing import List, Dict, Any, Optional
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from enum import Enum
 
 # ==================== ENUM DEFINITIONS ====================
@@ -14,6 +15,7 @@ class RequestStatus(str, Enum):
 
 
 class UserRole(str, Enum):
+    SUPER_ADMIN="super_admin"
     ADMIN = "admin"
     ANALYST = "analyst"
     REVIEWER = "reviewer"
@@ -60,6 +62,32 @@ class FeedbackStatusEnum(str, Enum):
     COMPLETED = "completed"
 
 
+# ==================== TENANT REGISTRATION ====================
+class TenantRegistrationRequest(BaseModel):
+    # Company details
+    company_name: str = Field(min_length=2, max_length=100)
+    industry: str = Field(min_length=2, max_length=50)
+    country: str = Field(min_length=2, max_length=2)
+
+    preferred_accounting_standard: Literal[
+        "IFRS9",
+        "IFRS9_BOG",
+    ]
+
+    # Admin user
+    first_name: str = Field(min_length=1, max_length=50)
+    last_name: str = Field(min_length=1, max_length=50)
+    email: EmailStr
+    phone_number: str = Field(min_length=7, max_length=20)
+    job_role: str = Field(min_length=2, max_length=50)
+
+    password: str = Field(min_length=8, max_length=128)
+
+    # Terms and Conditions
+    tnd: Optional[bool] = False
+    dpa: Optional[bool] = False
+
+
 # ==================== AUTH MODELS ====================
 
 class UserModel(BaseModel):
@@ -100,7 +128,7 @@ class UserResponse(BaseModel):
     recovery_email: Optional[EmailStr] = None
     role: UserRole
     is_active: bool
-    created_at: datetime
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     last_login: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -123,17 +151,29 @@ class EmailVerificationRequest(BaseModel):
 
 class PasswordSetup(BaseModel):
     password: str = Field(..., min_length=8, example="MyS3cur3Pwd")
-    confirm_password: str
+    confirm_password: str = Field(..., min_length=8, example="MyS3cur3Pwd")
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(PasswordSetup):
+    token: str
 
 
 class Token(BaseModel):
     access_token: str
     token_type: str
 
+class TenantToken(BaseModel):
+    billing_token: str
+    token_type: str
 
 class TokenData(BaseModel):
     email: Optional[EmailStr] = None
     exp: Optional[datetime] = None
+    tenant_id: Optional[int] = None
 
 
 # ==================== ACCESS REQUEST MODELS ====================
@@ -909,6 +949,7 @@ class UploadedFileBase(BaseModel):
     object_name: str
     excel_columns: List[str]
     model_columns: List[str]
+    row_count: Optional[int] = None
 
 
 class LoanDetailsFile(UploadedFileBase):
@@ -954,3 +995,64 @@ class FileMapping(BaseModel):
 
 class IngestPayload(BaseModel):
     files: List[FileMapping] = Field(..., description="List of files to ingest with mappings")
+
+
+# ==================== BILLING MODELS ====================
+class CustomerCreate(BaseModel):
+    first_name: str
+    last_name: str
+    phone: Optional[str] = None
+
+
+class TransactionInitialize(BaseModel):
+    amount: int = Field(..., description="Amount in GHS (smallest currency unit)")
+    reference: Optional[str] = None
+    callback_url: Optional[str] = None
+    plan: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class SubscriptionDisable(BaseModel):
+    code: str = Field(..., description="Subscription code")
+    token: str = Field(..., description="Email token")
+
+class ChangeSubscriptionRequest(BaseModel):
+    new_plan_code: str
+    old_subscription_token: str
+
+class SubscriptionEnable(BaseModel):
+    code: str = Field(..., description="Subscription code")
+    token: str = Field(..., description="Email token")
+
+
+# ---MULTITENANCY SCHEMAS  ---
+class TenantCreate(BaseModel):
+    name: str
+    slug: str
+    admin_email: EmailStr
+    admin_first_name: str
+    admin_last_name: str
+    plan_name: str = "core"  # Default plan
+
+class TenantResponse(BaseModel):
+    id: int
+    name: str
+    slug: str
+    is_active: bool
+    created_at: datetime
+    user_count: int
+    portfolio_count: int
+
+    class Config:
+        from_attributes = True
+
+class TenantUpdate(BaseModel):
+    name: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class SystemStats(BaseModel):
+    total_tenants: int
+    total_users: int
+    total_portfolios: int
+    total_loans: int
+    total_value_locked: float

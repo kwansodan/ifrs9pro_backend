@@ -15,6 +15,7 @@ import pandas as pd
 import logging
 
 from app.database import get_db
+from app.dependencies import get_tenant_db
 from app.models import Portfolio, User, QualityIssue, QualityIssueComment
 from app.auth.utils import get_current_active_user
 from app.schemas import (
@@ -61,7 +62,7 @@ def get_quality_issues(
     portfolio_id: int,
     status_type: Optional[str] = None,
     issue_type: Optional[str] = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -115,7 +116,7 @@ async def download_all_quality_issues_excel(
     status_type: Optional[str] = None,
     issue_type: Optional[str] = None,
     include_comments: bool = Query(False, description="Include comments in the download"),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -249,7 +250,7 @@ async def download_all_quality_issues_excel(
 def get_quality_issue(
     portfolio_id: int,
     issue_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -294,7 +295,7 @@ def update_quality_issue(
     portfolio_id: int,
     issue_id: int,
     issue_update: QualityIssueUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -349,7 +350,7 @@ def add_comment_to_quality_issue(
     portfolio_id: int,
     issue_id: int,
     comment_data: QualityIssueCommentCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -401,7 +402,7 @@ def add_comment_to_quality_issue(
 def get_quality_issue_comments(
     portfolio_id: int,
     issue_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -454,7 +455,7 @@ def edit_quality_issue_comment(
     issue_id: int,
     comment_id: int,
     comment_data: QualityIssueCommentCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -517,7 +518,7 @@ def approve_quality_issue(
     portfolio_id: int,
     issue_id: int,
     comment: Optional[str] = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -577,7 +578,7 @@ def approve_quality_issue(
 def approve_all_quality_issues(
     portfolio_id: int,
     comment: Optional[str] = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -633,7 +634,7 @@ def approve_all_quality_issues(
                         401: {"description": "Not authenticated"},},)
 def recheck_quality_issues(
     portfolio_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -678,7 +679,7 @@ async def download_quality_issue_excel(
     portfolio_id: int,
     issue_id: int,
     include_comments: bool = Query(True, description="Include comments in the download"),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """

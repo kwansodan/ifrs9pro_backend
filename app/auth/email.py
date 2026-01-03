@@ -128,3 +128,20 @@ Thank you,
 IFRS9Pro Team
     """
     return await send_email(email, subject, body)
+
+
+async def send_password_reset_email(email: str, token: str):
+    reset_url = f"{FRONTEND_BASE_URL}/reset-password?token={token}"
+    subject = "Reset your password"
+    body = f"""
+Hello,
+You requested to reset your password. Please click the link below to set a new password:
+{reset_url}
+This link will expire in 1 hour.
+
+If you did not request this, please ignore this email.
+
+Thank you,
+IFRS9Pro Team
+    """
+    return await send_email(email, subject, body)

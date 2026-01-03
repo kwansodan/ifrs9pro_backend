@@ -6,7 +6,7 @@ from fastapi import Depends, HTTPException, status, WebSocket, Query
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import User
+from app.models import User, Tenant
 from app.schemas import TokenData
 import os
 from dotenv import load_dotenv
@@ -36,7 +36,9 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
         expire = datetime.utcnow() + timedelta(
             minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
         )
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expire,
+                    "tenant_id": data.get("tenant_id")
+                    })
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
@@ -78,9 +80,23 @@ def verify_token(token: str) -> dict:
     return payload
 
 
-def create_invitation_token(email: str):
+def create_invitation_token(email: str, tenant_id: Optional[int] = None):
+    """Create an invitation token. Optionally include tenant_id so the
+    invitation is bound to the approver's tenant and cannot be used across tenants.
+    """
     to_encode = {"sub": email, "type": "invitation"}
+    if tenant_id is not None:
+        to_encode.update({"tenant_id": tenant_id})
     expire = datetime.utcnow() + timedelta(hours=settings.INVITATION_EXPIRE_HOURS)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+
+def create_password_reset_token(email: str):
+    """Create a password reset token."""
+    to_encode = {"sub": email, "type": "password_reset"}
+    expire = datetime.utcnow() + timedelta(hours=1)  # Password reset tokens expire in 1 hour
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
@@ -92,6 +108,7 @@ def decode_token(token: str):
         email: str = payload.get("sub")
         exp: datetime = datetime.fromtimestamp(payload.get("exp"))
         token_type: str = payload.get("type", "access")
+        tenant_id = payload.get("tenant_id")
 
         if email is None:
             raise HTTPException(
@@ -103,7 +120,7 @@ def decode_token(token: str):
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired"
             )
 
-        token_data = TokenData(email=email, exp=exp)
+        token_data = TokenData(email=email, exp=exp, tenant_id=tenant_id)
         return token_data, token_type
     except JWTError:
         raise HTTPException(
@@ -139,7 +156,7 @@ def get_current_active_user(current_user: User = Depends(get_current_user)):
 
 
 def is_admin(current_user: User = Depends(get_current_active_user)):
-    if current_user.role != models.UserRole.ADMIN:
+    if current_user.role not in [models.UserRole.ADMIN, models.UserRole.SUPER_ADMIN]:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     return current_user
 
@@ -171,3 +188,26 @@ async def get_current_active_user_ws(
     except Exception as e:
         await websocket.close(code=1011, reason=f"Server error: {str(e)}")
         return None
+
+# --- DEPENDENCIES ---
+def require_super_admin(current_user: User = Depends(get_current_active_user)):
+    """
+    Gatekeeper: Only allow users with role 'super_admin' to access these endpoints.
+    """
+    if current_user.role != "super_admin":  # Ensure 'super_admin' is added to UserRole enum
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have super admin privileges."
+        )
+    return current_user
+
+
+def get_current_tenant(user: User = Depends(get_current_active_user)) -> Tenant:
+    if not user.tenant_id:
+        raise HTTPException(status_code=400, detail="User is not associated with a tenant.")
+    
+    # Optional: Check if tenant is active/paid
+    if not user.tenant.is_active:
+         raise HTTPException(status_code=403, detail="Tenant account is suspended.")
+         
+    return user.tenant

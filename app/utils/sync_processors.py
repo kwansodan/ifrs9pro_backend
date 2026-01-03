@@ -13,13 +13,14 @@ from app.models import (
     Security,
     Portfolio,
     QualityIssue,
-    DeductionStatus
+    DeductionStatus,
+    TenantSubscription,
 )
 from app.utils.quality_checks import create_and_save_quality_issues
 
 logger = logging.getLogger(__name__)
 
-async def process_loan_details_sync(file_content, portfolio_id, db):
+async def process_loan_details_sync(file_content, portfolio_id, tenant_id, db):
     import io, decimal, polars as pl
     from sqlalchemy import text
     from app.models import Loan, Client
@@ -259,8 +260,26 @@ async def process_loan_details_sync(file_content, portfolio_id, db):
                 logger.warning(f"Failed to convert boolean columns: {str(e)}")
      
      
-        # Add portfolio_id to all records
+        # Add portfolio_id (and subscription_id) to all records
         df = df.with_columns(pl.lit(portfolio_id).alias("portfolio_id"))
+
+        # Derive subscription_id from portfolio so that loan rows are tied to subscription
+        portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
+        subscription_id_value = None
+        if portfolio and portfolio.subscription_id:
+            subscription_id_value = int(portfolio.subscription_id)
+
+        if subscription_id_value is not None:
+            df = df.with_columns(pl.lit(subscription_id_value).alias("subscription_id"))
+
+        # Add tenant id to loan records
+        if tenant_id: 
+            tenant_id_value = int(tenant_id)
+            df = df.with_columns(pl.lit(tenant_id_value).alias("tenant_id"))
+        else:
+            logger.error(f"Portfolio {portfolio_id} does not have a tenant_id")
+            return {"error": "Tenant id missing in loan records"}
+        
 
         # Clear existing loans for this portfolio
         try:
@@ -284,7 +303,7 @@ async def process_loan_details_sync(file_content, portfolio_id, db):
             if use_copy:
                 csv_buffer = io.StringIO()
                 loan_columns = [
-                    "portfolio_id", "loan_no", "employee_id", "employee_name",
+                    "portfolio_id", "tenant_id", "loan_no", "employee_id", "employee_name",
                     "employer", "loan_issue_date", "deduction_start_period",
                     "submission_period", "maturity_period", "location_code",
                     "dalex_paddy", "team_leader", "loan_type", "loan_amount",
@@ -393,7 +412,7 @@ async def process_loan_details_sync(file_content, portfolio_id, db):
 
 
 
-async def process_client_data_sync(file_content, portfolio_id, db):
+async def process_client_data_sync(file_content, portfolio_id, tenant_id, db):
     """Synchronous function to process client data with high-performance optimizations for large datasets using Polars."""
     try:
         # Target column names (lowercase for matching)
@@ -553,6 +572,14 @@ async def process_client_data_sync(file_content, portfolio_id, db):
         else:
             # Ensure client_type has a default value
             df = df.with_columns(pl.col("client_type").fill_null("individual"))
+
+        # Add tenant id to loan records
+        if tenant_id: 
+            tenant_id_value = int(tenant_id)
+            df = df.with_columns(pl.lit(tenant_id_value).alias("tenant_id"))
+        else:
+            logger.error(f"Portfolio {portfolio_id} does not have a tenant_id")
+            return {"error": "Tenant id missing in client records"}
         
         # Use PostgreSQL's COPY command for bulk insert (much faster than ORM)
         try:
@@ -565,7 +592,7 @@ async def process_client_data_sync(file_content, portfolio_id, db):
             
             # Define the columns we want to insert
             client_columns = [
-                "portfolio_id", "employee_id", "last_name", "other_names", 
+                "portfolio_id", "tenant_id", "employee_id", "last_name", "other_names", 
                 "residential_address", "postal_address", "phone_number", 
                 "title", "marital_status", "gender", "date_of_birth", 
                 "employer", "previous_employee_no", "social_security_no", 

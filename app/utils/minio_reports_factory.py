@@ -98,10 +98,11 @@ def upload_and_extract_columns(
     # Upload to MinIO
     file_url = upload_file_to_minio(tmp_path, object_name)
 
-    # Load Excel to extract headers
+    # Load Excel to extract headers (and row count for billing limits)
     try:
         df = pd.read_excel(tmp_path)
         excel_columns = df.columns.tolist()
+        row_count = len(df.index)
     except Exception as e:
         raise HTTPException(400, f"Invalid Excel for {key}: {e}")
 
@@ -116,6 +117,7 @@ def upload_and_extract_columns(
         "file_url": file_url,
         "object_name": object_name,
         "excel_columns": excel_columns,
+        "row_count": row_count,
         "model_columns": model_columns,
     }
 

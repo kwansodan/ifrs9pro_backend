@@ -7,9 +7,20 @@ from fastapi.middleware.gzip import GZipMiddleware
 from sqlalchemy.orm import Session
 from app.database import get_db, init_db
 # Import all routers including websocket
-from app.routes import auth, portfolio, admin, reports, dashboard, user as user_router, quality_issues, websocket
-from app.models import User, UserRole
-from app.auth.utils import get_password_hash
+from app.routes import (
+    auth, 
+    portfolio, 
+    admin, 
+    reports, 
+    dashboard, 
+    user as user_router, 
+    quality_issues, 
+    websocket, 
+    billing,
+    webhooks,
+    superadmin,
+)
+from app.models import User, UserRole, Tenant
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from datetime import datetime, timedelta
@@ -17,19 +28,111 @@ from app.auth.utils import (
     get_password_hash,
     verify_password,
     create_access_token,
+    require_super_admin
 )
 from app.config import settings
 import pickle
 import numpy as np
 import asyncio
-
+from app.utils.billing import require_active_subscription
+from contextlib import asynccontextmanager
+from app.database import SessionLocal
+from app.utils.seed_subscription_plans import seed_subscription_plans
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("app")
 
+# Consolidated lifespan for all startup/shutdown logic
+@asynccontextmanager
+async def lifespan(app):
+    """Handle all startup and shutdown logic"""
+    logger.info("=== Application Starting Up ===")
+    
+    # Initialize database
+    try:
+        logger.info("Initializing database...")
+        init_db()
+        logger.info("Database initialized successfully")
+    except Exception as e:
+        logger.error(f"Error initializing database: {e}")
+    
+    # Seed subscription plans
+    db = SessionLocal()
+    try:
+        logger.info("Seeding subscription plans...")
+        seed_subscription_plans(db)
+        logger.info("Subscription plans seeded successfully")
+    except Exception as e:
+        logger.error(f"Error seeding subscription plans: {e}")
+    finally:
+        db.close()
+    
+    # Create admin user
+    db = SessionLocal()
+    try:
+        logger.info("Checking for System Tenant and Super Admin...")
+        
+        # A. Create System Tenant (Platform Owner)
+        # We use a reserved slug like 'system' or 'platform'
+        system_tenant = db.query(Tenant).filter(Tenant.slug == "system").first()
+        
+        if not system_tenant:
+            logger.info("Creating 'System' tenant...")
+            system_tenant = Tenant(
+                name="System Administrator",
+                slug="system",
+                is_active=True,
+                subscription_status="active" # System tenant is always active
+            )
+            db.add(system_tenant)
+            db.commit()
+            db.refresh(system_tenant)
+            logger.info(f"✅ System tenant created with ID: {system_tenant.id}")
+        
+        # B. Create Super Admin User
+        admin_email = os.getenv("ADMIN_EMAIL")
+        admin_password = os.getenv("ADMIN_PASSWORD")
 
-# Initialize the FastAPI app first
+        if not admin_email or not admin_password:
+            logger.warning("⚠️ ADMIN_EMAIL or ADMIN_PASSWORD not set. Skipping Super Admin creation.")
+        else:
+            # Check if super admin exists
+            existing_admin = db.query(User).filter(User.email == admin_email).first()
+            
+            if not existing_admin:
+                try:
+                    super_admin = User(
+                        email=admin_email,
+                        hashed_password=get_password_hash(admin_password),
+                        role=UserRole.SUPER_ADMIN, # <--- MUST BE SUPER_ADMIN
+                        is_active=True,
+                        tenant_id=system_tenant.id # <--- LINK TO SYSTEM TENANT
+                    )
+                    db.add(super_admin)
+                    db.commit()
+                    logger.info(f"✅ Super Admin created: {admin_email}")
+                except Exception as e:
+                    db.rollback()
+                    logger.error(f"❌ Error creating super admin: {e}")
+            else:
+                # Optional: Ensure existing admin has the correct role and tenant
+                if existing_admin.role != UserRole.SUPER_ADMIN:
+                    logger.warning(f"⚠️ User {admin_email} exists but is not SUPER_ADMIN.")
+
+    except Exception as e:
+        logger.error(f"❌ Critical error in startup seeding: {e}")
+    finally:
+        db.close()
+    
+    logger.info("=== Application Startup Complete ===")
+    
+    yield
+    
+    logger.info("=== Application Shutting Down ===")
+
+
+# Initialize the FastAPI app
 app = FastAPI(
     title="IFRS9 API",
     description="API for IFRS9 calculations and reporting",
@@ -38,21 +141,25 @@ app = FastAPI(
         "name": "IFRS9 PRO",
         "email": "admin@ifrs9pro.com",
     },
+    lifespan=lifespan
 )
 
 # Global OpenAPI tags
 app.openapi_tags = [
+    {"name": "superadmin", "description": "Endpoints for superadmin actions"},
     {"name": "admin", "description": "Endpoints for administrative actions"},
+    {"name": "billing", "description": "Endpoints for billing actions"},
+    {"name": "webhooks", "description": "Webhook endpoints"},
     {"name": "auth", "description": "Authentication and login endpoints"},
     {"name": "dashboard", "description": "Endpoints for dashboard data"},
     {"name": "portfolios", "description": "Portfolio management endpoints"},
-    {"name": "quality-issues", "description": "Endpoints for quality issues"},
+    {"name": "quality-issues", "description": "Endpoints for portfolio quality issues"},
     {"name": "reports", "description": "Reporting endpoints"},
-    {"name": "user actions", "description": "Endpoints for general user actions"},
+    {"name": "user", "description": "User-related operations including feedback, help, notifications"},
+    {"name": "token", "description": "Authentication and token operations"},
     {"name": "websocket", "description": "WebSocket endpoints"},
 ]
 
-# Add servers manually
 
 # Save original method
 original_openapi = app.openapi
@@ -61,17 +168,12 @@ def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
     openapi_schema = original_openapi() 
-    openapi_schema["servers"] = [
-        {"url": "http://localhost:8000", "description": "Localhost"},
-        {"url": "https://do-site.service4gh.com", "description": "Production"},
-        {"url": "https://do-site-staging.service4gh.com", "description": "Staging"}
-    ]
+    # Use a relative server URL so the browser calls the same origin the docs were loaded from
+    openapi_schema["servers"] = [{"url": "/"}]
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 
 app.openapi = custom_openapi
-
-
 
 # Add a health check endpoint immediately
 @app.get("/health", tags=["health"], description="Check API health")
@@ -85,6 +187,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://do-site-staging.service4gh.com",
         "https://ifrs9pro.service4gh.com",
         "https://www.ifrs9pro.service4gh.com",
         "http://localhost:5173",
@@ -96,6 +199,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 @app.middleware("http")
 async def log_preflight_requests(request: Request, call_next):
     if request.method == "OPTIONS":
@@ -104,17 +208,20 @@ async def log_preflight_requests(request: Request, call_next):
         logging.info(f"Preflight from {origin} | Access-Control-Request-Headers: {access_control_req_headers}")
     return await call_next(request)
 
-
-
 # Register routers
+# Auth and billing routers are the ONLY router that is always accessible without a subscription.
+app.include_router(superadmin.router,dependencies=[Depends(require_super_admin)])
 app.include_router(auth.router)
-app.include_router(admin.router)
-app.include_router(portfolio.router)
-app.include_router(reports.router)
-app.include_router(dashboard.router)
-app.include_router(user_router.router)
-app.include_router(quality_issues.router)
-app.include_router(websocket.router)
+app.include_router(billing.router)
+app.include_router(webhooks.router)
+# All other routers are hard-gated behind an active subscription.
+app.include_router(admin.router, dependencies=[Depends(require_active_subscription)])
+app.include_router(portfolio.router, dependencies=[Depends(require_active_subscription)])
+app.include_router(reports.router, dependencies=[Depends(require_active_subscription)])
+app.include_router(dashboard.router, dependencies=[Depends(require_active_subscription)])
+app.include_router(user_router.router, dependencies=[Depends(require_active_subscription)])
+app.include_router(quality_issues.router, dependencies=[Depends(require_active_subscription)])
+app.include_router(websocket.router, dependencies=[Depends(require_active_subscription)])
 
 @app.get("/", tags=["root"], description="Check API root")
 async def root():
@@ -193,80 +300,6 @@ def get_model():
 # Mount the MkDocs static site
 app.mount("/documentation", StaticFiles(directory="site", html=True), name="documentation")
 
-@app.on_event("startup")
-async def init_db_async():
-    """Initialize database tables asynchronously"""
-    try:
-        logger.info("Initializing database...")
-        init_db()
-        logger.info("Database initialized successfully")
-    except Exception as e:
-        logger.error(f"Error initializing database: {e}")
-        
-@app.on_event("startup")
-async def create_admin_user_async():
-    """Create admin user asynchronously with better error handling"""
-    try:
-        logger.info("Creating admin user if needed...")
-        # Get a new session
-        db = next(get_db())
-        try:
-            admin_email = os.getenv("ADMIN_EMAIL")
-            admin_password = os.getenv("ADMIN_PASSWORD")
-
-            if not admin_email or not admin_password:
-                logger.warning("Admin credentials not provided in environment variables")
-                return
-
-            # Query with FOR UPDATE to lock the row and prevent race conditions
-            existing_admin = db.query(User).filter(User.email == admin_email).first()
-            
-            if not existing_admin:
-                try:
-                    admin_user = User(
-                        email=admin_email,
-                        hashed_password=get_password_hash(admin_password),
-                        role=UserRole.ADMIN,
-                        is_active=True,  # Ensure the admin is active
-                    )
-                    db.add(admin_user)
-                    db.commit()
-                    db.expunge_all()
-                    logger.info(f"Admin user created: {admin_email}")
-                except Exception as e:
-                    db.rollback()
-                    # Check if it's a unique violation
-                    if "UniqueViolation" in str(e) or "duplicate key" in str(e):
-                        logger.info(f"Admin user was created by another process, ignoring: {admin_email}")
-                    else:
-                        # Re-raise if it's not a unique violation
-                        raise
-            else:
-                logger.info("Admin user already exists")
-                
-                # Optionally update admin password if needed
-                # Uncomment if you want to update the admin password on startup
-                # if not verify_password(admin_password, existing_admin.hashed_password):
-                #     existing_admin.hashed_password = get_password_hash(admin_password)
-                #     db.commit()
-                #     logger.info("Admin password updated")
-                
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Error creating admin user: {e}")
-        finally:
-            db.close()
-    except Exception as e:
-        logger.error(f"Error in create_admin_user_async: {e}")
-        
-@app.on_event("startup")
-async def startup_event():
-    """
-    Application startup event handler
-    - First responds to health checks
-    """
-    logger.info("Application startup event triggered")
-    
 if __name__ == "__main__":
     import uvicorn
 

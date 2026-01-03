@@ -27,9 +27,11 @@ import pandas as pd
 import time
 import io
 from app.database import get_db
-from app.models import Portfolio, User
+from app.dependencies import get_tenant_db
+from app.models import Portfolio, User, TenantSubscription, SubscriptionUsage, SubscriptionPlan
 from app.config import settings
 from app.auth.utils import get_current_active_user
+from app.utils.billing import require_active_subscription
 from app.calculators.ecl import (
     calculate_exposure_at_default_percentage,
     calculate_probability_of_default,
@@ -128,17 +130,42 @@ router = APIRouter(prefix="/portfolios", tags=["portfolios"])
 @router.post("/",  
             description="Create a new portfolio for the current user.", 
             response_model=PortfolioResponse, 
-            responses={401: {"description": "Not authenticated"}},
+            responses={401: {"description": "Not authenticated"},
+                       403: {"description": "Subscription limit reached"},
+                       402: {"description": "Portfolio limit reached"},
+                       },
             status_code=status.HTTP_201_CREATED
             )
 async def create_portfolio(
     portfolio: PortfolioCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
+    subscription: TenantSubscription = Depends(require_active_subscription),
 ):
     """
     Create a new portfolio for the current user.
     """
+    # Enforce portfolio limit for this subscription
+    usage = (
+        db.query(SubscriptionUsage)
+        .filter(SubscriptionUsage.subscription_id == subscription.id)
+        .with_for_update()
+        .first()
+    )
+    plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == subscription.plan_id).first()
+
+    if not usage or not plan:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Subscription usage or plan configuration missing.",
+        )
+
+    if usage.current_portfolio_count >= plan.max_portfolios:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="Portfolio limit reached for your current subscription plan.",
+        )
+
     new_portfolio = Portfolio(
         name=portfolio.name,
         description=portfolio.description,
@@ -151,10 +178,14 @@ async def create_portfolio(
         # loan_assets=portfolio.loan_assets,
         # ecl_impairment_account=portfolio.ecl_impairment_account,
         user_id=current_user.id,
+        tenant_id=current_user.tenant_id,
+        subscription_id=subscription.id,
     )
 
-
+    # Increment portfolio usage atomically with portfolio creation
     db.add(new_portfolio)
+    usage.current_portfolio_count += 1
+    db.add(usage)
     db.commit()
     db.refresh(new_portfolio)
     return new_portfolio
@@ -164,19 +195,24 @@ async def create_portfolio(
 @router.get("/",  
             description="Get all portfolios belonging to the current user.", 
             response_model=PortfolioList,
-            responses={401: {"description": "Not authenticated"}},)
+            responses={401: {"description": "Not authenticated"},
+                       500: {"description": "Internal server error"},
+                       500: {"description": "Internal server error"}},
+            )
 def get_portfolios(
     skip: int = 0,
     limit: int = 100,
     asset_type: Optional[str] = None,
     customer_type: Optional[str] = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
     Retrieve all portfolios belonging to the current user.
     Optional filtering by asset_type and customer_type.
     """
+    if limit < 0:
+        raise HTTPException(status_code=422, detail="Limit must be positive")
     query = db.query(Portfolio)
 
     # Apply filters if provided
@@ -246,7 +282,7 @@ def get_portfolios(
             )
 async def get_portfolio(
     portfolio_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -508,22 +544,21 @@ async def get_portfolio(
         logger.error(f"Error in fast_get_portfolio: {str(e)}")
         import traceback
         error_details = traceback.format_exc()
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Error retrieving portfolio: {str(e)}\n{error_details}"
-        )
+        # Remove the conversion - let the 404 raise naturally
+        raise HTTPException(status_code=404, detail="Portfolio not found")
 
 
 @router.put("/{portfolio_id}",  
             description="Update details of a specific portfolio by ID.", 
             response_model=PortfolioWithSummaryResponse,
             responses={404: {"description": "Portfolio not found"},
-                       401: {"description": "Not authenticated"}},
+                       401: {"description": "Not authenticated"},
+                       500: {"description": "Internal server error related to subscription"}},
             )
 async def update_portfolio(
     portfolio_id: int,
     portfolio_update: PortfolioUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -587,10 +622,7 @@ async def update_portfolio(
     except Exception as e:
         db.rollback()
         logger.error(f"Error updating portfolio: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update portfolio: {str(e)}"
-        )
+        raise HTTPException(status_code=404, detail="Portfolio not found")
 
 
 @router.delete("/{portfolio_id}",  
@@ -603,7 +635,7 @@ async def update_portfolio(
             )
 def delete_portfolio(
     portfolio_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -634,9 +666,12 @@ def delete_portfolio(
     response_model=IngestAndSaveResponse,
     status_code=status.HTTP_200_OK,
     responses={200: {"description": "Data saved successfully"},
-                400: {"description": "There was an error parsing the body"},  # ← ADD THIS
-                401: {"description": "Not authenticated"},
-                422: {"description": "Validation error"}},
+               400: {"description": "There was an error parsing the body"},  # ← ADD THIS
+               401: {"description": "Not authenticated"},
+               422: {"description": "Validation error"},
+               404: {"description": "Portfolio not found"},
+               500: {"description": "Internal server error"},
+               }
 )
 async def accept_portfolio_data(
     portfolio_id: int,
@@ -644,8 +679,9 @@ async def accept_portfolio_data(
     client_data: Optional[UploadFile] = File(None),
     loan_guarantee_data: Optional[UploadFile] = File(None),
     loan_collateral_data: Optional[UploadFile] = File(None),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
+    subscription: TenantSubscription = Depends(require_active_subscription),
 ):
     """
     Upload Excel files to MinIO, auto-extract headers, and return:
@@ -655,6 +691,89 @@ async def accept_portfolio_data(
     - extracted excel headers
     - ORM model columns mapped for each file
     """
+    # Validate portfolio exists and belongs to the subscription
+    portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
+    if not portfolio:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+
+    if portfolio.subscription_id and portfolio.subscription_id != subscription.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Portfolio does not belong to your active subscription.",
+        )
+
+    # Validate that loan_details file is provided
+    if not loan_details:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="loan_details file is required.",
+        )
+
+    # Get subscription usage and plan
+    usage = (
+        db.query(SubscriptionUsage)
+        .filter(SubscriptionUsage.subscription_id == subscription.id)
+        .with_for_update()
+        .first()
+    )
+    plan = (
+        db.query(SubscriptionPlan)
+        .filter(SubscriptionPlan.id == subscription.plan_id)
+        .first()
+    )
+
+    if not usage or not plan:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Subscription usage or plan configuration missing.",
+        )
+
+    # Read the loan_details file to count rows BEFORE uploading
+    try:
+        # Read file content
+        loan_file_content = await loan_details.read()
+        
+        # Reset file pointer for later upload
+        await loan_details.seek(0)
+        
+        # Count rows in the Excel file
+        import pandas as pd
+        from io import BytesIO
+        
+        df = pd.read_excel(BytesIO(loan_file_content))
+        new_loan_rows = len(df)
+        
+        logger.info(f"Detected {new_loan_rows} loan rows in uploaded file")
+        
+    except Exception as e:
+        logger.error(f"Error reading loan_details file: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to read loan_details file: {str(e)}",
+        )
+
+    # Validate loan count
+    if new_loan_rows <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="loan_details file cannot be empty.",
+        )
+
+    # Check if adding these loans would exceed the plan limit
+    projected_loan_total = usage.current_loan_count + new_loan_rows
+    if projected_loan_total > plan.max_loan_data:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=(
+                f"Loan data limit exceeded. Your plan allows {plan.max_loan_data} loans. "
+                f"You currently have {usage.current_loan_count} loans. "
+                f"This upload contains {new_loan_rows} loans, which would exceed your limit by "
+                f"{projected_loan_total - plan.max_loan_data} loans. "
+                f"Please upgrade your plan or remove some existing loans."
+            ),
+        )
+
+    # All validations passed, now upload files
     try:
         logger.info(f"Uploading excel documents to minio for portfolio {portfolio_id}")
         uploaded_files = upload_multiple_files_to_minio(
@@ -664,14 +783,21 @@ async def accept_portfolio_data(
             loan_guarantee_data=loan_guarantee_data,
             loan_collateral_data=loan_collateral_data,
         )
+        
+        logger.info(f"Successfully uploaded {len(uploaded_files)} files to MinIO")
+        
     except Exception as e:
-        logger.error(f"Error uploading excel documents to minio {str(e)}")
+        logger.error(f"Error uploading excel documents to minio: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload files to storage: {str(e)}",
+        )
 
     # Return response via Pydantic model
     return IngestAndSaveResponse(
         portfolio_id=portfolio_id,
         uploaded_files=uploaded_files,
-        message="Files uploaded successfully, headers extracted."
+        message=f"Files uploaded successfully. {new_loan_rows} loan records detected."
     )
 
 
@@ -679,14 +805,15 @@ async def accept_portfolio_data(
             description="Ingest cleaned Excel files from MinIO with mapping into the portfolio ingestion pipeline.", 
             responses={404: {"description": "Portfolio not found"},
                        401: {"description": "Not authenticated"},
-                       400: {"description": "There was an error parsing the body"},  
+                       400: {"description": "There was an error parsing the body"},
+                       500: {"description": "Internal server error during ingestion"}  
                        },
             status_code=status.HTTP_200_OK,
         )
 async def ingest_portfolio_data(
     portfolio_id: int,
     payload: IngestPayload,  # Use Pydantic model here
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -722,10 +849,19 @@ async def ingest_portfolio_data(
     if dataframes["client_data"] is None or dataframes["client_data"].empty:
         raise HTTPException(status_code=400, detail="client_data is required and cannot be empty")
 
+    #Fetch tenant id from current user 
+    try:
+        tenant_id = current_user.tenant_id
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Fetching tenant id from current user failed {e}"
+        )
     # Pass to ingestion pipeline
     try:
         result = await start_background_ingestion(
             portfolio_id=portfolio_id,
+            tenant_id=tenant_id,
             loan_details=dataframes["loan_details"],
             client_data=dataframes["client_data"],
             loan_guarantee_data=dataframes["loan_guarantee_data"],
@@ -749,7 +885,7 @@ async def ingest_portfolio_data(
 async def calculate_ecl_provision(
     portfolio_id: int,
     reporting_date: Optional[date] = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     
@@ -794,7 +930,7 @@ async def calculate_ecl_provision(
             )
 async def stage_loans_ecl(
     portfolio_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
 
@@ -823,7 +959,7 @@ async def stage_loans_ecl(
             )
 async def stage_loans_local(
     portfolio_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
 
@@ -854,7 +990,7 @@ async def stage_loans_local(
 async def calculate_local_provision(
     portfolio_id: int,
     reporting_date: Optional[date] = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """

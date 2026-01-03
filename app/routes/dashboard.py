@@ -5,6 +5,7 @@ from typing import List, Dict, Any
 from datetime import datetime
 
 from app.database import get_db
+from app.dependencies import get_tenant_db
 from app.models import Portfolio, User, Loan, Client, Report, QualityIssue, CalculationResult
 from app.auth.utils import get_current_active_user
 from app.calculators.ecl import (
@@ -27,7 +28,7 @@ router = APIRouter(tags=["dashboard"])
             responses={401: {"description": "Not authenticated"}},
             )
 def get_dashboard(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """

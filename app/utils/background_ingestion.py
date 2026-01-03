@@ -21,7 +21,9 @@ from app.models import (
     Portfolio,
     StagingResult,
     CalculationResult,
-    QualityIssue
+    QualityIssue,
+    TenantSubscription,
+    SubscriptionUsage,
 )
 from app.utils.background_tasks import get_task_manager, run_background_task
 from app.utils.background_processors import (
@@ -77,6 +79,7 @@ def get_model_columns(model):
 async def process_portfolio_ingestion_sync(
     task_id: str,
     portfolio_id: int,
+    tenant_id: int,
     loan_details_content: pd.DataFrame = None,
     client_data_content: pd.DataFrame = None,
     loan_guarantee_content: pd.DataFrame = None,
@@ -113,6 +116,11 @@ async def process_portfolio_ingestion_sync(
             quality_count = db.query(QualityIssue).filter(
                 QualityIssue.portfolio_id == portfolio_id
             ).delete()
+            # Track how many loans currently exist for this portfolio
+            existing_loans_for_portfolio = db.query(Loan).filter(
+                Loan.portfolio_id == portfolio_id
+            ).count()
+
             loan_count = db.query(Loan).filter(
                 Loan.portfolio_id == portfolio_id
             ).delete()
@@ -154,7 +162,7 @@ async def process_portfolio_ingestion_sync(
             start = time.perf_counter()
             try:
                 logger.info(f"Processing loan details for portfolio {portfolio_id}")
-                loan_results = await process_loan_details_sync(loan_details_content, portfolio_id, db)
+                loan_results = await process_loan_details_sync(loan_details_content, portfolio_id, tenant_id, db)
                 results["details"]["loan_details"] = loan_results
                 results["files_processed"] += 1
                 logger.info(f"Processed {loan_results.get('processed', 0)} loan records")
@@ -170,7 +178,7 @@ async def process_portfolio_ingestion_sync(
             start = time.perf_counter()
             try:
                 logger.info(f"Processing client data for portfolio {portfolio_id}")
-                client_results = await process_client_data_sync(client_data_content, portfolio_id, db)
+                client_results = await process_client_data_sync(client_data_content, portfolio_id, tenant_id, db)
                 results["details"]["client_data"] = client_results
                 results["files_processed"] += 1
                 logger.info(f"Processed {client_results.get('processed', 0)} client records")
@@ -241,6 +249,38 @@ async def process_portfolio_ingestion_sync(
             results.setdefault("errors", []).append(f"Error during loan staging: {str(e)}")
         end = time.perf_counter()
 
+        # ---------- Recalculate subscription loan usage ----------
+        try:
+            portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
+            if portfolio and portfolio.subscription_id:
+                subscription = (
+                    db.query(TenantSubscription)
+                    .filter(TenantSubscription.id == portfolio.subscription_id)
+                    .first()
+                )
+                if subscription:
+                    usage = (
+                        db.query(SubscriptionUsage)
+                        .filter(SubscriptionUsage.subscription_id == subscription.id)
+                        .with_for_update()
+                        .first()
+                    )
+                    if usage:
+                        # Authoritative loan count: all loans belonging to this subscription
+                        total_loans = (
+                            db.query(Loan)
+                            .filter(Loan.subscription_id == subscription.id)
+                            .count()
+                        )
+                        usage.current_loan_count = total_loans
+                        from datetime import datetime, timezone
+
+                        usage.last_calculated_at = datetime.now(timezone.utc)
+                        db.add(usage)
+                        db.commit()
+        except Exception as e:
+            logger.error(f"Failed to recalculate subscription usage after ingestion: {str(e)}")
+
         # ---------- Final status & emails ----------
         if results.get("errors"):
             results["status"] = "completed_with_errors"
@@ -275,6 +315,7 @@ async def process_portfolio_ingestion_sync(
 
 async def start_background_ingestion(
     portfolio_id: int,
+    tenant_id = int,
     loan_details: Optional[pd.DataFrame] = None,
     client_data: Optional[pd.DataFrame] = None,
     loan_guarantee_data: Optional[pd.DataFrame] = None,
@@ -327,6 +368,7 @@ async def start_background_ingestion(
                 run_background_task(
                     task_id,
                     process_portfolio_ingestion_sync,
+                    tenant_id=tenant_id,
                     portfolio_id=portfolio_id,
                     loan_details_content=loan_details_content,
                     client_data_content=client_data_content,

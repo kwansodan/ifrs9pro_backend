@@ -1,16 +1,22 @@
 from app.models import Feedback, Help
 
 
-def test_create_feedback(client):
-    resp = client.post("/user/feedback", json={"description": "Great app"})
+def test_create_feedback(client, tenant):
+    resp = client.post("/user/feedback", json={
+        "description": "Great app",
+        "tenant_id": tenant.id})
     assert resp.status_code == 200
     body = resp.json()
     assert body["description"] == "Great app"
     assert body["status"]
 
 
-def test_like_feedback_toggle(client, db_session):
-    feedback = Feedback(description="Like me", status="submitted", user_id=1)
+def test_like_feedback_toggle(client, db_session, tenant):
+    feedback = Feedback(
+        description="Like me", 
+        status="submitted", 
+        user_id=1,
+        tenant_id=tenant.id)
     db_session.add(feedback)
     db_session.commit()
 
@@ -19,8 +25,10 @@ def test_like_feedback_toggle(client, db_session):
     assert like_resp.json()["is_liked_by_user"] is True
 
 
-def test_help_crud(client):
-    create_resp = client.post("/user/help", json={"description": "I need an assist for this test. Let us attempt a fix on description"})
+def test_help_crud(client, tenant):
+    create_resp = client.post("/user/help", json={
+        "description": "I need an assist for this test. Let us attempt a fix on description",
+        "tenant_id": tenant.id})
     assert create_resp.status_code == 200
     help_id = create_resp.json()["id"]
 
