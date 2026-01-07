@@ -14,6 +14,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import text, func, case, cast, String, and_, select
 import numpy as np
 import math
@@ -146,12 +147,26 @@ async def create_portfolio(
     Create a new portfolio for the current user.
     """
     # Enforce portfolio limit for this subscription
-    usage = (
-        db.query(SubscriptionUsage)
-        .filter(SubscriptionUsage.subscription_id == subscription.id)
-        .with_for_update()
-        .first()
-    )
+    if not subscription:
+        raise HTTPException(
+            status_code=400,
+            detail="No active subscription found for the current user."
+        )
+
+    try:
+        # Enforce portfolio limit for this subscription
+        usage = (
+            db.query(SubscriptionUsage)
+            .filter(SubscriptionUsage.subscription_id == subscription.id)
+            .with_for_update()
+            .first()
+        )
+    except SQLAlchemyError as e:
+        logger.error(f"Failed to fetch subscription usage for subscription {subscription.id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error while checking subscription usage."
+        )
     plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == subscription.plan_id).first()
 
     if not usage or not plan:
@@ -915,9 +930,11 @@ async def calculate_ecl_provision(
             first_name = current_user.first_name
         )
         # Ensure a consistent shape for tests/stubs
-        if isinstance(result, dict) and "status" in result:
-            return result
+        if isinstance(result, dict) and "error" in result:
+            raise HTTPException(status_code=500, detail=result["error"])
+        
         return {"status": "ok", "result": result}
+
     except Exception as e:
         logger.error(f"ECL calculation failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -36,7 +36,7 @@ from dateutil.relativedelta import relativedelta
 logger = logging.getLogger(__name__)
 
 import asyncio
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from sqlalchemy.orm import Session
 import pandas as pd
 from datetime import datetime
@@ -51,39 +51,63 @@ def safe_float(value, default=0.0):
 
 # --- Move process_loan to pure sync ---
 def process_loan_sync(loan_data, selected_dt_str):
+    """
+    Synchronous worker for single-loan ECL calculation.
+    Must raise on any unrecoverable error so the controller can react.
+    Returns: (loan_id, loan_result) on success
+    Raises: RuntimeError / ValueError on failure
+    """
+    # defensive local logger
     try:
-        selected_dt = pd.to_datetime(selected_dt_str)
-        principal = safe_float(loan_data.get('loan_amount', 0))
-        term_months = int(loan_data.get('loan_term', 0))
-        arrears = safe_float(loan_data.get('accumulated_arrears', 0))
-        start_date = pd.to_datetime(loan_data.get('deduction_start_period'))
-        monthly_installment = safe_float(loan_data.get('monthly_installment', 0))
-        pd_rate=safe_float(loan_data.get('pd_value', 0))
-        end_date = start_date + relativedelta(months=term_months)
-        employee_id=loan_data.get('employee_id')
-        administrative_fees=safe_float(loan_data.get('administrative_fees', 0))
-        submission_period=pd.to_datetime(loan_data.get('submission_period'))
-        maturity_period=pd.to_datetime(loan_data.get('maturity_period'))
+        selected_dt = pd.to_datetime(selected_dt_str, errors="coerce")
+        if pd.isna(selected_dt):
+            raise ValueError(f"Invalid reporting date: {selected_dt_str}")
+
+        # safe conversions
+        principal = safe_float(loan_data.get("loan_amount", 0))
+        try:
+            term_months = int(loan_data.get("loan_term", 0) or 0)
+        except Exception:
+            raise ValueError("loan_term must be integer-like")
+
+        arrears = safe_float(loan_data.get("accumulated_arrears", 0))
+        start_date = pd.to_datetime(loan_data.get("deduction_start_period"), errors="coerce")
+        monthly_installment = safe_float(loan_data.get("monthly_installment", 0))
+        pd_rate = safe_float(loan_data.get("pd_value", 0))
+        administrative_fees = safe_float(loan_data.get("administrative_fees", 0))
+
+        submission_period = pd.to_datetime(loan_data.get("submission_period"), errors="coerce")
+        maturity_period = pd.to_datetime(loan_data.get("maturity_period"), errors="coerce")
+
         loan_result = {}
 
+        # basic validations
+        if start_date is pd.NaT:
+            raise ValueError(f"Invalid start date for loan {loan_data.get('id')}")
+        if term_months < 0:
+            raise ValueError(f"Negative loan_term for loan {loan_data.get('id')}")
 
-        
+        end_date = start_date + relativedelta(months=term_months)
 
-        # Handle matured or future loans
-        # if end_date <= selected_dt or (start_date > selected_dt and arrears <= 0):
-        #     loan_result['eir'] = round(eir, 2) if eir else 0.0
-            
-        #     for field in ['amortised_bal', 'adjusted_amortised_bal', 'theoretical_balance', 'ecl_lifetime', 'ecl_12']:
-        #         loan_result[field] = 0.0 if arrears <= 0 else round(arrears, 2)
-        #     return loan_data['id'], loan_result
+        # Handle matured or future loans (defensive)
+        # if loan matured before or is future with no arrears -> minimal fields, return
+        if end_date <= selected_dt or (start_date > selected_dt and arrears <= 0):
+            # no ECL to compute; define minimal fields
+            loan_result["eir"] = 0.0
+            for field in ["amortised_bal", "adjusted_amortised_bal", "theoretical_balance", "ecl_lifetime", "ecl_12", "final_ecl", "ead", "pd", "lgd"]:
+                loan_result[field] = 0.0 if arrears <= 0 else round(arrears, 2)
+            loan_result["calculation_date"] = selected_dt.to_pydatetime()
+            # final_ecl enforced below, so it's present
+            return loan_data["id"], loan_result
 
-        # if principal <= 0 or term_months <= 0 or monthly_installment <= 0:
-        #     for field in ['ead', 'pd', 'final_ecl', 'ecl_12', 'ecl_lifetime']:
-        #         loan_result[field] = 0.0
-        #     return loan_data['id'], loan_result
-        
+        # handle trivially invalid loans
+        if principal <= 0 or term_months <= 0 or monthly_installment <= 0:
+            for field in ["ead", "pd", "final_ecl", "ecl_12", "ecl_lifetime", "amortised_bal", "adjusted_amortised_bal", "theoretical_balance"]:
+                loan_result[field] = 0.0
+            loan_result["calculation_date"] = selected_dt.to_pydatetime()
+            return loan_data["id"], loan_result
 
-        # Calculate EIR and store
+        # Calculate EIR (may raise internally)
         eir = calculate_effective_interest_rate_lender(
             loan_amount=principal,
             administrative_fees=administrative_fees,
@@ -92,92 +116,107 @@ def process_loan_sync(loan_data, selected_dt_str):
             submission_period=submission_period,
             report_date=selected_dt,
             maturity_period=maturity_period,
-            
-            
         )
-        loan_result['eir'] = eir if isinstance(eir, float) else eir
 
+        # guard EIR value
+        if eir is None or (isinstance(eir, float) and (pd.isna(eir) or eir < 0)):
+            raise ValueError(f"EIR calculation failed for loan {loan_data.get('id')} (eir={eir})")
 
-        # Calculation of loss given default
-        loan_result['lgd']=1 #given all loans are unsecured
+        loan_result["eir"] = float(eir) if isinstance(eir, (float, int)) else eir
 
+        # LGD
+        loan_result["lgd"] = 1.0  # unsecured assumption
 
-        # Calculate EIR and store
-        
-        loan_result['pd'] = pd_rate
-        pd_monthly = pd_rate / 12 if isinstance(pd_rate, float) else 0.0
+        # PD monthly
+        loan_result["pd"] = pd_rate
+        pd_monthly = float(pd_rate) / 12.0 if isinstance(pd_rate, (float, int)) else 0.0
 
-        # Determining latest amortised loan balance before report-date
-        eir_monthly = safe_float(eir) / 12
+        # amortisation before report date
+        eir_monthly = safe_float(eir) / 12.0
         delta_months = max(0, (selected_dt.year - start_date.year) * 12 + (selected_dt.month - start_date.month))
-        balance = principal-administrative_fees
+        balance = principal - administrative_fees
+
         for _ in range(1, delta_months + 1):
             interest = balance * eir_monthly
             balance = balance + interest - monthly_installment
-            balance = max(0, balance)  # Cannot be negative
-        loan_result['amortised_bal'] = loan_result['theoretical_balance'] = round(balance, 2)
-        adjusted_balance = round(balance + arrears,2)
-        loan_result['adjusted_amortised_bal'] = round(adjusted_balance, 0)
-        loan_result['ead'] = round(adjusted_balance, 2)
-        
+            balance = max(0.0, balance)
 
-        # ECL Calculation
+        loan_result["amortised_bal"] = loan_result["theoretical_balance"] = round(balance, 2)
+        adjusted_balance = round(balance + arrears, 2)
+        loan_result["adjusted_amortised_bal"] = round(adjusted_balance, 2)
+        loan_result["ead"] = round(adjusted_balance, 2)
+
+        # ECL schedule / discounted expected loss
         current_balance = adjusted_balance
         discounted_el_schedule = []
         remaining_months = max(0, term_months - delta_months)
 
-
+        # If remaining_months == 0 we still want ecl_12 / ecl_lifetime = 0
         for m in range(1, remaining_months + 1):
             interest = current_balance * eir_monthly
             current_balance = current_balance + interest - monthly_installment
-            current_balance = max(0, current_balance)
+            current_balance = max(0.0, current_balance)
             expected_loss = current_balance * pd_monthly
-            discount_factor = 1 / ((1 + eir_monthly) ** m)
+            # safe discount factor (eir_monthly might be 0)
+            if eir_monthly == 0:
+                discount_factor = 1.0
+            else:
+                discount_factor = 1.0 / ((1.0 + eir_monthly) ** m)
             discounted_el_schedule.append(expected_loss * discount_factor)
 
-        loan_result['ecl_12'] = round(sum(discounted_el_schedule[:12]), 2)
-        loan_result['ecl_lifetime'] = round(sum(discounted_el_schedule), 2)
-        loan_result['calculation_date'] = selected_dt.to_pydatetime() 
+        loan_result["ecl_12"] = round(sum(discounted_el_schedule[:12]), 2)
+        loan_result["ecl_lifetime"] = round(sum(discounted_el_schedule), 2)
+        loan_result["calculation_date"] = selected_dt.to_pydatetime()
 
-        # Determining final ECL
-        if loan_data.get('ifrs9_stage') == "Stage 1":
-            loan_result['final_ecl'] = loan_result['ecl_12']
+        # Determining final ECL - default to lifetime if stage not provided
+        if loan_data.get("ifrs9_stage") == "Stage 1":
+            loan_result["final_ecl"] = loan_result["ecl_12"]
         else:
-            loan_result['final_ecl'] = loan_result['ecl_lifetime']
+            loan_result["final_ecl"] = loan_result["ecl_lifetime"]
 
-        return loan_data['id'], loan_result
+        # ---------------------------------------------------
+        # ENFORCE final_ecl EXISTENCE (MANDATORY)
+        # ---------------------------------------------------
+        if "final_ecl" not in loan_result:
+            raise RuntimeError(f"final_ecl not computed for loan {loan_data.get('id')}")
 
-    except Exception as e:
-        print(f"Error processing loan ID {loan_data.get('id', 'unknown')}: {e}")
-        return loan_data.get('id', None)
+        # Log computed result (structured)
+        logger.info(
+            "loan_ecl_computed",
+            extra={
+                "loan_id": loan_data.get("id"),
+                "final_ecl": loan_result.get("final_ecl"),
+                "ead": loan_result.get("ead"),
+                "pd": loan_result.get("pd"),
+            },
+        )
+
+        return loan_data["id"], loan_result
+
+    except Exception as exc:
+        # Make sure we raise; don't return (id, None) — that hides failures.
+        logger.exception(f"Error processing loan ID {loan_data.get('id', 'unknown')}: {exc}")
+        raise
+
 
 # --- Main controller for ECL calculations---
 async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, db: Session, user_email, first_name):
     try:
-        # -------------------------------------------------------
-        # 1. Always Send Start Email
-        # -------------------------------------------------------
+        # 1: Start email
         try:
-            await send_calc_ecl_started_email(
-                user_email, first_name, portfolio_id,
-                cc_emails=["support@service4gh.com"]
-            )
+            await send_calc_ecl_started_email(user_email, first_name, portfolio_id, cc_emails=["support@service4gh.com"])
         except Exception as e:
             logger.error(f"Failed to send ECL calculation STARTED email: {e}")
 
-        # -------------------------------------------------------
-        # 2. MAIN CALCULATION LOGIC (unchanged)
-        # -------------------------------------------------------
         selected_dt_str = reporting_date
         batch_size = 500
         max_workers = max(1, multiprocessing.cpu_count() - 1)
 
-        updates = []
         processed_count = 0
         loan_count = 0
-        grand_total_ecl = 0
+        grand_total_ecl = 0.0
 
-        executor = ProcessPoolExecutor(max_workers=max_workers)
+        executor = ThreadPoolExecutor(max_workers=min(8, max_workers))
 
         offset = 0
 
@@ -187,12 +226,18 @@ async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, d
         portfolio_id = first_loan.portfolio_id
 
         while True:
-            loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).order_by(Loan.id).offset(offset).limit(batch_size).all()
+            loans = (
+                db.query(Loan)
+                .filter(Loan.portfolio_id == portfolio_id)
+                .order_by(Loan.id)
+                .offset(offset)
+                .limit(batch_size)
+                .all()
+            )
             if not loans:
                 break
-            
-            tasks = []
 
+            tasks = []
             for loan in loans:
                 pd_value = calculate_probability_of_default(
                     employee_id=loan.employee_id,
@@ -201,7 +246,7 @@ async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, d
                     selected_dt=selected_dt_str,
                     end_date=loan.maturity_period,
                     arrears=loan.accumulated_arrears,
-                    db=db
+                    db=db,
                 )
 
                 loan_data = {
@@ -218,23 +263,35 @@ async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, d
                     "maturity_period": loan.maturity_period,
                 }
 
-                task = asyncio.get_running_loop().run_in_executor(
-                    executor, process_loan_sync, loan_data, selected_dt_str
-                )
+                task = asyncio.get_running_loop().run_in_executor(executor, process_loan_sync, loan_data, selected_dt_str)
                 tasks.append(task)
 
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # gather without return_exceptions=True -> first exception will propagate
+            try:
+                results = await asyncio.gather(*tasks)
+            except Exception as e:
+                # Fatal: send failed email, log and re-raise so outer except handles summary & failure email
+                logger.exception("One or more loan calculations failed; aborting batch.")
+                try:
+                    await send_calc_ecl_failed_email(user_email, first_name, portfolio_id, cc_emails=["support@service4gh.com"])
+                except Exception as inner_e:
+                    logger.error(f"Failed to send ECL calculation FAILED email: {inner_e}")
+                raise
 
+            # At this point, all results are (loan_id, loan_fields)
             for res in results:
-                if isinstance(res, tuple) and res[1] is not None:
-                    loan_id, loan_fields = res
-                    db.query(Loan).filter(Loan.id == loan_id).update(loan_fields)
-                    loan_count += 1
-                    grand_total_ecl += loan_fields.get("final_ecl", 0.0)
+                if not (isinstance(res, tuple) and len(res) == 2):
+                    logger.error("Unexpected process_loan_sync result shape: %r", res)
+                    continue
+                loan_id, loan_fields = res
+                # Update DB row with calculated fields
+                db.query(Loan).filter(Loan.id == loan_id).update(loan_fields)
+                loan_count += 1
+                grand_total_ecl += float(loan_fields.get("final_ecl", 0.0))
 
             db.commit()
             processed_count += len(loans)
-            print(f"Processed and saved {processed_count} loans...")
+            logger.info("Processed and saved %d loans...", processed_count)
 
             offset += batch_size
 
@@ -246,45 +303,32 @@ async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, d
             provision_percentage=0.0,
             reporting_date=datetime.now().date(),
             config={},
-            result_summary={}
+            result_summary={},
         )
         db.add(calculation_result)
         db.commit()
 
-        # -------------------------------------------------------
-        # 3. SEND SUCCESS EMAIL (only if NO errors)
-        # -------------------------------------------------------
+        # Success email
         try:
-            await send_calc_ecl_success_email(
-                user_email, first_name, portfolio_id,
-                cc_emails=["support@service4gh.com"]
-            )
+            await send_calc_ecl_success_email(user_email, first_name, portfolio_id, cc_emails=["support@service4gh.com"])
         except Exception as e:
             logger.error(f"Failed to send ECL calculation SUCCESS email: {e}")
 
-        # Final return
         return {
             "calculation_id": calculation_result.id,
             "portfolio_id": calculation_result.portfolio_id,
             "grand_total_ecl": safe_float(grand_total_ecl),
             "provision_percentage": 0.0,
-            "loan_count": loan_count
+            "loan_count": loan_count,
         }
 
     except Exception as e:
-        logger.error(f"Failed to process ECL calculation: {e}")
-
-        # -------------------------------------------------------
-        # 4. SEND FAILURE EMAIL (only when exception occurs)
-        # -------------------------------------------------------
+        # Top-level failure: ensure failure email sent (if not already) and return error
+        logger.exception("ECL calculation failed at top level: %s", e)
         try:
-            await send_calc_ecl_failed_email(
-                user_email, first_name, portfolio_id,
-                cc_emails=["support@service4gh.com"]
-            )
+            await send_calc_ecl_failed_email(user_email, first_name, portfolio_id, cc_emails=["support@service4gh.com"])
         except Exception as inner_e:
             logger.error(f"Failed to send ECL calculation FAILED email: {inner_e}")
-
         return {"error": str(e)}
 
 
