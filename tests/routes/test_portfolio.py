@@ -7,9 +7,9 @@ from fastapi import status
 from unittest.mock import patch
 from io import BytesIO
 
-from datetime import date
+from datetime import date, datetime, timedelta
 from app.models import Portfolio
-from app.models import User
+from app.models import User, Loan
 import pandas as pd
 from unittest.mock import patch
 from app.schemas import IngestPayload
@@ -292,6 +292,23 @@ def test_calculation_endpoints_are_stubbed(client, db_session, regular_user, ten
     )
     db_session.add(portfolio)
     db_session.commit()
+
+    loan = Loan(
+        portfolio_id=portfolio.id,
+        tenant_id=tenant.id,  # <-- add this
+        employee_id=1,
+        loan_amount=1000,
+        loan_term=12,
+        monthly_installment=100,
+        deduction_start_period=datetime.today(),
+        submission_period=datetime.today(),
+        maturity_period=datetime.today() + timedelta(days=365),
+        accumulated_arrears=0,
+    )
+    db_session.add(loan)
+    db_session.commit()
+
+
 
     ecl_resp = client.get(f"/portfolios/{portfolio.id}/calculate-ecl")
     assert ecl_resp.status_code == 200
