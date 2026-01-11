@@ -71,69 +71,103 @@ def upload_and_extract_columns(
     portfolio_id: int,
     uploadfile: UploadFile,
     key: str,
-    model
+    expected_columns: list[str],
 ) -> dict:
     """
     Uploads file to MinIO, extracts Excel column headers,
-    and returns metadata including file_id and model columns.
+    and returns metadata including file_id and expected columns.
     """
 
     if uploadfile is None:
         return None
 
-    # Generate unique file ID
     file_id = str(uuid.uuid4())
     ext_filename = f"{file_id}_{uploadfile.filename}"
-
-    # Object path in MinIO
     object_name = f"portfolio/{portfolio_id}/{key}/{ext_filename}"
+    tmp_path = f"/tmp/{ext_filename}"
 
-    # Temporary storage
-    tmp_path = f"/tmp/{file_id}_{uploadfile.filename}"
-
-    # Save temp file
+    # Save file locally
     with open(tmp_path, "wb") as buffer:
         shutil.copyfileobj(uploadfile.file, buffer)
 
     # Upload to MinIO
     file_url = upload_file_to_minio(tmp_path, object_name)
 
-    # Load Excel to extract headers (and row count for billing limits)
+    # Extract Excel metadata
     try:
         df = pd.read_excel(tmp_path)
         excel_columns = df.columns.tolist()
         row_count = len(df.index)
     except Exception as e:
-        raise HTTPException(400, f"Invalid Excel for {key}: {e}")
+        os.remove(tmp_path)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid Excel file for '{key}': {e}",
+        )
 
-    # Delete local temp file
     os.remove(tmp_path)
-
-    # SQLAlchemy model columns
-    model_columns = get_model_columns(model)
 
     return {
         "file_id": file_id,
         "file_url": file_url,
         "object_name": object_name,
         "excel_columns": excel_columns,
+        "expected_columns": expected_columns,
         "row_count": row_count,
-        "model_columns": model_columns,
     }
+
+
+from typing import Optional, Dict
+from fastapi import UploadFile
+
+from typing import Optional, Dict
+from fastapi import UploadFile
+
 
 def upload_multiple_files_to_minio(
     portfolio_id: int,
     loan_details: Optional[UploadFile],
     client_data: Optional[UploadFile],
-    loan_guarantee_data: Optional[UploadFile],
-    loan_collateral_data: Optional[UploadFile],
+    loan_guarantee_data: Optional[UploadFile] = None,
+    loan_collateral_data: Optional[UploadFile] = None,
 ) -> Dict[str, Optional[dict]]:
 
-    MODEL_MAP = {
-        "loan_details": Loan,
-        "client_data": Client,                   
-        "loan_guarantee_data": LoanGuaranteeColumns,
-        "loan_collateral_data": CollateralColumns,
+    EXPECTED_COLUMNS = {
+        "loan_details": [
+            "Loan No.",
+            "Loan Issue Date",
+            "Deduction Start Period",
+            "Submission Period",
+            "Loan Amount",
+            "Loan Term",
+            "Administrative Fees",
+            "Total Interest",
+            "Outstanding Loan Balance",
+            "Accumulated Arrears",
+            "NDIA",
+        ],
+        "client_data": [
+            "Employee Id",
+            "Marital Status",
+            "Gender",
+            "Date of Birth",
+            "Employment Date",
+        ],
+        "loan_guarantee_data": [
+            "id",
+            "Guarantor name",
+            "pledged amount",
+        ],
+        "loan_collateral_data": [
+            "Client Id",
+            "Collateral_value",
+            "Collateral description",
+            "forced_sale_value",
+            "Method_of_evaluation",
+            "Marital Status",
+            "Social Security No",
+            "Next of kin",
+        ],
     }
 
     file_map = {
@@ -143,24 +177,22 @@ def upload_multiple_files_to_minio(
         "loan_collateral_data": loan_collateral_data,
     }
 
-    results = {}
+    results: Dict[str, Optional[dict]] = {}
 
     for key, uploadfile in file_map.items():
-        model_class = MODEL_MAP[key]
-
         if uploadfile is None:
             results[key] = None
             continue
 
-        # Upload + extract + return details
         results[key] = upload_and_extract_columns(
             portfolio_id=portfolio_id,
             uploadfile=uploadfile,
             key=key,
-            model=model_class,
+            expected_columns=EXPECTED_COLUMNS[key],
         )
 
     return results
+
 
 
 def generate_presigned_url(object_name: str, expiry_minutes: int = 10):
@@ -440,11 +472,26 @@ def run_and_save_report_task(report_id: int, report_type: str, file_path: str, p
         })
         db.commit()
         logger.info(f"[TASK COMPLETE] Report {report_id} successfully uploaded to MinIO and status updated.")
+        
+        # Clean up local file after successful upload
+        try:
+            os.remove(file_path)
+            logger.info(f"[CLEANUP] Local file {file_path} removed successfully.")
+        except Exception as cleanup_error:
+            logger.warning(f"[CLEANUP] Failed to remove local file {file_path}: {cleanup_error}")
 
     except Exception as e:
         logger.error(f"[TASK ERROR] Report task failed for report_id={report_id}: {e}", exc_info=True)
         db.query(Report).filter(Report.id == report_id).update({"status": "failed"})
         db.commit()
+        
+        # Clean up local file if it exists
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                logger.info(f"[CLEANUP] Local file {file_path} removed after error.")
+        except Exception as cleanup_error:
+            logger.warning(f"[CLEANUP] Failed to remove local file {file_path}: {cleanup_error}")
 
     finally:
         db.close()

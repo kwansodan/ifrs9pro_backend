@@ -717,11 +717,17 @@ async def accept_portfolio_data(
             detail="Portfolio does not belong to your active subscription.",
         )
 
-    # Validate that loan_details file is provided
+    # Validate that required files are provided
     if not loan_details:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="loan_details file is required.",
+        )
+    
+    if not client_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="client_data file is required.",
         )
 
     # Get subscription usage and plan
