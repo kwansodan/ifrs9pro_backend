@@ -448,41 +448,61 @@ async def update_access_request(
     return {"message": "Request updated successfully"}
 
 
-@router.post("/set-password/{token}",  
-            description="Set password using invitation token",
-            responses={404: {"description": "Token not found"},
-                       400: {"description": "Not Authenticated"}},)
+@router.post(
+    "/set-password/{token}",
+    description="Set password using invitation token",
+    responses={
+        400: {"description": "Invalid request"},
+        403: {"description": "Tenant mismatch"},
+        404: {"description": "Invitation not found"},
+    },
+)
 async def set_password(
-    token: str, password_data: PasswordSetup, db: Session = Depends(get_db)
+    token: str,
+    password_data: PasswordSetup,
+    db: Session = Depends(get_db),
 ):
     password = password_data.password
     confirm_password = password_data.confirm_password
 
+    # --- Password validation ---
     if not password or not confirm_password:
-        raise HTTPException(
-            status_code=400, detail="Password and confirm password are required"
-        )
+        raise HTTPException(400, "Password and confirm password are required")
 
     if password != confirm_password:
-        raise HTTPException(status_code=400, detail="Passwords do not match")
+        raise HTTPException(400, "Passwords do not match")
 
     if len(password) < 8:
-        raise HTTPException(
-            status_code=400, detail="Password must be at least 8 characters"
-        )
+        raise HTTPException(400, "Password must be at least 8 characters")
 
-    try:
-        token_data, token_type = decode_token(token)
+    # --- Decode invitation token ---
+    token_data, token_type = decode_token(token)
 
-        if token_type != "invitation":
-            raise HTTPException(status_code=400, detail="Invalid token type")
+    if token_type != "invitation":
+        raise HTTPException(400, "Invalid token type")
 
-        # Look up the access request by token to ensure we use the same approval
-        # context (tenant) encoded into the invitation token.
+    email = getattr(token_data, "email", None)
+    tenant_id = getattr(token_data, "tenant_id", None)
+
+    if not email or not tenant_id:
+        raise HTTPException(400, "Invalid invitation token payload")
+
+    # --- Look up user first ---
+    user = db.query(User).filter(User.email == email).first()
+
+    if user:
+        # Admin-precreated user path
+        if user.tenant_id != tenant_id:
+            raise HTTPException(403, "User does not belong to this tenant")
+
+        user.hashed_password = get_password_hash(password)
+
+    else:
+        # Access-request-based path
         access_request = (
             db.query(AccessRequest)
             .filter(
-                AccessRequest.email == token_data.email,
+                AccessRequest.email == email,
                 AccessRequest.token == token,
                 AccessRequest.status == RequestStatus.APPROVED,
             )
@@ -490,57 +510,37 @@ async def set_password(
         )
 
         if not access_request:
-            raise HTTPException(status_code=404, detail="Approved request not found")
-
-        # Check if user already exists
-        existing_user = db.query(User).filter(User.email == access_request.email).first()
-        if existing_user:
-            # Update existing user's password instead of creating new user
-            existing_user.hashed_password = get_password_hash(password)
-        else:
-            # Prefer tenant from the token payload (set at approval time). Fall back
-            # to the access_request.tenant_id if token lacks it.
-            tenant_for_new_user = getattr(token_data, "tenant_id", None) or access_request.tenant_id
-
-            new_user = User(
-                email=access_request.email,
-                hashed_password=get_password_hash(password),
-                role=access_request.role,
-                tenant_id=tenant_for_new_user,
-            )
-            db.add(new_user)
-            try:
-                db.commit()
-                db.refresh(new_user)
-            except IntegrityError:
-                db.rollback()
-                raise HTTPException(status_code=400, detail="An account with this email already exists.")
-
-        # Mark the request as complete
-        access_request.status = RequestStatus.APPROVED
-
-        db.commit()
-
-        # Generate access token
-        access_token = create_access_token(
-            data={"sub": access_request.email},
-            expires_delta=timedelta(hours=settings.INVITATION_EXPIRE_HOURS),
-        )
-
-        return {
-            "message": "Password set successfully",
-            "access_token": access_token,
-            "token_type": "bearer",
-        }
-
-    except Exception as e:
-        # More specific error handling
-        if "UNIQUE constraint failed: users.email" in str(e):
             raise HTTPException(
-                status_code=400,
-                detail="An account with this email already exists. If you've already set up your password, please log in.",
+                404,
+                "Approved access request not found for this invitation",
             )
-        raise HTTPException(status_code=400, detail=f"Error setting password: {str(e)}")
+
+        user = User(
+            email=email,
+            hashed_password=get_password_hash(password),
+            role=access_request.role,
+            tenant_id=tenant_id,
+        )
+        db.add(user)
+
+    # --- Persist ---
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(400, "Account already exists")
+
+    # --- Issue access token ---
+    access_token = create_access_token(
+        data={"sub": email},
+        expires_delta=timedelta(hours=settings.ACCESS_TOKEN_EXPIRE_HOURS),
+    )
+
+    return {
+        "message": "Password set successfully",
+        "access_token": access_token,
+        "token_type": "bearer",
+    }
 
 
 @router.post("/forgot-password", description="Request password reset token via email")
