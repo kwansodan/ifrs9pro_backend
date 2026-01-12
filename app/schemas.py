@@ -1,4 +1,5 @@
 from typing import Annotated, Literal
+from fastapi import UploadFile, File
 from pydantic import BaseModel, Field, EmailStr, SecretStr, field_validator, ValidationError
 from pydantic.types import StrictBool
 from typing import List, Dict, Any, Optional
@@ -948,7 +949,7 @@ class UploadedFileBase(BaseModel):
     file_url: str
     object_name: str
     excel_columns: List[str]
-    model_columns: List[str]
+    expected_columns: List[str]
     row_count: Optional[int] = None
 
 
@@ -965,7 +966,7 @@ class LoanGuaranteeDataFile(BaseModel):
     file_url: str
     object_name: str
     excel_columns: List[str]
-    model_columns: List[str]
+    expected_columns: List[str]
 
 
 class LoanCollateralDataFile(BaseModel):
@@ -973,14 +974,14 @@ class LoanCollateralDataFile(BaseModel):
     file_url: str
     object_name: str
     excel_columns: List[str]
-    model_columns: List[str]
+    expected_columns: List[str]
 
 
 class UploadedFiles(BaseModel):
     loan_details: Optional[LoanDetailsFile]
     client_data: Optional[ClientDataFile]
-    loan_guarantee_data: Optional[LoanGuaranteeDataFile]
-    loan_collateral_data: Optional[LoanCollateralDataFile]
+    loan_guarantee_data: Optional[LoanGuaranteeDataFile] = File(None)
+    loan_collateral_data: Optional[LoanCollateralDataFile] = File(None)
 
 
 class IngestAndSaveResponse(BaseModel):

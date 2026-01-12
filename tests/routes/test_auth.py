@@ -64,13 +64,14 @@ def test_submit_admin_request_updates_admin_email(client, db_session):
 
 def test_set_password_creates_user(client, db_session, tenant):
     email = "invitee@example.com"
-    token = create_invitation_token(email)
+    token = create_invitation_token(email, tenant.id)
+
     req = AccessRequest(
         email=email,
         status=RequestStatus.APPROVED,
         token=token,
         token_expiry=datetime.utcnow() + timedelta(hours=2),
-        tenant_id=tenant.id
+        tenant_id=tenant.id,
     )
     db_session.add(req)
     db_session.commit()
@@ -79,11 +80,13 @@ def test_set_password_creates_user(client, db_session, tenant):
         f"/set-password/{token}",
         json={"password": "newpassword", "confirm_password": "newpassword"},
     )
+
     assert resp.status_code == 200
     assert resp.json()["token_type"] == "bearer"
 
     user = db_session.query(User).filter_by(email=email).first()
     assert user is not None
+    assert user.tenant_id == tenant.id
 
 
 def test_login_returns_token(client, db_session, regular_user):

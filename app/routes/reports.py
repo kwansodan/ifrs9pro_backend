@@ -79,7 +79,7 @@ async def generate_report(
     file_path = f"reports/{filename}"
 
     try:
-        if report_request.report_type not in ["ecl_detailed_report", "ecl_report_summarised_by_stages", "BOG_impairment_detailed_report", "BOG_impairmnt_summary_by_stages", "journals_report"]:
+        if report_request.report_type not in ["ecl_detailed_report", "ecl_report_summarised_by_stages", "BOG_impairment_detailed_report", "BOG_impairment_summary_by_stages", "journals_report"]:
             return {"error": "Invalid report type."}
 
         # Save metadata
