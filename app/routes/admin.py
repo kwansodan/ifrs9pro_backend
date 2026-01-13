@@ -668,10 +668,15 @@ async def admin_delete_feedback(
     return None
 
 
-@router.put("/users/{user_id}", 
-            response_model=UserResponse,
-            responses={404: {"description": "User not found"},
-                       401: {"description": "Not Aunthenticated"}},)
+@router.put(
+    "/users/{user_id}",
+    response_model=UserResponse,
+    responses={
+        404: {"description": "User not found"},
+        403: {"description": "Operation not allowed"},
+        401: {"description": "Not authenticated"},
+    },
+)
 async def update_user(
     user_id: int,
     user_update: UserUpdate,
@@ -681,16 +686,23 @@ async def update_user(
     user = db.query(User).filter(User.id == user_id).first()
 
     if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # 🚫 Block updates to admin users
+    if user.role == "admin":
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+            status_code=403,
+            detail="Admin users cannot be modified",
         )
 
-    # Update provided fields
     update_data = user_update.dict(exclude_unset=True)
 
-    # Convert enum values to strings
-    if "role" in update_data and update_data["role"]:
-        update_data["role"] = update_data["role"].value
+    # 🚫 Prevent role escalation/downgrade explicitly
+    if "role" in update_data:
+        raise HTTPException(
+            status_code=403,
+            detail="User role cannot be changed",
+        )
 
     for key, value in update_data.items():
         setattr(user, key, value)
@@ -700,26 +712,33 @@ async def update_user(
     return user
 
 
-@router.delete("/users/{user_id}",
-            description="Delete a user by ID",
-            status_code=204,
-            responses={404: {"description": "User not found"},
-                       401: {"description": "Not authenticated"}}
-                       )
+@router.delete(
+    "/users/{user_id}",
+    description="Delete a user by ID",
+    status_code=204,
+    responses={
+        404: {"description": "User not found"},
+        403: {"description": "Operation not allowed"},
+        401: {"description": "Not authenticated"},
+    },
+)
 async def delete_user(
     user_id: int,
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(is_admin),
 ):
     user = db.query(User).filter(User.id == user_id).first()
+
     if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # 🚫 Block deletion of admin users
+    if user.role == "admin":
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+            status_code=403,
+            detail="Admin users cannot be deleted",
         )
 
-    # Delete the user
     db.delete(user)
     db.commit()
-
-    return None  #
 
