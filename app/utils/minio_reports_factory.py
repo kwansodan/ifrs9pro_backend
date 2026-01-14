@@ -145,6 +145,7 @@ def upload_multiple_files_to_minio(
             "Outstanding Loan Balance",
             "Accumulated Arrears",
             "NDIA",
+            "Monthly Installment",
         ],
         "client_data": [
             "Employee Id",
