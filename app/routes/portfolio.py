@@ -758,13 +758,12 @@ async def accept_portfolio_data(
         await loan_details.seek(0)
         
         # Count rows in the Excel file
-        import pandas as pd
-        from io import BytesIO
-        
-        df = pd.read_excel(BytesIO(loan_file_content))
-        new_loan_rows = len(df)
-        
-        logger.info(f"Detected {new_loan_rows} loan rows in uploaded file")
+        from openpyxl import load_workbook
+        # Efficiently count rows without parsing data
+        wb = load_workbook(BytesIO(loan_file_content), read_only=True, data_only=True)
+        ws = wb.active
+        new_loan_rows = ws.max_row - 1  # Subtract header row
+        wb.close()
         
     except Exception as e:
         logger.error(f"Error reading loan_details file: {str(e)}")
