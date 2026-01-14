@@ -82,11 +82,18 @@ class TenantRegistrationRequest(BaseModel):
     phone_number: str = Field(min_length=7, max_length=20)
     job_role: str = Field(min_length=2, max_length=50)
 
-    password: str = Field(min_length=8, max_length=128)
+    password: str = Field(min_length=8, max_length=128, description="Password must be at least 8 characters")
 
     # Terms and Conditions
     tnd: Optional[bool] = False
     dpa: Optional[bool] = False
+    
+    @field_validator('password')
+    @classmethod
+    def validate_password_length(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters long')
+        return v
 
 
 # ==================== AUTH MODELS ====================
@@ -151,8 +158,16 @@ class EmailVerificationRequest(BaseModel):
 
 
 class PasswordSetup(BaseModel):
-    password: str = Field(..., min_length=8, example="MyS3cur3Pwd")
-    confirm_password: str = Field(..., min_length=8, example="MyS3cur3Pwd")
+    password: str = Field(..., min_length=8, example="MyS3cur3Pwd", description="Password must be at least 8 characters")
+    confirm_password: str = Field(..., min_length=8, example="MyS3cur3Pwd", description="Password must be at least 8 characters")
+    
+    @field_validator('password', 'confirm_password')
+    @classmethod
+    def validate_password_length(cls, v: str, info) -> str:
+        if len(v) < 8:
+            field_name = info.field_name.replace('_', ' ').title()
+            raise ValueError(f'{field_name} must be at least 8 characters long')
+        return v
 
 
 class ForgotPasswordRequest(BaseModel):
