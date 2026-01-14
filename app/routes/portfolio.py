@@ -116,6 +116,7 @@ from app.utils.background_calculations import (
 from app.utils.ecl_calculator import calculate_loss_given_default
 from app.utils.ingest_file_validation import validate_all_uploaded_files
 from app.utils.minio_reports_factory import upload_multiple_files_to_minio
+from app.utils.excel_utils import count_excel_rows_fast
 import os
 
 from app.utils.minio_reports_factory import s3_client, public_s3_client
@@ -690,6 +691,7 @@ def delete_portfolio(
 )
 async def accept_portfolio_data(
     portfolio_id: int,
+    loan_row_count: Optional[int] = Form(None),  # Optional client-provided count
     loan_details: Optional[UploadFile] = File(None),
     client_data: Optional[UploadFile] = File(None),
     loan_guarantee_data: Optional[UploadFile] = File(None),
@@ -749,28 +751,39 @@ async def accept_portfolio_data(
             detail="Subscription usage or plan configuration missing.",
         )
 
-    # Read the loan_details file to count rows BEFORE uploading
-    try:
-        # Read file content
-        loan_file_content = await loan_details.read()
-        
-        # Reset file pointer for later upload
-        await loan_details.seek(0)
-        
-        # Count rows in the Excel file
-        from openpyxl import load_workbook
-        # Efficiently count rows without parsing data
-        wb = load_workbook(BytesIO(loan_file_content), read_only=True, data_only=True)
-        ws = wb.active
-        new_loan_rows = ws.max_row - 1  # Subtract header row
-        wb.close()
-        
-    except Exception as e:
-        logger.error(f"Error reading loan_details file: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to read loan_details file: {str(e)}",
-        )
+    # Determine loan row count using fast path or server-side validation
+    new_loan_rows: Optional[int] = None
+    
+    # FAST PATH: Use client-provided count if available
+    if loan_row_count is not None:
+        if loan_row_count <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="loan_row_count must be greater than zero.",
+            )
+        new_loan_rows = loan_row_count
+        logger.info(f"Using client-provided row count: {new_loan_rows}")
+    
+    # FALLBACK: Server-side Excel validation (ZIP-based + openpyxl)
+    else:
+        try:
+            logger.info("Client did not provide row count, performing server-side validation")
+            # Read file content
+            loan_file_content = await loan_details.read()
+            
+            # Reset file pointer for later upload
+            await loan_details.seek(0)
+            
+            # Use fast counting method (ZIP-based with openpyxl fallback)
+            new_loan_rows = count_excel_rows_fast(loan_file_content)
+            logger.info(f"Server-side row count: {new_loan_rows}")
+            
+        except Exception as e:
+            logger.error(f"Error reading loan_details file: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to read loan_details file: {str(e)}",
+            )
 
     # Validate loan count
     if new_loan_rows <= 0:
