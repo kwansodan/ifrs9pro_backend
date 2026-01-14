@@ -34,14 +34,14 @@ def count_excel_rows_fast(file_bytes: bytes) -> int:
             for name in z.namelist():
                 if name.startswith("xl/worksheets/") and name.endswith(".xml"):
                     with z.open(name) as sheet:
-                        # Count <row> tags in the XML
-                        # Each line with <row indicates a row in the sheet
-                        row_count = sum(1 for line in sheet if b"<row" in line)
+                        # Read full content and count <row tags
+                        # (line-by-line iteration fails when multiple rows are on same line)
+                        content = sheet.read()
+                        total_rows = content.count(b"<row")
                         # Subtract 1 for header row
-                        data_rows = row_count - 1
-                        if data_rows >= 0:
-                            logger.debug(f"ZIP-based count: {data_rows} data rows")
-                            return data_rows
+                        data_rows = max(total_rows - 1, 0)
+                        logger.debug(f"ZIP-based count: {total_rows} total rows, {data_rows} data rows")
+                        return data_rows
     except Exception as e:
         logger.debug(f"ZIP-based counting failed: {e}, falling back to openpyxl")
     
@@ -50,9 +50,10 @@ def count_excel_rows_fast(file_bytes: bytes) -> int:
         wb = load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
         ws = wb.active
         # max_row includes header, so subtract 1
-        data_rows = max(ws.max_row - 1, 0)
+        total_rows = ws.max_row if ws.max_row else 0
+        data_rows = max(total_rows - 1, 0)
         wb.close()
-        logger.debug(f"openpyxl count: {data_rows} data rows")
+        logger.debug(f"openpyxl count: {total_rows} total rows, {data_rows} data rows")
         return data_rows
     except Exception as e:
         logger.error(f"Failed to count Excel rows: {e}")

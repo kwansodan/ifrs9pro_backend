@@ -23,6 +23,22 @@ services:
     networks:
       - ifrs9pro_network
 
+  caddy:
+    image: caddy:latest
+    container_name: caddy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+    networks:
+      - ifrs9pro_network
+
   db:
     image: postgres:16-alpine
     container_name: ifrs9pro_postgres
@@ -38,7 +54,7 @@ services:
     ports:
       - "5433:5432" # Avoid conflict with local PostgreSQL
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ifrs9user -d ifrs9pro_db"]
+      test: [ "CMD-SHELL", "pg_isready -U ifrs9user -d ifrs9pro_db" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -61,7 +77,7 @@ services:
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
       interval: 30s
       timeout: 20s
       retries: 3
@@ -69,10 +85,12 @@ services:
     networks:
       - ifrs9pro_network
 
-
 volumes:
   postgres_data:
   minio_data:
+  caddy_data:
+  caddy_config:
+
 
 networks:
   ifrs9pro_network:
