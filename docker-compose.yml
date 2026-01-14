@@ -54,7 +54,7 @@ services:
     ports:
       - "5433:5432" # Avoid conflict with local PostgreSQL
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ifrs9user -d ifrs9pro_db"]
+      test: [ "CMD-SHELL", "pg_isready -U ifrs9user -d ifrs9pro_db" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -77,14 +77,13 @@ services:
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
       interval: 30s
       timeout: 20s
       retries: 3
     restart: unless-stopped
     networks:
       - ifrs9pro_network
-
 
 volumes:
   postgres_data:
