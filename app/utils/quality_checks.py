@@ -240,11 +240,11 @@ def find_missing_dob(db: Session, portfolio_id: int) -> List[Dict]:
 
 def create_quality_issues_if_needed(db: Session, portfolio_id: int) -> Dict[str, int]:
     """
-    Retrieve existing quality issues from the database without creating new ones.
+    Retrieve existing quality issues from the database utilizing efficient SQL aggregation.
     Returns count of issues by type.
-    
-    Optimized for large portfolios to prevent database timeouts.
     """
+    from sqlalchemy import func
+    
     # Get the portfolio
     portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
     if not portfolio:
@@ -266,56 +266,62 @@ def create_quality_issues_if_needed(db: Session, portfolio_id: int) -> Dict[str,
         "missing_loan_terms": 0,
         "missing_interest_rates": 0,
         "missing_loan_amounts": 0,
+        "total_issues": 0,
+        "high_severity_issues": 0,
+        "open_issues": 0
     }
 
-    # Get existing quality issues for this portfolio
-    existing_issues = (
-        db.query(QualityIssue)
-        .filter(QualityIssue.portfolio_id == portfolio_id)
-        .all()
-    )
+    # Execute optimized aggregation query
+    # SELECT issue_type, status, COUNT(id) ... GROUP BY issue_type, status
+    results = db.query(
+        QualityIssue.issue_type,
+        QualityIssue.status,
+        func.count(QualityIssue.id)
+    ).filter(
+        QualityIssue.portfolio_id == portfolio_id
+    ).group_by(
+        QualityIssue.issue_type,
+        QualityIssue.status
+    ).all()
     
-    # Count issues by type
-    for issue in existing_issues:
-        issue_type = issue.issue_type
-        
-        # Map issue types to our count dictionary
-        if issue_type == "duplicate_customer_id":
-            issue_counts["duplicate_customer_ids"] += 1
-        elif issue_type == "duplicate_address":
-            issue_counts["duplicate_addresses"] += 1
-        elif issue_type == "duplicate_dob":
-            issue_counts["duplicate_dob"] += 1
-        elif issue_type == "duplicate_loan_id":
-            issue_counts["duplicate_loan_ids"] += 1
-        elif issue_type == "duplicate_phone":
-            issue_counts["duplicate_phones"] += 1
-        elif issue_type == "client_without_matching_loan":
-            issue_counts["clients_without_matching_loans"] += 1
-        elif issue_type == "loan_without_matching_client":
-            issue_counts["loans_without_matching_clients"] += 1
-        elif issue_type == "missing_dob":
-            issue_counts["missing_dob"] += 1
-        elif issue_type == "missing_address":
-            issue_counts["missing_addresses"] += 1
-        elif issue_type == "missing_loan_number":
-            issue_counts["missing_loan_numbers"] += 1
-        elif issue_type == "missing_loan_date":
-            issue_counts["missing_loan_dates"] += 1
-        elif issue_type == "missing_loan_term":
-            issue_counts["missing_loan_terms"] += 1
-        elif issue_type == "missing_interest_rate":
-            issue_counts["missing_interest_rates"] += 1
-        elif issue_type == "missing_loan_amount":
-            issue_counts["missing_loan_amounts"] += 1
-        # Handle legacy issue types for backward compatibility
-        elif issue_type == "unmatched_employee_id":
-            issue_counts["clients_without_matching_loans"] += 1
-        elif issue_type == "loan_customer_mismatch":
-            issue_counts["loans_without_matching_clients"] += 1
+    # Map DB issue types to dictionary keys
+    type_mapping = {
+        "duplicate_customer_id": "duplicate_customer_ids",
+        "duplicate_address": "duplicate_addresses",
+        "duplicate_dob": "duplicate_dob",
+        "duplicate_loan_id": "duplicate_loan_ids",
+        "duplicate_phone": "duplicate_phones",
+        "client_without_matching_loan": "clients_without_matching_loans",
+        "loan_without_matching_client": "loans_without_matching_clients",
+        "missing_dob": "missing_dob",
+        "missing_address": "missing_addresses",
+        "missing_loan_number": "missing_loan_numbers",
+        "missing_loan_date": "missing_loan_dates",
+        "missing_loan_term": "missing_loan_terms",
+        "missing_interest_rate": "missing_interest_rates",
+        "missing_loan_amount": "missing_loan_amounts",
+        # Legacy mappings
+        "unmatched_employee_id": "clients_without_matching_loans",
+        "loan_customer_mismatch": "loans_without_matching_clients"
+    }
 
-    # Calculate totals
-    total_issues = sum(issue_counts.values())
+    total_issues = 0
+    open_issues = 0
+    
+    for issue_type, status, count in results:
+        # Update specific type count
+        if issue_type in type_mapping:
+            key = type_mapping[issue_type]
+            if key in issue_counts:
+                issue_counts[key] += count
+        
+        # valid_statuses for open issues
+        if status == "open":
+            open_issues += count
+            
+        total_issues += count
+
+    # Calculate high severity issues from the aggregated counts
     high_severity_issues = (
         issue_counts["duplicate_customer_ids"]
         + issue_counts["duplicate_loan_ids"]
@@ -324,12 +330,8 @@ def create_quality_issues_if_needed(db: Session, portfolio_id: int) -> Dict[str,
         + issue_counts["missing_loan_amounts"]
     )
 
-    # Add total counts
     issue_counts["total_issues"] = total_issues
     issue_counts["high_severity_issues"] = high_severity_issues
-    
-    # Count open issues
-    open_issues = sum(1 for issue in existing_issues if issue.status == "open")
     issue_counts["open_issues"] = open_issues
 
     return issue_counts
@@ -358,6 +360,8 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
     portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
     if not portfolio:
         raise ValueError(f"Portfolio with ID {portfolio_id} not found")
+        
+    tenant_id = portfolio.tenant_id
 
     # Initialize issue counts dictionary
     issue_counts = {
@@ -423,6 +427,7 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
             # Create a single issue for each duplicate employee ID group
             issue = QualityIssue(
                 portfolio_id=portfolio_id,
+                tenant_id=tenant_id,
                 issue_type="duplicate_customer_id",
                 severity="high",
                 status="open",
@@ -468,6 +473,7 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
             # Create a single issue for each duplicate address group
             issue = QualityIssue(
                 portfolio_id=portfolio_id,
+                tenant_id=tenant_id,
                 issue_type="duplicate_address",
                 severity="medium",
                 status="open",
@@ -513,6 +519,7 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
             # Create a single issue for each duplicate DOB group
             issue = QualityIssue(
                 portfolio_id=portfolio_id,
+                tenant_id=tenant_id,
                 issue_type="duplicate_dob",
                 severity="medium",
                 status="open",
@@ -558,6 +565,7 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
             # Create a single issue for each duplicate loan ID group
             issue = QualityIssue(
                 portfolio_id=portfolio_id,
+                tenant_id=tenant_id,
                 issue_type="duplicate_loan_id",
                 severity="high",
                 status="open",
@@ -603,6 +611,7 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
             # Create a single issue for each duplicate phone number group
             issue = QualityIssue(
                 portfolio_id=portfolio_id,
+                tenant_id=tenant_id,
                 issue_type="duplicate_phone",
                 severity="medium",
                 status="open",
@@ -643,6 +652,7 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
             # Create a single issue for each unmatched client
             issue = QualityIssue(
                 portfolio_id=portfolio_id,
+                tenant_id=tenant_id,
                 issue_type="client_without_matching_loan",
                 severity="high",
                 status="open",
@@ -684,6 +694,7 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
             # Create a single issue for each unmatched loan
             issue = QualityIssue(
                 portfolio_id=portfolio_id,
+                tenant_id=tenant_id,
                 issue_type="loan_without_matching_client",
                 severity="high",
                 status="open",
@@ -725,6 +736,7 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
             # Create a single issue for each client with missing DOB
             issue = QualityIssue(
                 portfolio_id=portfolio_id,
+                tenant_id=tenant_id,
                 issue_type="missing_dob",
                 severity="medium",
                 status="open",

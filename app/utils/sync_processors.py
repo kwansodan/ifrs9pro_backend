@@ -5,6 +5,7 @@ import decimal
 from datetime import datetime
 from sqlalchemy import text
 import polars as pl
+import traceback
 
 from app.models import (
     Loan,
@@ -272,13 +273,19 @@ async def process_loan_details_sync(file_content, portfolio_id, tenant_id, db):
         if subscription_id_value is not None:
             df = df.with_columns(pl.lit(subscription_id_value).alias("subscription_id"))
 
-        # Add tenant id to loan records
         if tenant_id: 
             tenant_id_value = int(tenant_id)
             df = df.with_columns(pl.lit(tenant_id_value).alias("tenant_id"))
         else:
             logger.error(f"Portfolio {portfolio_id} does not have a tenant_id")
             return {"error": "Tenant id missing in loan records"}
+        
+        # Deduplicate by loan_no (keep first occurrence)
+        initial_count = df.height
+        df = df.unique(subset=["loan_no"], keep="first", maintain_order=True)
+        final_count = df.height
+        if initial_count > final_count:
+            logger.info(f"Dropped {initial_count - final_count} duplicate loan records (by loan_no). kept {final_count}")
         
 
         # Clear existing loans for this portfolio
@@ -351,59 +358,69 @@ async def process_loan_details_sync(file_content, portfolio_id, tenant_id, db):
             logger.warning(f"COPY failed: {str(copy_error)} — falling back to bulk_save_objects")
 
         # fallback to ORM
-        # try:
-        #     batch_size = 10000
-        #     offset = 0
-        #     processed_total = 0
+        try:
+            batch_size = 10000
+            offset = 0
+            processed_total = 0
+            
+            # Re-read or re-process for ORM if needed, but we can reuse the Polars DF
+            # Need to be careful with types if we iterate differently
+            
+            while True:
+                batch_df = df.slice(offset, batch_size)
+                if batch_df.height == 0:
+                    break
 
-        #     while True:
-        #         batch_df = df.slice(offset, batch_size)
-        #         if batch_df.height == 0:
-        #             break
+                records = batch_df.to_dicts()
+                numeric_cols_in_df = [
+                    "loan_amount", "loan_term", "administrative_fees", "total_interest",
+                    "total_collectible", "net_loan_amount", "monthly_installment",
+                    "principal_due", "interest_due", "total_due", "principal_paid",
+                    "interest_paid", "total_paid", "principal_paid2", "interest_paid2",
+                    "total_paid2", "outstanding_loan_balance", "accumulated_arrears",
+                    "ndia", "prevailing_posted_repayment", "prevailing_due_payment",
+                    "current_missed_deduction", "admin_charge", "recovery_rate"
+                ]
+                required_not_null = ["loan_no", "employee_id", "loan_amount"]
+                loans = []
+                for record in records:
+                    try:
+                        for col in required_not_null:
+                            if col not in record or record[col] in [None, ""]:
+                                if col in numeric_cols_in_df:
+                                    record[col] = decimal.Decimal("0")
+                                else:
+                                    record[col] = "UNKNOWN"
+                        for col in numeric_cols_in_df:
+                            if col in record:
+                                if record[col] is None:
+                                    record[col] = decimal.Decimal("0")
+                                else:
+                                    try:
+                                        record[col] = decimal.Decimal(str(record[col]))
+                                    except:
+                                        record[col] = decimal.Decimal("0")
+                                        
+                        # Filter for valid columns only
+                        loan_data = {k: v for k, v in record.items() if k in Loan.__table__.columns.keys()}
+                        loan = Loan(**loan_data)
+                        loans.append(loan)
+                    except Exception as e:
+                        logger.warning(f"Loan skipped due to error: {str(e)}")
 
-        #         records = batch_df.to_dicts()
-        #         numeric_cols_in_df = [
-        #             "loan_amount", "loan_term", "administrative_fees", "total_interest",
-        #             "total_collectible", "net_loan_amount", "monthly_installment",
-        #             "principal_due", "interest_due", "total_due", "principal_paid",
-        #             "interest_paid", "total_paid", "principal_paid2", "interest_paid2",
-        #             "total_paid2", "outstanding_loan_balance", "accumulated_arrears",
-        #             "ndia", "prevailing_posted_repayment", "prevailing_due_payment",
-        #             "current_missed_deduction", "admin_charge", "recovery_rate"
-        #         ]
-        #         required_not_null = ["loan_no", "employee_id", "loan_amount"]
-        #         loans = []
-        #         for record in records:
-        #             try:
-        #                 for col in required_not_null:
-        #                     if col not in record or record[col] in [None, ""]:
-        #                         if col in numeric_cols_in_df:
-        #                             record[col] = decimal.Decimal("0")
-        #                         else:
-        #                             record[col] = "UNKNOWN"
-        #                 for col in numeric_cols_in_df:
-        #                     if col in record:
-        #                         if record[col] is None:
-        #                             record[col] = decimal.Decimal("0")
-        #                         else:
-        #                             record[col] = decimal.Decimal(str(record[col]))
-        #                 loan = Loan(**{k: v for k, v in record.items() if k in Loan.__table__.columns.keys()})
-        #                 loans.append(loan)
-        #             except Exception as e:
-        #                 logger.warning(f"Loan skipped due to error: {str(e)}")
+                if loans:
+                   db.bulk_save_objects(loans)
+                   db.commit()
+                   processed_total += len(loans)
+                offset += batch_size
 
-        #         db.bulk_save_objects(loans)
-        #         db.commit()
-        #         processed_total += len(loans)
-        #         offset += batch_size
+            logger.info(f"Inserted {processed_total} loans with bulk_save_objects")
+            return {"processed": processed_total, "success": True, "message": f"Successfully processed {processed_total} loan records"}
 
-        #     logger.info(f"Inserted {processed_total} loans with bulk_save_objects")
-        #     return {"processed": processed_total, "success": True, "message": f"Successfully processed {processed_total} loan records"}
-
-        # except Exception as final_error:
-        #     db.rollback()
-        #     logger.error(f"Final fallback insert failed: {str(final_error)}")
-        #     return {"error": str(final_error)}
+        except Exception as final_error:
+            db.rollback()
+            logger.error(f"Final fallback insert failed: {str(final_error)}")
+            return {"error": str(final_error)}
 
     except Exception as e:
         db.rollback()
@@ -448,17 +465,25 @@ async def process_client_data_sync(file_content, portfolio_id, tenant_id, db):
         
         # Read file content as Excel file
         try:    
+            # SANITIZE: fix mixed types (e.g. ints in string columns) that crash pyarrow
+            # This is critical for columns like phone numbers or IDs that pandas infers as object but contain mixed types
+            for col in file_content.columns:
+                if file_content[col].dtype == "object":
+                    file_content[col] = file_content[col].astype(str)
+
             # Read with polars
             df = pl.from_pandas(file_content)
+            
+            # Explicitly cast known string columns again to be sure (Polars side)
             string_cols = ["phone number", "client phone no.", "phone no.", "client phone number"]
             for col in string_cols:
                 if col in df.columns:
                     df = df.with_columns(pl.col(col).cast(pl.Utf8))
-            # df = pl.read_excel(content, dtypes={"Client Phone No.": pl.Utf8})
 
             logger.info(f"Successfully read Excel file with polars, found {df.height} rows")
         except Exception as excel_error:
             logger.error(f"Failed to read Excel file: {str(excel_error)}")
+            # logger.error(traceback.format_exc()) # Keep strict logging if needed, but error is known now
             raise ValueError(f"Unable to read Excel file: {str(excel_error)}")
         
         # Lowercase column names for consistent matching
