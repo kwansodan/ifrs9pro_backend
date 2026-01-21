@@ -764,19 +764,23 @@ async def accept_portfolio_data(
         new_loan_rows = loan_row_count
         logger.info(f"Using client-provided row count: {new_loan_rows}")
     
-    # FALLBACK: Server-side Excel validation (ZIP-based + openpyxl)
+    # FALLBACK: Server-side Excel validation (pd.read_excel)
     else:
         try:
             logger.info("Client did not provide row count, performing server-side validation")
             # Read file content
-            loan_file_content = await loan_details.read()
+            content = await loan_details.read()
             
             # Reset file pointer for later upload
             await loan_details.seek(0)
             
-            # Use fast counting method (ZIP-based with openpyxl fallback)
-            new_loan_rows = count_excel_rows_fast(loan_file_content)
-            logger.info(f"Server-side row count: {new_loan_rows}")
+            # Use pandas for robust reading
+            import pandas as pd
+            from io import BytesIO
+            
+            df = pd.read_excel(BytesIO(content))
+            new_loan_rows = len(df)
+            logger.info(f"Server-side row count (pd.read_excel): {new_loan_rows}")
             
         except Exception as e:
             logger.error(f"Error reading loan_details file: {str(e)}")
