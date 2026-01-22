@@ -248,6 +248,11 @@ async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, d
                     arrears=loan.accumulated_arrears,
                     db=db,
                 )
+                
+                # CRITICAL FIX: Use default PD if calculation returns None or 0
+                if pd_value is None or pd_value == 0:
+                    logger.warning(f"Loan {loan.id}: PD calculation returned {pd_value}, using default 5%")
+                    pd_value = 5.0  # Default to 5% annual PD
 
                 loan_data = {
                     "id": loan.id,

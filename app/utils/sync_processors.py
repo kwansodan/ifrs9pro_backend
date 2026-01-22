@@ -119,29 +119,47 @@ async def process_loan_details_sync(file_content, portfolio_id, tenant_id, db):
             logger.error(f"Missing required columns: {readable_missing_columns}")
             return {"error": f"Missing required columns: {readable_missing_columns}"}
         
-        # Special handling for period columns in 'MMMYYYY' format
+        # Special handling for period columns - handle both standard dates and MMMYYYY
         period_columns = ["deduction_start_period", "submission_period", "maturity_period"]
         from calendar import monthrange
         import re
         import pandas as pd
+        
         month_abbr_map = {abbr.upper(): num for num, abbr in enumerate(['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])}
+        
         for col in period_columns:
             if col in df.columns:
-                # Convert Polars to Series for easier string ops, then back
                 s = df[col].to_pandas()
-                def mmyyyy_to_eom(val):
-                    if isinstance(val, str) and re.match(r"^[A-Za-z]{3}\d{4}$", val.strip()):
-                        try:
-                            month = month_abbr_map[val[:3].upper()]
-                            year = int(val[3:])
-                            last_day = monthrange(year, month)[1]
-                            return pd.Timestamp(year=year, month=month, day=last_day)
-                        except Exception:
-                            return None
+                
+                def parse_period_date(val):
+                    if pd.isna(val) or val == "":
+                        return None
+                        
+                    # 1. Try standard date parsing first (handles YYYY-MM-DD, MM/DD/YYYY etc)
+                    try:
+                        dt = pd.to_datetime(val, errors='coerce')
+                        if pd.notna(dt):
+                            return dt
+                    except:
+                        pass
+
+                    # 2. Try MMMYYYY format (e.g. JAN2024 -> 2024-01-31)
+                    if isinstance(val, str):
+                        clean_val = val.strip()
+                        if re.match(r"^[A-Za-z]{3}\d{4}$", clean_val):
+                            try:
+                                month = month_abbr_map[val[:3].upper()]
+                                year = int(val[3:])
+                                last_day = monthrange(year, month)[1]
+                                return pd.Timestamp(year=year, month=month, day=last_day)
+                            except:
+                                pass
                     return None
-                # Convert to pd.Timestamp, then to string YYYY-MM-DD, then to Polars Date
-                s = s.apply(mmyyyy_to_eom)
+
+                # Apply parsing and convert to uniform format
+                s = s.apply(parse_period_date)
                 s = s.dt.strftime("%Y-%m-%d")
+                
                 df = df.with_columns(
                     pl.Series(col, s).str.strptime(pl.Date, "%Y-%m-%d", strict=False)
                 )
@@ -228,22 +246,99 @@ async def process_loan_details_sync(file_content, portfolio_id, tenant_id, db):
         ]
         
         numeric_cols_in_df = [col for col in numeric_columns if col in df.columns]
+        
+        if "accumulated_arrears" in df.columns:
+            try:
+                logger.info(f"Accumulated Arrears sample BEFORE conversion: {df.select('accumulated_arrears').head(10).to_dicts()}")
+                logger.info(f"Monthly Installment sample BEFORE conversion: {df.select('monthly_installment').head(10).to_dicts()}")
+            except:
+                pass
+
         if numeric_cols_in_df:
             try:
-                # Process all numeric columns at once - fixed string operations
-                df = df.with_columns([
-                    pl.col(col).cast(pl.Float64, strict=False).fill_null(0.0) for col in numeric_cols_in_df
-                ])
+                # Process all numeric columns
+                # Handle " - " (accounting zero), commas, and spaces
+                exprs = []
+                for col in numeric_cols_in_df:
+                    exprs.append(
+                        pl.col(col)
+                        .cast(pl.Utf8)  # Cast to string first
+                        .str.replace(r"^\s*-\s*$", "0") # Replace " - " with "0" first (accounting zero)
+                        .str.replace_all(r"[^\d\.\-]", "") # Remove EVERYTHING that is not a digit, dot, or minus (removes commas, currency, spaces)
+                        .str.replace(r"^-$", "0")       # Handle bare "-" that might remain
+                        .cast(pl.Float64, strict=False) # Convert to float
+                        .fill_null(0.0)                 # Fill nulls with 0
+                        .alias(col)
+                    )
+                
+                df = df.with_columns(exprs)
+            
             except Exception as e:
-                logger.warning(f"Failed to convert numeric columns: {str(e)}")
-                # Fall back to individual column processing
+                logger.warning(f"Failed to batch convert numeric columns: {str(e)}")
+                # Fall back to individual column processing using same logic
                 for col in numeric_cols_in_df:
                     try:
                         df = df.with_columns(
-                            pl.col(col).cast(pl.Float64, strict=False).fill_null(0.0)
+                            pl.col(col)
+                            .cast(pl.Utf8)
+                            .str.replace(r"^\s*-\s*$", "0")
+                            .str.replace_all(r"[^\d\.\-]", "")
+                            .str.replace(r"^-$", "0")
+                            .cast(pl.Float64, strict=False)
+                            .fill_null(0.0)
+                            .alias(col)
                         )
                     except Exception as e:
                         logger.warning(f"Failed to convert {col} to numeric: {str(e)}")
+        
+        # ============================================================================
+        # CRITICAL FIX: Recalculate NDIA server-side (Issue #6)
+        # ============================================================================
+        logger.info("Recalculating NDIA from accumulated_arrears and monthly_installment")
+        
+        # Calculate NDIA: (accumulated_arrears / monthly_installment) × 30
+        df = df.with_columns([
+            pl.when(
+                (pl.col("monthly_installment") > 0) & 
+                (pl.col("accumulated_arrears").is_not_null())
+            )
+            .then(
+                (pl.col("accumulated_arrears") / pl.col("monthly_installment")) * 30
+            )
+            .otherwise(0.0)
+            .alias("ndia")
+        ])
+        
+        # Log NDIA statistics for verification
+        try:
+            ndia_stats = df.select([
+                pl.col("ndia").min().alias("min"),
+                pl.col("ndia").max().alias("max"),
+                pl.col("ndia").mean().alias("mean"),
+                (pl.col("ndia") == 0).sum().alias("zero_count"),
+                ((pl.col("ndia") > 0) & (pl.col("ndia") <= 30)).sum().alias("stage1_count"),
+                ((pl.col("ndia") > 30) & (pl.col("ndia") <= 90)).sum().alias("stage2_count"),
+                (pl.col("ndia") > 90).sum().alias("stage3_count")
+            ]).to_dicts()[0]
+            
+            # Additional Debug for NDIA calculation
+            logger.info("Detailed NDIA Calculation Check:")
+            sample_calcs = df.filter(pl.col("accumulated_arrears") > 0).select([
+                "loan_no", "accumulated_arrears", "monthly_installment", "ndia"
+            ]).head(10).to_dicts()
+            logger.info(f"Sample rows with Arrears > 0: {sample_calcs}")
+            
+            logger.info(
+                f"NDIA recalculated - Min: {ndia_stats['min']:.2f}, Max: {ndia_stats['max']:.2f}, "
+                f"Mean: {ndia_stats['mean']:.2f} | "
+                f"NDIA=0: {ndia_stats['zero_count']}, "
+                f"1-30: {ndia_stats['stage1_count']}, "
+                f"31-90: {ndia_stats['stage2_count']}, "
+                f"91+: {ndia_stats['stage3_count']}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to log NDIA statistics: {str(e)}")
+        # ============================================================================
         
         # Convert boolean columns - process all at once
         bool_columns = ["paid", "cancelled"]
@@ -446,6 +541,9 @@ async def process_client_data_sync(file_content, portfolio_id, tenant_id, db):
             "marital status": "marital_status",
             "gender": "gender",
             "date of birth": "date_of_birth",
+            "date_of_birth": "date_of_birth",
+            "dob": "date_of_birth",
+            "birth date": "date_of_birth",
             "employer": "employer",
             "previous employee no": "previous_employee_no",
             "social security no": "social_security_no",
@@ -487,8 +585,21 @@ async def process_client_data_sync(file_content, portfolio_id, tenant_id, db):
             raise ValueError(f"Unable to read Excel file: {str(excel_error)}")
         
         # Lowercase column names for consistent matching
-        df.columns = [col.lower() for col in df.columns]
+        original_columns = df.columns
+        df.columns = [col.lower().strip() for col in df.columns] # Strip whitespace too!
         
+        # DEBUG: Log raw columns to identify mapping issues
+        logger.info(f"RAW EXCEL COLUMNS: {original_columns}")
+        logger.info(f"NORMALIZED COLUMNS: {df.columns}")
+        
+        # DEBUG: Find any column looking like 'date of birth' and show its content
+        dob_candidates = [c for c in df.columns if "birth" in c or "dob" in c]
+        logger.info(f"POTENTIAL DOB COLUMNS FOUND: {dob_candidates}")
+        for c in dob_candidates:
+            sample = df.select(c).head(5).to_dicts()
+            logger.info(f"SAMPLE DATA FOR '{c}': {sample}")
+            logger.info(f"DTYPE FOR '{c}': {df[c].dtype}")
+
         # Rename columns based on target mapping
         rename_map = {}
         for orig_col in df.columns:
@@ -504,34 +615,47 @@ async def process_client_data_sync(file_content, portfolio_id, tenant_id, db):
         
         if date_cols_in_df:
             try:
-                # First strip any leading/trailing quotes from date strings
+
+                # CRITICAL FIX: Handle case where Polars already inferred it as Datetime
+                # If it's already Datetime, just cast to Date. Don't try to parse strings!
+                processed_cols = []
                 for col in date_cols_in_df:
                     if col in df.columns:
-                        # Strip quotes from string values
-                        df = df.with_columns(
-                            pl.col(col).cast(pl.Utf8).str.replace_all("^['\"]|['\"]$", "").alias(col)
-                        )
+                        dtype = df[col].dtype
+                        if dtype in [pl.Date, pl.Datetime]:
+                            logger.info(f"Column '{col}' is already {dtype}, casting to Date")
+                            df = df.with_columns(pl.col(col).cast(pl.Date, strict=False))
+                        else:
+                            # Is string, needs parsing
+                            # First strip quotes
+                            df = df.with_columns(
+                                pl.col(col).cast(pl.Utf8).str.replace_all("^['\"]|['\"]$", "").alias(col)
+                            )
+                            processed_cols.append(col)
+                            
+                # Only run string parsing for columns that are actually strings
+                date_cols_to_parse = [c for c in processed_cols if c in df.columns]
                 
-                # Try multiple date formats in sequence, prioritizing '%Y-%m-%d'
-                date_formats = ["%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%d-%m-%Y", "%m-%d-%Y"]
-                for date_format in date_formats:
-                    try:
-                        # Attempt parsing
-                        new_cols = [pl.col(col).str.strptime(pl.Date, date_format, strict=False) for col in date_cols_in_df]
-                        temp_df = df.with_columns(new_cols)
-                        # Check if at least one value was parsed (not all null)
-                        any_parsed = False
-                        for col in date_cols_in_df:
-                            if temp_df[col].null_count() < df.height:
-                                any_parsed = True
-                                break
-                        if any_parsed:
-                            df = temp_df
-                            logger.info(f"Successfully parsed dates using format: {date_format}")
-                            break  # Only break if parsing succeeded
-                    except Exception as e:
-                        logger.debug(f"Failed to parse dates with format {date_format}: {str(e)}")
-                        continue
+                if date_cols_to_parse:
+                    date_formats = ["%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%d-%m-%Y", "%m-%d-%Y"]
+                    for date_format in date_formats:
+                        try:
+                            # Attempt parsing
+                            new_cols = [pl.col(col).str.strptime(pl.Date, date_format, strict=False) for col in date_cols_to_parse]
+                            temp_df = df.with_columns(new_cols)
+                            # Check if at least one value was parsed (not all null)
+                            any_parsed = False
+                            for col in date_cols_to_parse:
+                                if temp_df[col].null_count() < df.height:
+                                    any_parsed = True
+                                    break
+                            if any_parsed:
+                                df = temp_df
+                                logger.info(f"Successfully parsed dates using format: {date_format}")
+                                break  # Only break if parsing succeeded
+                        except Exception as e:
+                            logger.debug(f"Failed to parse dates with format {date_format}: {str(e)}")
+                            continue
                 
                 # If still not parsed, try the default Polars date parsing as fallback
                 for col in date_cols_in_df:
