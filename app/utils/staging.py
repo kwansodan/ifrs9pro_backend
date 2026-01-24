@@ -109,7 +109,18 @@ async def stage_loans_ecl_orm(portfolio_id: int, db: Session, user_email, first_
                 break
 
             for loan in loan_batch:
-                ndia = loan.ndia or 0
+                # Recalculate NDIA JIT to ensure consistency with arrears
+                arrears = loan.accumulated_arrears or Decimal(0)
+                installment = loan.monthly_installment or Decimal(0)
+                
+                if installment > 0:
+                     # Standard Formula: (Arrears / Installment) * 30
+                     ndia = (arrears / installment) * 30
+                else:
+                     ndia = 0
+                
+                # Heal the DB value
+                loan.ndia = ndia
 
                 if ndia >= stage_3_min:
                     loan.ifrs9_stage = "Stage 3"
@@ -243,7 +254,17 @@ async def stage_loans_local_impairment_orm(
                 break
 
             for loan in loan_batch:
-                ndia = loan.ndia or 0
+                # Recalculate NDIA JIT to ensure consistency with arrears
+                arrears = loan.accumulated_arrears or Decimal(0)
+                installment = loan.monthly_installment or Decimal(0)
+                
+                if installment > 0:
+                     ndia = (arrears / installment) * 30
+                else:
+                     ndia = 0
+                
+                # Heal the DB value
+                loan.ndia = ndia
 
                 # Assign BOG stage
                 if ndia >= loss_min:

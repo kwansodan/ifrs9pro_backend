@@ -272,6 +272,13 @@ async def process_loan_details_sync(file_content, portfolio_id, tenant_id, db):
                     )
                 
                 df = df.with_columns(exprs)
+
+                if "accumulated_arrears" in df.columns:
+                    try:
+                        logger.info(f"Accumulated Arrears sample AFTER conversion: {df.select('accumulated_arrears').head(10).to_dicts()}")
+                        logger.info(f"Monthly Installment sample AFTER conversion: {df.select('monthly_installment').head(10).to_dicts()}")
+                    except:
+                        pass
             
             except Exception as e:
                 logger.warning(f"Failed to batch convert numeric columns: {str(e)}")

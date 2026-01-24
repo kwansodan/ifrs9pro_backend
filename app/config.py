@@ -24,6 +24,8 @@ class Settings:
     MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY")
     MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY")
     MINIO_BUCKET_NAME = os.getenv("MINIO_BUCKET_NAME")
+    CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0")
+    CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://redis:6379/1")
 
 
 settings = Settings()

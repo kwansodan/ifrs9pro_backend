@@ -106,3 +106,5 @@ schemathesis==4.7.5
 mailjet-rest 
 locust
 dotenv
+celery==5.4.0
+redis==5.0.3
