@@ -5,237 +5,178 @@ from app.models import Client, Loan, QualityIssue, Portfolio
 import time
 
 
-def find_duplicate_customer_ids(db: Session, portfolio_id: int) -> List[Dict]:
-    """
-    Find clients with duplicate employee IDs in the portfolio.
-    Returns a list of groups of clients with the same employee ID.
-    """
-    # Get all clients in the portfolio
-    clients = db.query(Client).filter(Client.portfolio_id == portfolio_id).all()
+from sqlalchemy import text, func
 
-    # Group clients by employee_id
-    employee_id_groups = defaultdict(list)
-    for client in clients:
-        if client.employee_id:  # Skip empty employee IDs
-            employee_id_groups[client.employee_id].append(
-                {
-                    "id": client.id,
-                    "employee_id": client.employee_id,
-                    "name": f"{client.last_name} {client.other_names}",
-                    "phone_number": client.phone_number,
-                }
-            )
-
-    duplicates = [group for employee_id, group in employee_id_groups.items() if len(group) > 1]
-
-    return duplicates
-
-
-def find_duplicate_addresses(db: Session, portfolio_id: int) -> List[Dict]:
-    """
-    Find clients with duplicate addresses in the portfolio.
-    Returns a list of groups of clients with the same address.
-    """
-    # Get all clients in the portfolio
-    clients = db.query(Client).filter(Client.portfolio_id == portfolio_id).all()
-
-    # Group clients by address (case-insensitive)
-    address_groups = defaultdict(list)
-    for client in clients:
-        # Create a clean address for comparison
-        address = (client.residential_address or "").lower().strip()
-        if address:  # Skip empty addresses
-            address_groups[address].append(
-                {
-                    "id": client.id,
-                    "employee_id": client.employee_id,
-                    "name": f"{client.last_name} {client.other_names}",
-                    "address": client.residential_address,
-                }
-            )
-
-    # Filter only groups with more than one client
-    duplicates = [group for address, group in address_groups.items() if len(group) > 1]
-
-    return duplicates
-
-
-def find_duplicate_dobs(db: Session, portfolio_id: int) -> List[Dict]:
-    """
-    Find clients with duplicate dates of birth in a portfolio.
+def find_duplicate_customer_ids(db: Session, portfolio_id: int) -> List[List[Dict]]:
+    """Optimized using SQL aggregation."""
+    sql = text("""
+        SELECT employee_id, array_agg(id) as ids, array_agg(last_name || ' ' || other_names) as names, array_agg(phone_number) as phones
+        FROM clients
+        WHERE portfolio_id = :pid AND employee_id IS NOT NULL AND employee_id != ''
+        GROUP BY employee_id
+        HAVING COUNT(*) > 1
+    """)
+    result = db.execute(sql, {"pid": portfolio_id}).fetchall()
     
-    Args:
-        db: Database session
-        portfolio_id: Portfolio ID to check
-        
-    Returns:
-        List of groups of clients with the same date of birth
-    """
-    # Get all clients in the portfolio
-    clients = (
-        db.query(Client)
-        .filter(Client.portfolio_id == portfolio_id)
-        .filter(Client.date_of_birth.isnot(None))  # Only check clients with DOB
-        .all()
-    )
-    
-    # Group clients by DOB
-    dob_groups = {}
-    for client in clients:
-        if client.date_of_birth:
-            dob_str = client.date_of_birth.isoformat() if hasattr(client.date_of_birth, 'isoformat') else str(client.date_of_birth)
-            if dob_str not in dob_groups:
-                dob_groups[dob_str] = []
-            
-            dob_groups[dob_str].append({
-                "id": client.id,
-                "employee_id": client.employee_id,
-                "date_of_birth": dob_str,
-                "name": f"{client.last_name} {client.other_names}" if client.last_name and client.other_names else "Unknown"
+    duplicates = []
+    for row in result:
+        group = []
+        for i in range(len(row.ids)):
+            group.append({
+                "id": row.ids[i],
+                "employee_id": row.employee_id,
+                "name": row.names[i],
+                "phone_number": row.phones[i]
             })
-    
-    # Filter groups with more than one client
-    duplicate_groups = [group for dob, group in dob_groups.items() if len(group) > 1]
-    
-    return duplicate_groups
-
-
-def find_duplicate_loan_ids(db: Session, portfolio_id: int) -> List[Dict]:
-    """
-    Find loans with duplicate loan numbers in the portfolio.
-    Returns a list of groups of loans with the same loan_no.
-    """
-    # Get all loans in the portfolio
-    loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
-
-    # Group loans by loan_no
-    loan_no_groups = defaultdict(list)
-    for loan in loans:
-        if loan.loan_no:  # Skip empty loan numbers
-            loan_no_groups[loan.loan_no].append(
-                {
-                    "id": loan.id,
-                    "loan_no": loan.loan_no,
-                    "employee_id": loan.employee_id,
-                    "loan_amount": float(loan.loan_amount) if loan.loan_amount else None,
-                    "loan_issue_date": loan.loan_issue_date.isoformat() if loan.loan_issue_date else None,
-                }
-            )
-
-    duplicates = [group for loan_no, group in loan_no_groups.items() if len(group) > 1]
-
+        duplicates.append(group)
     return duplicates
 
 
-def find_duplicate_phone_numbers(db: Session, portfolio_id: int) -> List[Dict]:
-    """
-    Find clients with duplicate phone numbers in the portfolio.
-    Returns a list of groups of clients with the same phone number.
-    """
-    # Get all clients in the portfolio
-    clients = db.query(Client).filter(Client.portfolio_id == portfolio_id).all()
+def find_duplicate_addresses(db: Session, portfolio_id: int) -> List[List[Dict]]:
+    """Optimized using SQL aggregation."""
+    sql = text("""
+        SELECT LOWER(TRIM(residential_address)) as clean_address, array_agg(id) as ids, array_agg(employee_id) as employee_ids, array_agg(last_name || ' ' || other_names) as names, array_agg(residential_address) as raw_addresses
+        FROM clients
+        WHERE portfolio_id = :pid AND residential_address IS NOT NULL AND residential_address != ''
+        GROUP BY LOWER(TRIM(residential_address))
+        HAVING COUNT(*) > 1
+    """)
+    result = db.execute(sql, {"pid": portfolio_id}).fetchall()
+    
+    duplicates = []
+    for row in result:
+        group = []
+        for i in range(len(row.ids)):
+            group.append({
+                "id": row.ids[i],
+                "employee_id": row.employee_ids[i],
+                "name": row.names[i],
+                "address": row.raw_addresses[i]
+            })
+        duplicates.append(group)
+    return duplicates
 
-    # Group clients by phone number
-    phone_groups = defaultdict(list)
-    for client in clients:
-        if client.phone_number:  # Skip empty phone numbers
-            phone_groups[client.phone_number].append(
-                {
-                    "id": client.id,
-                    "employee_id": client.employee_id,
-                    "name": f"{client.last_name} {client.other_names}",
-                    "phone_number": client.phone_number,
-                }
-            )
 
-    duplicates = [group for phone, group in phone_groups.items() if len(group) > 1]
+def find_duplicate_dobs(db: Session, portfolio_id: int) -> List[List[Dict]]:
+    """Optimized using SQL aggregation."""
+    sql = text("""
+        SELECT date_of_birth, array_agg(id) as ids, array_agg(employee_id) as employee_ids, array_agg(last_name || ' ' || other_names) as names
+        FROM clients
+        WHERE portfolio_id = :pid AND date_of_birth IS NOT NULL
+        GROUP BY date_of_birth
+        HAVING COUNT(*) > 1
+    """)
+    result = db.execute(sql, {"pid": portfolio_id}).fetchall()
+    
+    duplicates = []
+    for row in result:
+        group = []
+        for i in range(len(row.ids)):
+            group.append({
+                "id": row.ids[i],
+                "employee_id": row.employee_ids[i],
+                "date_of_birth": row.date_of_birth.isoformat() if hasattr(row.date_of_birth, 'isoformat') else str(row.date_of_birth),
+                "name": row.names[i] or "Unknown"
+            })
+        duplicates.append(group)
+    return duplicates
 
+
+def find_duplicate_loan_ids(db: Session, portfolio_id: int) -> List[List[Dict]]:
+    """Optimized using SQL aggregation."""
+    sql = text("""
+        SELECT loan_no, array_agg(id) as ids, array_agg(employee_id) as employee_ids, array_agg(loan_amount) as amounts, array_agg(loan_issue_date) as dates
+        FROM loans
+        WHERE portfolio_id = :pid AND loan_no IS NOT NULL AND loan_no != ''
+        GROUP BY loan_no
+        HAVING COUNT(*) > 1
+    """)
+    result = db.execute(sql, {"pid": portfolio_id}).fetchall()
+    
+    duplicates = []
+    for row in result:
+        group = []
+        for i in range(len(row.ids)):
+            group.append({
+                "id": row.ids[i],
+                "loan_no": row.loan_no,
+                "employee_id": row.employee_ids[i],
+                "loan_amount": float(row.amounts[i]) if row.amounts[i] else None,
+                "loan_issue_date": row.dates[i].isoformat() if row.dates[i] else None,
+            })
+        duplicates.append(group)
+    return duplicates
+
+
+def find_duplicate_phone_numbers(db: Session, portfolio_id: int) -> List[List[Dict]]:
+    """Optimized using SQL aggregation."""
+    sql = text("""
+        SELECT phone_number, array_agg(id) as ids, array_agg(employee_id) as employee_ids, array_agg(last_name || ' ' || other_names) as names
+        FROM clients
+        WHERE portfolio_id = :pid AND phone_number IS NOT NULL AND phone_number != ''
+        GROUP BY phone_number
+        HAVING COUNT(*) > 1
+    """)
+    result = db.execute(sql, {"pid": portfolio_id}).fetchall()
+    
+    duplicates = []
+    for row in result:
+        group = []
+        for i in range(len(row.ids)):
+            group.append({
+                "id": row.ids[i],
+                "employee_id": row.employee_ids[i],
+                "name": row.names[i],
+                "phone_number": row.phone_number
+            })
+        duplicates.append(group)
     return duplicates
 
 
 def find_clients_without_matching_loans(db: Session, portfolio_id: int) -> List[Dict]:
-    """
-    Find clients who cannot be matched to loans in the portfolio.
-    """
-    # Get all clients in the portfolio
-    clients = db.query(Client).filter(Client.portfolio_id == portfolio_id).all()
-    
-    # Get all employee IDs from loans in the portfolio
-    loan_employee_ids = set(
-        row[0] for row in 
-        db.query(Loan.employee_id)
-        .filter(Loan.portfolio_id == portfolio_id)
-        .distinct()
-        .all()
-        if row[0]  # Skip None values
-    )
-    
-    # Find clients whose employee_id does not exist in loans
-    unmatched_clients = []
-    for client in clients:
-        if client.employee_id and client.employee_id not in loan_employee_ids:
-            unmatched_clients.append({
-                "id": client.id,
-                "employee_id": client.employee_id,
-                "name": f"{client.last_name} {client.other_names}",
-                "phone_number": client.phone_number,
-            })
-    
-    return unmatched_clients
+    """Optimized using SQL NOT EXISTS."""
+    sql = text("""
+        SELECT id, employee_id, last_name || ' ' || other_names as name, phone_number
+        FROM clients c
+        WHERE portfolio_id = :pid 
+        AND employee_id IS NOT NULL 
+        AND NOT EXISTS (
+            SELECT 1 FROM loans l 
+            WHERE l.portfolio_id = :pid AND l.employee_id = c.employee_id
+        )
+    """)
+    result = db.execute(sql, {"pid": portfolio_id}).fetchall()
+    return [dict(row._mapping) for row in result]
 
 
 def find_loans_without_matching_clients(db: Session, portfolio_id: int) -> List[Dict]:
-    """
-    Find loan details that don't match customer data (loans without matching clients).
-    """
-    # Get all loans in the portfolio
-    loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).all()
-    
-    # Get all employee IDs from clients in the portfolio
-    client_employee_ids = set(
-        row[0] for row in 
-        db.query(Client.employee_id)
-        .filter(Client.portfolio_id == portfolio_id)
-        .distinct()
-        .all()
-        if row[0]  # Skip None values
-    )
-    
-    # Find loans whose employee_id does not exist in clients
-    unmatched_loans = []
-    for loan in loans:
-        if loan.employee_id and loan.employee_id not in client_employee_ids:
-            unmatched_loans.append({
-                "id": loan.id,
-                "loan_no": loan.loan_no,
-                "employee_id": loan.employee_id,
-                "loan_amount": float(loan.loan_amount) if loan.loan_amount else None,
-            })
-    
-    return unmatched_loans
+    """Optimized using SQL NOT EXISTS."""
+    sql = text("""
+        SELECT id, loan_no, employee_id, loan_amount
+        FROM loans l
+        WHERE portfolio_id = :pid 
+        AND employee_id IS NOT NULL 
+        AND NOT EXISTS (
+            SELECT 1 FROM clients c 
+            WHERE c.portfolio_id = :pid AND c.employee_id = l.employee_id
+        )
+    """)
+    result = db.execute(sql, {"pid": portfolio_id}).fetchall()
+    return [
+        {
+            "id": row.id,
+            "loan_no": row.loan_no,
+            "employee_id": row.employee_id,
+            "loan_amount": float(row.loan_amount) if row.loan_amount else None
+        } for row in result
+    ]
 
 
 def find_missing_dob(db: Session, portfolio_id: int) -> List[Dict]:
-    """
-    Find customers with missing date of birth.
-    """
-    # Get all clients in the portfolio with missing DOB
-    clients_with_missing_dob = (
-        db.query(Client)
-        .filter(Client.portfolio_id == portfolio_id, Client.date_of_birth.is_(None))
-        .all()
-    )
-    
-    missing_dob_clients = []
-    for client in clients_with_missing_dob:
-        missing_dob_clients.append({
-            "id": client.id,
-            "employee_id": client.employee_id,
-            "name": f"{client.last_name} {client.other_names}",
-            "phone_number": client.phone_number,
-        })
-    
-    return missing_dob_clients
+    """Optimized using direct filter."""
+    result = db.query(Client.id, Client.employee_id, (Client.last_name + " " + Client.other_names).label("name"), Client.phone_number).\
+        filter(Client.portfolio_id == portfolio_id, Client.date_of_birth.is_(None)).all()
+    return [dict(row._mapping) for row in result]
 
 
 def create_quality_issues_if_needed(db: Session, portfolio_id: int) -> Dict[str, int]:
@@ -399,376 +340,132 @@ def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str 
         db.rollback()
         logger.error(f"Error deleting existing quality issues: {str(e)}")
     
-    # Update progress if task_id provided
-    if task_id:
-        get_task_manager().update_task(
-            task_id,
-            status_message="Checking for duplicate customer IDs"
-        )
-        time.sleep(0.1)
+def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str = None) -> Dict[str, Any]:
+    """
+    Create quality issues for a portfolio and save them to the database.
+    Optimized for large datasets with batch processing.
+    """
+    from app.utils.background_tasks import get_task_manager
+    import logging
     
-    # 1. Check for duplicate customer IDs
-    try:
-        duplicate_ids = find_duplicate_customer_ids(db, portfolio_id)
-        for group in duplicate_ids:
-            employee_id = group[0]['employee_id']
-            count = len(group)
-            
-            # Create affected_records as an array with one entry per affected client
-            affected_records = []
-            for client_info in group:
-                affected_records.append({
-                    "entity_type": "client",
-                    "entity_id": client_info["id"],
-                    "employee_id": client_info["employee_id"],
-                    "name": client_info.get("name", "Unknown")
-                })
-            
-            # Create a single issue for each duplicate employee ID group
-            issue = QualityIssue(
-                portfolio_id=portfolio_id,
-                tenant_id=tenant_id,
-                issue_type="duplicate_customer_id",
-                severity="high",
-                status="open",
-                description=f"Duplicate employee ID: {employee_id} (found in {count} clients)",
-                affected_records=affected_records
-            )
-            db.add(issue)
-            issue_counts["duplicate_customer_ids"] += 1
+    logger = logging.getLogger(__name__)
+    logger.info(f"Starting optimized quality issue creation for portfolio {portfolio_id}")
+    
+    portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
+    if not portfolio:
+        raise ValueError(f"Portfolio with ID {portfolio_id} not found")
+    tenant_id = portfolio.tenant_id
+
+    # 1. Clear existing issues
+    if task_id:
+        get_task_manager().update_task(task_id, status_message="Clearing existing quality issues")
+    
+    db.query(QualityIssue).filter(QualityIssue.portfolio_id == portfolio_id).delete()
+    db.commit()
+
+    issues_to_create = []
+    issue_counts = defaultdict(int)
+
+    def add_issue(issue_type, severity, description, affected_records):
+        issues_to_create.append(QualityIssue(
+            portfolio_id=portfolio_id,
+            tenant_id=tenant_id,
+            issue_type=issue_type,
+            severity=severity,
+            status="open",
+            description=description,
+            affected_records=affected_records
+        ))
+        issue_counts[issue_type] += 1
+
+    # Define tasks to run
+    check_tasks = [
+        ("duplicate_customer_id", "high", "Duplicate employee ID: {} (found in {} clients)", find_duplicate_customer_ids),
+        ("duplicate_address", "medium", "Duplicate address: {} (found in {} clients)", find_duplicate_addresses),
+        ("duplicate_dob", "medium", "Duplicate DOB: {} (found in {} clients)", find_duplicate_dobs),
+        ("duplicate_loan_id", "high", "Duplicate loan ID: {} (found in {} loans)", find_duplicate_loan_ids),
+        ("duplicate_phone", "medium", "Duplicate phone: {} (found in {} clients)", find_duplicate_phone_numbers),
+    ]
+
+    for type_name, severity, desc_templ, func in check_tasks:
+        if task_id:
+            get_task_manager().update_task(task_id, status_message=f"Checking for {type_name.replace('_', ' ')}s")
         
-        # Commit in batches to avoid memory issues
-        db.commit()
-        logger.info(f"Created {issue_counts['duplicate_customer_ids']} duplicate customer ID issues")
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Error checking duplicate customer IDs: {str(e)}")
-    
-    # Update progress if task_id provided
+        try:
+            results = func(db, portfolio_id)
+            for group in results:
+                # Key for the description depends on data structure returned by func
+                if type_name == "duplicate_customer_id": key = group[0]['employee_id']
+                elif type_name == "duplicate_address": key = group[0]['address']
+                elif type_name == "duplicate_dob": key = group[0]['date_of_birth']
+                elif type_name == "duplicate_loan_id": key = group[0]['loan_no']
+                elif type_name == "duplicate_phone": key = group[0]['phone_number']
+                else: key = "Unknown"
+
+                affected = []
+                entity_type = "loan" if "loan" in type_name else "client"
+                for item in group:
+                    rec = {"entity_type": entity_type, "entity_id": item["id"]}
+                    if entity_type == "client":
+                        rec.update({"employee_id": item.get("employee_id"), "name": item.get("name")})
+                    else:
+                        rec.update({"loan_no": item.get("loan_no"), "employee_id": item.get("employee_id")})
+                    affected.append(rec)
+                
+                add_issue(type_name, severity, desc_templ.format(key, len(group)), affected)
+        except Exception as e:
+            logger.error(f"Error in {type_name} check: {e}")
+
+    # Unmatched checks
     if task_id:
-        get_task_manager().update_task(
-            task_id,
-            status_message="Checking for duplicate addresses"
-        )
-        time.sleep(0.1)
+        get_task_manager().update_task(task_id, status_message="Checking for unmatched records")
     
-    # 2. Check for duplicate addresses
     try:
-        duplicate_addresses = find_duplicate_addresses(db, portfolio_id)
-        for group in duplicate_addresses:
-            address = group[0].get('address', 'Unknown')
-            count = len(group)
-            
-            # Create affected_records as an array with one entry per affected client
-            affected_records = []
-            for client_info in group:
-                affected_records.append({
-                    "entity_type": "client",
-                    "entity_id": client_info["id"],
-                    "employee_id": client_info.get("employee_id", "Unknown"),
-                    "name": client_info.get("name", "Unknown"),
-                    "address": client_info.get("address", "Unknown")
-                })
-            
-            # Create a single issue for each duplicate address group
-            issue = QualityIssue(
-                portfolio_id=portfolio_id,
-                tenant_id=tenant_id,
-                issue_type="duplicate_address",
-                severity="medium",
-                status="open",
-                description=f"Duplicate address: {address} (found in {count} clients)",
-                affected_records=affected_records
-            )
-            db.add(issue)
-            issue_counts["duplicate_addresses"] += 1
-        
-        # Commit in batches
-        db.commit()
-        logger.info(f"Created {issue_counts['duplicate_addresses']} duplicate address issues")
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Error checking duplicate addresses: {str(e)}")
-    
-    # Update progress if task_id provided
-    if task_id:
-        get_task_manager().update_task(
-            task_id,
-            status_message="Checking for duplicate DOBs"
-        )
-        time.sleep(0.1)
-    
-    # 3. Check for duplicate DOBs
-    try:
-        duplicate_dobs = find_duplicate_dobs(db, portfolio_id)
-        for group in duplicate_dobs:
-            dob_value = group[0].get('date_of_birth', 'Unknown')
-            count = len(group)
-            
-            # Create affected_records as an array with one entry per affected client
-            affected_records = []
-            for client_info in group:
-                affected_records.append({
-                    "entity_type": "client",
-                    "entity_id": client_info["id"],
-                    "employee_id": client_info.get("employee_id", "Unknown"),
-                    "name": client_info.get("name", "Unknown"),
-                    "date_of_birth": dob_value
-                })
-            
-            # Create a single issue for each duplicate DOB group
-            issue = QualityIssue(
-                portfolio_id=portfolio_id,
-                tenant_id=tenant_id,
-                issue_type="duplicate_dob",
-                severity="medium",
-                status="open",
-                description=f"Duplicate date of birth: {dob_value} (found in {count} clients)",
-                affected_records=affected_records
-            )
-            db.add(issue)
-            issue_counts["duplicate_dob"] += 1
-        
-        # Commit in batches
-        db.commit()
-        logger.info(f"Created {issue_counts['duplicate_dob']} duplicate DOB issues")
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Error checking duplicate DOBs: {str(e)}")
-    
-    # Update progress if task_id provided
-    if task_id:
-        get_task_manager().update_task(
-            task_id,
-            status_message="Checking for duplicate loan IDs"
-        )
-        time.sleep(0.1)
-    
-    # 4. Check for duplicate loan IDs
-    try:
-        duplicate_loans = find_duplicate_loan_ids(db, portfolio_id)
-        for group in duplicate_loans:
-            loan_no = group[0]['loan_no']
-            count = len(group)
-            
-            # Create affected_records as an array with one entry per affected loan
-            affected_records = []
-            for loan_info in group:
-                affected_records.append({
-                    "entity_type": "loan",
-                    "entity_id": loan_info["id"],
-                    "loan_no": loan_info["loan_no"],
-                    "employee_id": loan_info.get("employee_id", "Unknown"),
-                    "loan_amount": loan_info.get("loan_amount", 0)
-                })
-            
-            # Create a single issue for each duplicate loan ID group
-            issue = QualityIssue(
-                portfolio_id=portfolio_id,
-                tenant_id=tenant_id,
-                issue_type="duplicate_loan_id",
-                severity="high",
-                status="open",
-                description=f"Duplicate loan ID: {loan_no} (found in {count} loans)",
-                affected_records=affected_records
-            )
-            db.add(issue)
-            issue_counts["duplicate_loan_ids"] += 1
-        
-        # Commit in batches
-        db.commit()
-        logger.info(f"Created {issue_counts['duplicate_loan_ids']} duplicate loan ID issues")
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Error checking duplicate loan IDs: {str(e)}")
-    
-    # Update progress if task_id provided
-    if task_id:
-        get_task_manager().update_task(
-            task_id,
-            status_message="Checking for duplicate phone numbers"
-        )
-        time.sleep(0.1)
-    
-    # 4. Check for duplicate phone numbers
-    try:
-        duplicate_phones = find_duplicate_phone_numbers(db, portfolio_id)
-        for group in duplicate_phones:
-            phone = group[0].get('phone_number', 'Unknown')
-            count = len(group)
-            
-            # Create affected_records as an array with one entry per affected client
-            affected_records = []
-            for client_info in group:
-                affected_records.append({
-                    "entity_type": "client",
-                    "entity_id": client_info["id"],
-                    "employee_id": client_info.get("employee_id", "Unknown"),
-                    "name": client_info.get("name", "Unknown"),
-                    "phone_number": client_info.get("phone_number", "Unknown")
-                })
-            
-            # Create a single issue for each duplicate phone number group
-            issue = QualityIssue(
-                portfolio_id=portfolio_id,
-                tenant_id=tenant_id,
-                issue_type="duplicate_phone",
-                severity="medium",
-                status="open",
-                description=f"Duplicate phone number: {phone} (found in {count} clients)",
-                affected_records=affected_records
-            )
-            db.add(issue)
-            issue_counts["duplicate_phones"] += 1
-        
-        # Commit in batches
-        db.commit()
-        logger.info(f"Created {issue_counts['duplicate_phones']} duplicate phone number issues")
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Error checking duplicate phone numbers: {str(e)}")
-    
-    # Update progress if task_id provided
-    if task_id:
-        get_task_manager().update_task(
-            task_id,
-            status_message="Checking for clients without matching loans"
-        )
-        time.sleep(0.1)
-    
-    # 5. Check for clients without matching loans
-    try:
+        # Clients without loans
         unmatched_clients = find_clients_without_matching_loans(db, portfolio_id)
-        for client_info in unmatched_clients:
-            # Create affected_records as an array with one entry per affected client
-            affected_records = [{
-                "entity_type": "client",
-                "entity_id": client_info["id"],
-                "employee_id": client_info["employee_id"],
-                "name": client_info.get("name", "Unknown"),
-                "phone_number": client_info.get("phone_number", "Unknown")
-            }]
-            
-            # Create a single issue for each unmatched client
-            issue = QualityIssue(
-                portfolio_id=portfolio_id,
-                tenant_id=tenant_id,
-                issue_type="client_without_matching_loan",
-                severity="high",
-                status="open",
-                description=f"Client has no matching loan with employee ID: {client_info['employee_id']}",
-                affected_records=affected_records
-            )
-            db.add(issue)
+        for c in unmatched_clients:
+            add_issue("client_without_matching_loan", "high", f"Client has no matching loan: {c['employee_id']}", 
+                      [{"entity_type": "client", "entity_id": c['id'], "employee_id": c['employee_id'], "name": c.get('name')}])
         
-        issue_counts["clients_without_matching_loans"] = len(unmatched_clients)
-        
-        # Commit in batches
-        db.commit()
-        logger.info(f"Created {issue_counts['clients_without_matching_loans']} client without matching loan issues")
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Error checking clients without matching loans: {str(e)}")
-    
-    # Update progress if task_id provided
-    if task_id:
-        get_task_manager().update_task(
-            task_id,
-            status_message="Checking for loans without matching clients"
-        )
-        time.sleep(0.1)
-    
-    # 5b. Check for loans without matching clients
-    try:
+        # Loans without clients
         unmatched_loans = find_loans_without_matching_clients(db, portfolio_id)
-        for loan_info in unmatched_loans:
-            # Create affected_records as an array with one entry per affected loan
-            affected_records = [{
-                "entity_type": "loan",
-                "entity_id": loan_info["id"],
-                "loan_no": loan_info["loan_no"],
-                "employee_id": loan_info["employee_id"],
-                "loan_amount": loan_info.get("loan_amount", 0)
-            }]
+        for l in unmatched_loans:
+            add_issue("loan_without_matching_client", "high", f"Loan has no matching client: {l['employee_id']}", 
+                      [{"entity_type": "loan", "entity_id": l['id'], "loan_no": l['loan_no'], "employee_id": l['employee_id']}])
             
-            # Create a single issue for each unmatched loan
-            issue = QualityIssue(
-                portfolio_id=portfolio_id,
-                tenant_id=tenant_id,
-                issue_type="loan_without_matching_client",
-                severity="high",
-                status="open",
-                description=f"Loan has no matching client with employee ID: {loan_info['employee_id']}",
-                affected_records=affected_records
-            )
-            db.add(issue)
-        
-        issue_counts["loans_without_matching_clients"] = len(unmatched_loans)
-        
-        # Commit in batches
-        db.commit()
-        logger.info(f"Created {issue_counts['loans_without_matching_clients']} loan without matching client issues")
+        # Missing DOB
+        missing_dob = find_missing_dob(db, portfolio_id)
+        for c in missing_dob:
+            add_issue("missing_dob", "medium", "Client has no date of birth", 
+                      [{"entity_type": "client", "entity_id": c['id'], "employee_id": c['employee_id'], "name": c.get('name')}])
     except Exception as e:
-        db.rollback()
-        logger.error(f"Error checking loans without matching clients: {str(e)}")
-    
-    # Update progress if task_id provided
-    if task_id:
-        get_task_manager().update_task(
-            task_id,
-            status_message="Checking for missing data"
+        logger.error(f"Error in unmatched/missing checks: {e}")
+
+    # 2. Bulk save and commit
+    if issues_to_create:
+        if task_id:
+            get_task_manager().update_task(task_id, status_message=f"Saving {len(issues_to_create)} quality issues")
+        db.bulk_save_objects(issues_to_create)
+        db.commit()
+
+    # Build response summary
+    summary = {
+        "duplicate_customer_ids": issue_counts["duplicate_customer_id"],
+        "duplicate_addresses": issue_counts["duplicate_address"],
+        "duplicate_dob": issue_counts["duplicate_dob"],
+        "duplicate_loan_ids": issue_counts["duplicate_loan_id"],
+        "duplicate_phones": issue_counts["duplicate_phone"],
+        "clients_without_matching_loans": issue_counts["client_without_matching_loan"],
+        "loans_without_matching_clients": issue_counts["loan_without_matching_client"],
+        "missing_dob": issue_counts["missing_dob"],
+        "total_issues": len(issues_to_create),
+        "open_issues": len(issues_to_create),
+        "high_severity_issues": (
+            issue_counts["duplicate_customer_id"] + 
+            issue_counts["duplicate_loan_id"] + 
+            issue_counts["client_without_matching_loan"] + 
+            issue_counts["loan_without_matching_client"]
         )
-        time.sleep(0.1)
-    
-    # 6. Check for missing DOB
-    try:
-        missing_dob_clients = find_missing_dob(db, portfolio_id)
-        for client_info in missing_dob_clients:
-            # Create affected_records as an array with one entry per affected client
-            affected_records = [{
-                "entity_type": "client",
-                "entity_id": client_info["id"],
-                "employee_id": client_info["employee_id"],
-                "name": client_info["name"],
-                "phone_number": client_info.get("phone_number", "Unknown")
-            }]
-            
-            # Create a single issue for each client with missing DOB
-            issue = QualityIssue(
-                portfolio_id=portfolio_id,
-                tenant_id=tenant_id,
-                issue_type="missing_dob",
-                severity="medium",
-                status="open",
-                description=f"Client has no date of birth",
-                affected_records=affected_records
-            )
-            db.add(issue)
-        
-        issue_counts["missing_dob"] = len(missing_dob_clients)
-        
-        # Commit in batches
-        db.commit()
-        logger.info(f"Created {issue_counts['missing_dob']} missing DOB issues")
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Error checking missing DOB: {str(e)}")
-    
-    # Calculate totals
-    total_issues = sum(issue_counts.values())
-    high_severity_issues = (
-        issue_counts["duplicate_customer_ids"]
-        + issue_counts["duplicate_loan_ids"]
-        + issue_counts["clients_without_matching_loans"]
-        + issue_counts["loans_without_matching_clients"]
-        + issue_counts["missing_loan_amounts"]
-    )
-    
-    # Add total counts
-    issue_counts["total_issues"] = total_issues
-    issue_counts["high_severity_issues"] = high_severity_issues
-    issue_counts["open_issues"] = total_issues  # All new issues are open by default
-    
-    logger.info(f"Completed quality issue creation for portfolio {portfolio_id}: {total_issues} total issues")
-    
-    return issue_counts
+    }
+    logger.info(f"Quality check completed: {summary['total_issues']} issues found.")
+    return summary

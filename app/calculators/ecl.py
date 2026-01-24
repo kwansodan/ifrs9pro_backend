@@ -6,7 +6,29 @@ from typing import Optional, Tuple, List, Union, Dict, Any
 from app.models import Client
 import numpy as np
 import math
+import logging
 
+logger = logging.getLogger(__name__)
+
+# Global cache for the PD model to avoid reloading for every loan
+_PD_MODEL_CACHE = None
+_PD_MODEL_PATH = "app/ml_models/logistic_model.pkl"
+
+def get_pd_model():
+    """Lazy-load and cache the PD model."""
+    global _PD_MODEL_CACHE
+    if _PD_MODEL_CACHE is None:
+        try:
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=UserWarning)
+                with open(_PD_MODEL_PATH, "rb") as file:
+                    _PD_MODEL_CACHE = pickle.load(file)
+            logger.info("Successfully loaded and cached PD model from %s", _PD_MODEL_PATH)
+        except Exception as e:
+            logger.error("Failed to load PD model from %s: %s", _PD_MODEL_PATH, e)
+            return None
+    return _PD_MODEL_CACHE
 
 def calculate_effective_interest_rate_lender(loan_amount, administrative_fees, loan_term, monthly_payment):
     """
@@ -164,64 +186,43 @@ def is_in_range(value: int, range_tuple: Tuple[int, Optional[int]]) -> bool:
 
 
 
-def calculate_probability_of_default(employee_id, outstanding_loan_balance, start_date, selected_dt, end_date, arrears, db):
+def calculate_probability_of_default(employee_id, outstanding_loan_balance, start_date, selected_dt, end_date, arrears, db=None, client_yob=None):
+    """
+    Calculate Probability of Default.
+    Accepts either a DB session to fetch client data (legacy) or directly the client_yob (optimized).
+    """
     try:
-        # Import here to avoid circular imports
-        import numpy as np
-        import pandas as pd
-        import warnings
-        import pickle
-        from app.models import Client
+        # Use provided YOB if available (optimized path)
+        year_of_birth = client_yob
 
-        def run_pd(employee_id, db):
-
-            # Suppressing warnings
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", category=UserWarning, message="X does not have valid feature names")
-                warnings.filterwarnings("ignore", category=UserWarning, message="Trying to unpickle estimator")
-
-                # Load pre-trained logistic regression model
-                with open("app/ml_models/logistic_model.pkl", "rb") as file:
-                    model = pickle.load(file)
-
-                client = db.query(Client).filter(Client.employee_id == employee_id).first()                
-                print(f"Client for {employee_id}: {client}, DOB: {getattr(client, 'date_of_birth', None)}")
-
-                if not client or not client.date_of_birth or not hasattr(client.date_of_birth, 'year'):
-                    return 0.0
-
+        # Fallback to DB query if YOB not provided (legacy path)
+        if year_of_birth is None and db is not None:
+            client = db.query(Client).filter(Client.employee_id == employee_id).first()
+            if client and client.date_of_birth:
                 year_of_birth = client.date_of_birth.year
-                feature_name = getattr(model, 'feature_names_in_', ['year_of_birth'])[0]
-                X_new = pd.DataFrame({feature_name: [year_of_birth]})
-                probability = model.predict_proba(X_new)[0][1]
-                return round(float(probability), 2)
+
+        if year_of_birth is None:
+            return 0.05  # Default PD if no data found
 
         # Main logic
-        print(f"Loan {employee_id}: outstanding_loan_balance={outstanding_loan_balance}, start_date={start_date}, selected_dt={selected_dt}, end_date={end_date}, arrears={arrears}")
         result = 0.00
         if outstanding_loan_balance >= 0:
             if start_date <= selected_dt and end_date > selected_dt:
-                result= run_pd(employee_id, db)
-            if start_date < selected_dt and end_date < selected_dt:
-                if arrears:
-                    result= 1.0
+                model = get_pd_model()
+                if model:
+                    result = calculate_pd_from_yob(year_of_birth, model)
                 else:
-                    result= None
+                    result = 0.05  # Default PD if model fails to load
+            elif start_date < selected_dt and end_date < selected_dt:
+                result = 1.0 if arrears else None
         elif outstanding_loan_balance < 0:
-            if arrears > 0:
-                if end_date <= selected_dt:
-                    result= 1.0
-            else:
-                result= 0.0
+            result = 1.0 if arrears > 0 and end_date <= selected_dt else 0.0
 
-
-        
-        
         return result
 
     except Exception as e:
-        print(f"Error calculating probability of default: {str(e)}")
-        return 0.0
+        logger.error(f"Error calculating probability of default: {str(e)}")
+        return 0.05
 
 
 def calculate_pd_from_yob(year_of_birth: Optional[int], model: Any) -> float:
