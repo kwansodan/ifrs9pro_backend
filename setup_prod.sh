@@ -80,11 +80,23 @@ deploy() {
         echo "   Attempt $i/$MAX_RETRIES – retrying in 2s..."
         sleep 2
     done
+    done
     if [[ "$i" -eq $MAX_RETRIES ]]; then
         echo "❌ PostgreSQL failed to start in time."
         dc logs db
         return 1
     fi
+
+    # Wait for Redis
+    echo "⏳ Waiting for Redis..."
+    for i in $(seq 1 10); do
+        if dc exec -T redis redis-cli ping >/dev/null 2>&1; then
+            echo "✅ Redis is ready."
+            break
+        fi
+        echo "   Attempt $i/10 – retrying in 2s..."
+        sleep 2
+    done
 
     # Additional wait for web container to be ready
     echo "⏳ Waiting for web container..."
