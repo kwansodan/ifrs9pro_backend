@@ -80,7 +80,6 @@ deploy() {
         echo "   Attempt $i/$MAX_RETRIES – retrying in 2s..."
         sleep 2
     done
-    done
     if [[ "$i" -eq $MAX_RETRIES ]]; then
         echo "❌ PostgreSQL failed to start in time."
         dc logs db
