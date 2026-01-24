@@ -13,7 +13,7 @@ celery_app.conf.update(
     accept_content=["json"],
     task_track_started=True,
     task_time_limit=3600,  # 1 hour timeout
-    worker_concurrency=3   # Adjust based on resources
+    worker_concurrency=2   # Adjust based on resources
 )
 
 # We will create these modules next
