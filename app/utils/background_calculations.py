@@ -7,7 +7,7 @@ import pandas as pd
 from typing import Optional, Dict, Any
 from datetime import date, datetime
 from decimal import Decimal
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 import pickle
 from app.database import SessionLocal
 from app.models import (
@@ -228,6 +228,7 @@ async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, d
         while True:
             loans = (
                 db.query(Loan)
+                .options(joinedload(Loan.client)) # Eager load client data
                 .filter(Loan.portfolio_id == portfolio_id)
                 .order_by(Loan.id)
                 .offset(offset)
@@ -239,6 +240,11 @@ async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, d
 
             tasks = []
             for loan in loans:
+                # Eagerly access client YOB to avoid N+1 queries
+                client_yob = None
+                if loan.client and loan.client.date_of_birth:
+                    client_yob = loan.client.date_of_birth.year
+
                 pd_value = calculate_probability_of_default(
                     employee_id=loan.employee_id,
                     outstanding_loan_balance=loan.outstanding_loan_balance,
@@ -247,6 +253,7 @@ async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, d
                     end_date=loan.maturity_period,
                     arrears=loan.accumulated_arrears,
                     db=db,
+                    client_yob=client_yob
                 )
                 
                 # CRITICAL FIX: Use default PD if calculation returns None or 0
