@@ -15,10 +15,35 @@ from app.models import (
 from app.routes import reports
 
 
+
 # Ensure the app uses the in-memory SQLite URL before any app imports
 TEST_DB_PATH = os.path.join(tempfile.gettempdir(), "ifrs9pro_test.db")
 TEST_DATABASE_URL = f"sqlite:///{TEST_DB_PATH}"
 os.environ.setdefault("SQLALCHEMY_DATABASE_URL", TEST_DATABASE_URL)
+
+# --- MOCK CELERY BEFORE APP IMPORT ---
+import sys
+from unittest.mock import MagicMock
+
+# Create a mock for the celery module
+mock_celery = MagicMock()
+sys.modules["celery"] = mock_celery
+
+# Mock the Celery class and its .task decorator
+mock_celery_app = MagicMock()
+mock_celery.Celery.return_value = mock_celery_app
+
+# The tricky part: @celery_app.task must return a wrapper that has .delay
+def mock_task_decorator(*args, **kwargs):
+    def decorator(func):
+        # Attach a .delay method to the decorated function
+        func.delay = MagicMock(return_value=MagicMock(id="test-task-id"))
+        return func
+    return decorator
+
+# If .task is called as @app.task(bind=True), it's a decorator factory
+mock_celery_app.task.side_effect = mock_task_decorator
+# -------------------------------------
 
 from app.database import Base, get_db
 from app.dependencies import get_tenant_db

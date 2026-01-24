@@ -85,6 +85,35 @@ services:
     networks:
       - ifrs9pro_network
 
+  redis:
+    image: redis:7-alpine
+    container_name: ifrs9pro_redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - ifrs9pro_network
+
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ifrs9pro_celery_worker
+    command: celery -A app.celery_app worker --loglevel=info
+    env_file:
+      - ./.env
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    depends_on:
+      - redis
+      - db
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    networks:
+      - ifrs9pro_network
+
 volumes:
   postgres_data:
   minio_data:

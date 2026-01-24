@@ -862,56 +862,35 @@ async def ingest_portfolio_data(
     - Passing cleaned DataFrames into ingestion pipeline
     """
     
-    # Fetch and process Excel files from MinIO
+    
+    # Pass to ingestion pipeline via Celery
     try:
-        dataframes = await fetch_excel_from_minio(
-            payload=payload,  # convert Pydantic model to dict
-            db=db,
-            portfolio_id=portfolio_id,
-            first_name=current_user.first_name,
-            user_email=current_user.email
-        )
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Fetching data from minio for ingestion failed {e}"
-        )
+        from app.tasks.ingestion import run_ingestion_task
 
-    # Validate required files
-    if dataframes["loan_details"] is None or dataframes["loan_details"].empty:
-        raise HTTPException(status_code=400, detail="loan_details is required and cannot be empty")
-
-    if dataframes["client_data"] is None or dataframes["client_data"].empty:
-        raise HTTPException(status_code=400, detail="client_data is required and cannot be empty")
-
-    #Fetch tenant id from current user 
-    try:
         tenant_id = current_user.tenant_id
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Fetching tenant id from current user failed {e}"
-        )
-    # Pass to ingestion pipeline
-    try:
-        result = await start_background_ingestion(
+        
+        
+        # Let's look at payload.files
+        # It contains object_name which is the MinIO key.
+        
+        # Construct simple mapping for Celery
+        celery_file_mapping = {}
+        for f in payload.files:
+             celery_file_mapping[f.type] = f.object_name
+             
+        task = run_ingestion_task.delay(
             portfolio_id=portfolio_id,
             tenant_id=tenant_id,
-            loan_details=dataframes["loan_details"],
-            client_data=dataframes["client_data"],
-            loan_guarantee_data=dataframes["loan_guarantee_data"],
-            loan_collateral_data=dataframes["loan_collateral_data"],
-            first_name=current_user.first_name,
+            file_mappings=celery_file_mapping,
             user_email=current_user.email,
+            first_name=current_user.first_name
         )
 
-        return {"status": "success", "result": result}
+        return {"status": "queued", "task_id": task.id}
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Portfolio ingestion failed {e}"
+            detail=f"Portfolio ingestion task queue failed {e}"
         )
 
 
@@ -943,22 +922,22 @@ async def calculate_ecl_provision(
         )
     
 
+
     try:
-        result = await process_ecl_calculation_sync(
-            portfolio_id=portfolio_id,
-            reporting_date=reporting_date,
-            db=db, 
-            user_email = current_user.email,
-            first_name = current_user.first_name
-        )
-        # Ensure a consistent shape for tests/stubs
-        if isinstance(result, dict) and "error" in result:
-            raise HTTPException(status_code=500, detail=result["error"])
+        from app.tasks.calculation import run_ecl_calculation_task
+        # Convert date to string for Celery serialization
+        date_str = reporting_date.isoformat()
         
-        return {"status": "ok", "result": result}
+        task = run_ecl_calculation_task.delay(
+            portfolio_id=portfolio_id,
+            reporting_date_str=date_str,
+            user_email=current_user.email,
+            first_name=current_user.first_name
+        )
+        return {"status": "queued", "task_id": task.id}
 
     except Exception as e:
-        logger.error(f"ECL calculation failed: {str(e)}")
+        logger.error(f"ECL calculation task failed to queue: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -982,13 +961,13 @@ async def stage_loans_ecl(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
-    from app.utils.staging import (stage_loans_ecl_orm)
-    await stage_loans_ecl_orm(
+    from app.tasks.calculation import run_ecl_staging_task
+    task = run_ecl_staging_task.delay(
         portfolio.id, 
-        db,
-        user_email = current_user.email,
-        first_name = current_user.first_name
-        )
+        current_user.email,
+        current_user.first_name
+    )
+    return {"status": "queued", "task_id": task.id}
     
 
 @router.post("/{portfolio_id}/stage-loans-local",  
@@ -1011,13 +990,13 @@ async def stage_loans_local(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
         )
-    from app.utils.staging import (stage_loans_local_impairment_orm)
-    await stage_loans_local_impairment_orm(
+    from app.tasks.calculation import run_bog_staging_task
+    task = run_bog_staging_task.delay(
         portfolio.id, 
-        db,
-        user_email = current_user.email,
-        first_name = current_user.first_name
-        )
+        current_user.email,
+        current_user.first_name
+    )
+    return {"status": "queued", "task_id": task.id}
     
 
 
@@ -1053,18 +1032,18 @@ async def calculate_local_provision(
         )
 
     try:
-        result = await process_bog_impairment_calculation_sync(
+        from app.tasks.calculation import run_bog_calculation_task
+        date_str = reporting_date.isoformat()
+        
+        task = run_bog_calculation_task.delay(
             portfolio_id=portfolio_id,
-            reporting_date=reporting_date,
-            db=db,
-            user_email = current_user.email,
-            first_name = current_user.first_name
+            reporting_date_str=date_str,
+            user_email=current_user.email,
+            first_name=current_user.first_name
         )
-        if isinstance(result, dict) and "status" in result:
-            return result
-        return {"status": "ok", "result": result}
+        return {"status": "queued", "task_id": task.id}
     except Exception as e:
-        logger.error(f"Local Impairment calculation failed: {str(e)}")
+        logger.error(f"Local Impairment calculation task failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
     
 

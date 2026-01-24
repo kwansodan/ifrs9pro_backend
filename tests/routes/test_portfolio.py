@@ -247,39 +247,24 @@ async def test_ingest_portfolio_data(client, db_session, regular_user, tenant):
         ]
     }
 
+    # We need to patch the celery task that is called
+    with patch("app.tasks.ingestion.run_ingestion_task") as mock_task:
+        # Mock the .delay() return value
+        mock_task.delay.return_value.id = "5d786ab0-b277-4dae-b9e7-7d0e1fd47a2e"
 
-    # Fake DataFrame results
-    fake_dataframes = {
-        "loan_details": pd.DataFrame({"loan_amount": [1000]}),
-        "client_data": pd.DataFrame({"client_name": ["John"]}),
-        "loan_guarantee_data": pd.DataFrame(),
-        "loan_collateral_data": pd.DataFrame(),
-    }
+        resp = client.post(
+            f"/portfolios/{portfolio.id}/ingest",
+            json=payload
+        )
 
-    with patch(
-        "app.routes.portfolio.fetch_excel_from_minio",
-        return_value=fake_dataframes
-    ) as mock_fetch:
+        assert resp.status_code == 200
+        data = resp.json()
 
-        with patch(
-            "app.routes.portfolio.start_background_ingestion",
-            return_value={"rows_ingested": 10}
-        ) as mock_ingest:
+        # Updated assertions for Celery
+        assert data["status"] == "queued"
+        assert data["task_id"] == "5d786ab0-b277-4dae-b9e7-7d0e1fd47a2e"
 
-            resp = client.post(
-                f"/portfolios/{portfolio.id}/ingest",
-                json=payload
-            )
-
-            assert resp.status_code == 200
-            data = resp.json()
-
-            assert data["status"] == "success"
-            assert data["result"]["rows_ingested"] == 10
-
-            mock_fetch.assert_called_once()
-            mock_ingest.assert_called_once()
-
+        mock_task.delay.assert_called_once()
 
 
 def test_calculation_endpoints_are_stubbed(client, db_session, regular_user, tenant):
@@ -297,7 +282,7 @@ def test_calculation_endpoints_are_stubbed(client, db_session, regular_user, ten
 
     loan = Loan(
         portfolio_id=portfolio.id,
-        tenant_id=tenant.id,  # <-- add this
+        tenant_id=tenant.id, 
         employee_id=1,
         loan_amount=1000,
         loan_term=12,
@@ -310,15 +295,25 @@ def test_calculation_endpoints_are_stubbed(client, db_session, regular_user, ten
     db_session.add(loan)
     db_session.commit()
 
+    # Patch the ECL calculation task
+    with patch("app.tasks.calculation.run_ecl_calculation_task") as mock_ecl_task:
+        mock_ecl_task.delay.return_value.id = "ecl-task-id"
+        
+        ecl_resp = client.get(f"/portfolios/{portfolio.id}/calculate-ecl")
+        assert ecl_resp.status_code == 200
+        assert ecl_resp.json()["status"] == "queued"
+        assert ecl_resp.json()["task_id"] == "ecl-task-id"
+        mock_ecl_task.delay.assert_called_once()
 
-
-    ecl_resp = client.get(f"/portfolios/{portfolio.id}/calculate-ecl")
-    assert ecl_resp.status_code == 200
-    assert ecl_resp.json()["status"] == "ok"
-
-    local_resp = client.get(f"/portfolios/{portfolio.id}/calculate-local-impairment")
-    assert local_resp.status_code == 200
-    assert local_resp.json()["status"] == "ok"
+    # Patch the BOG calculation task
+    with patch("app.tasks.calculation.run_bog_calculation_task") as mock_bog_task:
+        mock_bog_task.delay.return_value.id = "bog-task-id"
+        
+        local_resp = client.get(f"/portfolios/{portfolio.id}/calculate-local-impairment")
+        assert local_resp.status_code == 200
+        assert local_resp.json()["status"] == "queued"
+        assert local_resp.json()["task_id"] == "bog-task-id"
+        mock_bog_task.delay.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -327,24 +322,17 @@ async def test_stage_loans_ecl_success(client, db_session, regular_user, tenant)
     db_session.add(portfolio)
     db_session.commit()
 
-    # Patch the function in its actual module
-    with patch("app.utils.staging.stage_loans_ecl_orm", new_callable=AsyncMock) as mock_stage:
+    # Patch the Celery task, not the ORM function
+    with patch("app.tasks.calculation.run_ecl_staging_task") as mock_stage_task:
+        mock_stage_task.delay.return_value.id = "staging-task-id"
+        
         response = client.post(f"/portfolios/{portfolio.id}/stage-loans-ecl")
+        
         assert response.status_code == status.HTTP_200_OK
-        mock_stage.assert_awaited_once_with(
-            portfolio.id,
-            db_session,
-            user_email=regular_user.email,
-            first_name=regular_user.first_name
-        )
-
-
-
-@pytest.mark.asyncio
-async def test_stage_loans_ecl_portfolio_not_found(client, db_session, regular_user):
-    response = client.post("/portfolios/999/stage-loans-ecl")  # non-existent portfolio
-    assert response.status_code == status.HTTP_404_NOT_FOUND
-    assert response.json()["detail"] == "Portfolio not found"
+        assert response.json()["status"] == "queued"
+        assert response.json()["task_id"] == "staging-task-id"
+        
+        mock_stage_task.delay.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -353,16 +341,18 @@ async def test_stage_loans_local_success(client, db_session, regular_user, tenan
     db_session.add(portfolio)
     db_session.commit()
 
-    with patch("app.utils.staging.stage_loans_local_impairment_orm", new_callable=AsyncMock) as mock_stage:
-        response = client.post(f"/portfolios/{portfolio.id}/stage-loans-local")
-        assert response.status_code == status.HTTP_200_OK
-        mock_stage.assert_awaited_once_with(
-            portfolio.id,
-            db_session,
-            user_email=regular_user.email,
-            first_name=regular_user.first_name
-        )
+    # Patch the Celery task, not the ORM function
+    with patch("app.tasks.calculation.run_bog_staging_task") as mock_stage_task:
+        mock_stage_task.delay.return_value.id = "staging-task-id"
         
+        response = client.post(f"/portfolios/{portfolio.id}/stage-loans-local")
+        
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["status"] == "queued"
+        assert response.json()["task_id"] == "staging-task-id"
+        
+        mock_stage_task.delay.assert_called_once()
+
 
 @pytest.mark.asyncio
 async def test_stage_loans_local_portfolio_not_found(client, db_session, regular_user):

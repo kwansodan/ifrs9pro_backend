@@ -387,7 +387,7 @@ async def process_bog_impairment_calculation_sync(
         loan_count = 0
         grand_total_local = 0
 
-        executor = ProcessPoolExecutor(max_workers=max_workers)
+        executor = ThreadPoolExecutor(max_workers=max_workers)
         offset = 0
 
         # Verify portfolio has at least one loan

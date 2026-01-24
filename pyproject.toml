@@ -100,7 +100,9 @@ yarl = "==1.18.3"
 XlsxWriter = "==3.2.3"
 polars = "^0.20.16"
 xlsx2csv = "^0.8.2"
-pyarrow = "^15.0.2" 
+pyarrow = "^15.0.2"
+celery = "^5.4.0"
+redis = "^5.0.3" 
 
 
 
