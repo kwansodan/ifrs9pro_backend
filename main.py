@@ -40,23 +40,8 @@ from app.database import SessionLocal
 from app.utils.seed_subscription_plans import seed_subscription_plans
 
 # Set up logging
-gunicorn_error_logger = logging.getLogger("gunicorn.error")
-uvicorn_access_logger = logging.getLogger("uvicorn.access")
-
-# Log configuration for production (Gunicorn/Uvicorn)
-if gunicorn_error_logger.handlers:
-    # If running with Gunicorn, use its handlers and level
-    logging.basicConfig(level=gunicorn_error_logger.level)
-    logger = logging.getLogger("app")
-    logger.handlers = gunicorn_error_logger.handlers
-    logger.setLevel(gunicorn_error_logger.level)
-else:
-    # Standard configuration for development
-    logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger("app")
-
-# Silence noisy uvicorn access logs if needed (optional)
-# uvicorn_access_logger.setLevel(logging.WARNING)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("app")
 
 # Consolidated lifespan for all startup/shutdown logic
 @asynccontextmanager
