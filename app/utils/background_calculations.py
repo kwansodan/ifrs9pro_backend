@@ -79,15 +79,25 @@ def process_loan_sync(loan_data, selected_dt_str):
         submission_period = pd.to_datetime(loan_data.get("submission_period"), errors="coerce")
         maturity_period = pd.to_datetime(loan_data.get("maturity_period"), errors="coerce")
 
-        loan_result = {}
-
-        # basic validations
-        if start_date is pd.NaT:
-            raise ValueError(f"Invalid start date for loan {loan_data.get('id')}")
-        if term_months < 0:
-            raise ValueError(f"Negative loan_term for loan {loan_data.get('id')}")
+        if pd.isna(start_date):
+            raise ValueError(f"Missing or invalid deduction_start_period for loan {loan_data.get('id')}")
+        
+        if term_months < 1:
+            # If term is missing or 0, we can't compute a schedule, but maybe we can just use 1 as fallback or skip
+            logger.warning(f"Loan {loan_data.get('id')} has invalid term_months={term_months}, using 1 month fallback")
+            term_months = 1
 
         end_date = start_date + relativedelta(months=term_months)
+        
+        # Fallback for submission_period if missing
+        if pd.isna(submission_period):
+            submission_period = start_date
+            
+        # Fallback for maturity_period if missing
+        if pd.isna(maturity_period):
+            maturity_period = end_date
+
+        loan_result = {}
 
         # Handle matured or future loans (defensive)
         # if loan matured before or is future with no arrears -> minimal fields, return
