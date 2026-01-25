@@ -104,7 +104,20 @@ async def process_portfolio_ingestion_sync(
         "details": {}
     }
 
+    # Tracking temp files for cleanup
+    temp_files = []
+    
     try:
+        # Paths to the temp files
+        loan_details_path = loan_details_content if isinstance(loan_details_content, str) else None
+        client_data_path = client_data_content if isinstance(client_data_content, str) else None
+        loan_guarantee_path = loan_guarantee_content if isinstance(loan_guarantee_content, str) else None
+        loan_collateral_path = loan_collateral_data_content if isinstance(loan_collateral_data_content, str) else None
+
+        if loan_details_path: temp_files.append(loan_details_path)
+        if client_data_path: temp_files.append(client_data_path)
+        if loan_guarantee_path: temp_files.append(loan_guarantee_path)
+        if loan_collateral_path: temp_files.append(loan_collateral_path)
         # ---------- Clear existing portfolio data ----------
         try:
             start = time.perf_counter()
@@ -149,20 +162,20 @@ async def process_portfolio_ingestion_sync(
 
         # ---------- Count files ----------
         files_to_process = sum(
-            df is not None for df in [
-                loan_details_content, client_data_content,
-                loan_guarantee_content, loan_collateral_data_content
+            path is not None for path in [
+                loan_details_path, client_data_path,
+                loan_guarantee_path, loan_collateral_path
             ]
         )
         results["total_files"] = files_to_process
         logger.info(f"Total files to process: {files_to_process}")
 
         # ---------- Process loan details ----------
-        if loan_details_content is not None:
+        if loan_details_path:
             start = time.perf_counter()
             try:
-                logger.info(f"Processing loan details for portfolio {portfolio_id}")
-                loan_results = await process_loan_details_sync(loan_details_content, portfolio_id, tenant_id, db)
+                logger.info(f"Processing loan details for portfolio {portfolio_id} (batch mode)")
+                loan_results = await process_loan_details_sync(loan_details_path, portfolio_id, tenant_id, db)
                 results["details"]["loan_details"] = loan_results
                 results["files_processed"] += 1
                 logger.info(f"Processed {loan_results.get('processed', 0)} loan records")
@@ -174,11 +187,11 @@ async def process_portfolio_ingestion_sync(
             logger.info(f"Loan details processing took {end - start:0.4f} seconds")
 
         # ---------- Process client data ----------
-        if client_data_content is not None:
+        if client_data_path:
             start = time.perf_counter()
             try:
-                logger.info(f"Processing client data for portfolio {portfolio_id}")
-                client_results = await process_client_data_sync(client_data_content, portfolio_id, tenant_id, db)
+                logger.info(f"Processing client data for portfolio {portfolio_id} (batch mode)")
+                client_results = await process_client_data_sync(client_data_path, portfolio_id, tenant_id, db)
                 results["details"]["client_data"] = client_results
                 results["files_processed"] += 1
                 logger.info(f"Processed {client_results.get('processed', 0)} client records")
@@ -298,6 +311,15 @@ async def process_portfolio_ingestion_sync(
                 logger.error("Failed to send ingestion success email")
 
         logger.info(f"Portfolio ingestion completed with status: {results['status']}")
+        
+        # Cleanup temp files
+        for tf in temp_files:
+            try:
+                if os.path.exists(tf):
+                    os.remove(tf)
+                    logger.debug(f"Cleaned up temp file: {tf}")
+            except: pass
+            
         return results
 
     except Exception as e:
@@ -408,15 +430,11 @@ async def start_background_ingestion(
 
 async def fetch_excel_from_minio(payload: IngestPayload, db: Session, user_email, first_name, portfolio_id):
     """
-    Processes ingestion of cleaned Excel files from MinIO using Pydantic payload:
-    - Validates payload
-    - Downloads files from MinIO
-    - Parses Excel
-    - Applies column mappings
-    - Deletes original MinIO files
-    - Returns dictionary of cleaned DataFrames
+    Processes ingestion of cleaned Excel files from MinIO.
+    Saves to local disk for batch streaming instead of loading full DataFrames.
     """
-    logger.info(f"Fetching excel data from minio to begin processing")
+    import os
+    logger.info(f"Fetching excel data from minio to local disk for batch processing")
     # Send ingestion start email
     try:
         await send_ingestion_began_email(
@@ -429,79 +447,51 @@ async def fetch_excel_from_minio(payload: IngestPayload, db: Session, user_email
     if not payload.files:
         raise HTTPException(status_code=400, detail="No file mappings provided")
 
-    dataframes = {
+    # This will now store FILE PATHS
+    file_paths = {
         "loan_details": None,
         "client_data": None,
         "loan_guarantee_data": None,
         "loan_collateral_data": None,
     }
 
-    FILE_KEY_MAPPING = dataframes.keys()
+    FILE_KEY_MAPPING = file_paths.keys()
     BUCKET_NAME = settings.MINIO_BUCKET_NAME
 
     for file_info in payload.files:
         file_type = file_info.type
         if file_type not in FILE_KEY_MAPPING:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid file type: {file_type}. Must be one of {list(FILE_KEY_MAPPING)}"
-            )
+            continue
 
         file_key = file_info.object_name
-        mapping = file_info.mapping or {}
+        if not file_key: continue
 
-        if not file_key:
-            raise HTTPException(
-                status_code=400,
-                detail=f"File object_name missing for {file_type}"
-            )
-
-        # --------- Download from MinIO ----------
+        # --------- Download directly to temp file ----------
         try:
-            obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=file_key)
-            file_bytes = obj["Body"].read()
-            obj["Body"].close()
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to download {file_key} from MinIO: {e}"
-            )
-
-        # --------- Load Excel ----------
-        try:
-            df = pd.read_excel(BytesIO(file_bytes))
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to parse Excel file {file_key}: {e}"
-            )
-
-        # --------- Apply mapping ----------
-        if mapping:
-            df.rename(columns=mapping, inplace=True)
-
-        # --------- Optional: Save as temp file ----------
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
-            df.to_excel(tmp.name, index=False)
-
-        # --------- Store DataFrame ----------
-        dataframes[file_type] = df
-
-        # --------- Delete original file ----------
-        try:
+            # Create a dedicated temp file for this upload
+            fd, temp_path = tempfile.mkstemp(suffix=".xlsx", prefix=f"ingest_{file_type}_")
+            with os.fdopen(fd, 'wb') as tmp:
+                s3_client.download_fileobj(BUCKET_NAME, file_key, tmp)
+            
+            logger.info(f"Downloaded {file_key} to {temp_path}")
+            file_paths[file_type] = temp_path
+            
+            # Delete original from MinIO to save space
             s3_client.delete_object(Bucket=BUCKET_NAME, Key=file_key)
+            
         except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to delete original file {file_key}: {e}"
-            )
+            logger.error(f"Failed to download/save {file_key}: {e}")
+            # Cleanup any partially created temp file
+            if 'temp_path' in locals() and os.path.exists(temp_path):
+                os.remove(temp_path)
+            raise HTTPException(status_code=500, detail=f"Storage error: {e}")
 
     # --------- Validate required files ----------
     for required_file in ["loan_details", "client_data"]:
-        if dataframes[required_file] is None or dataframes[required_file].empty:
+        if file_paths[required_file] is None:
             raise HTTPException(
                 status_code=400,
-                detail=f"{required_file} is required and cannot be empty"
+                detail=f"{required_file} is required"
             )
 
-    return dataframes
+    return file_paths
