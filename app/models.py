@@ -12,11 +12,12 @@ from sqlalchemy import (
     JSON,
     Table,
     UniqueConstraint,
+    and_,
 )
 from sqlalchemy.sql import func
 from enum import Enum as PyEnum
 from app.database import Base
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, foreign, remote
 from datetime import datetime
 from app.database import TenantMixin
 
@@ -384,6 +385,11 @@ class Loan(TenantMixin,Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     portfolio = relationship("Portfolio", back_populates="loans")
+    client = relationship(
+        "Client",
+        primaryjoin="and_(foreign(Loan.employee_id) == remote(Client.employee_id), foreign(Loan.portfolio_id) == remote(Client.portfolio_id))",
+        viewonly=True,
+    )
     ifrs9_stage = Column(String, nullable=True)
     bog_stage = Column(String, nullable=True)
     bog_prov_rate = Column(Numeric(precision=18, scale=2), default=0)
