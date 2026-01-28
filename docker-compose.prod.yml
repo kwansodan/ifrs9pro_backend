@@ -80,8 +80,10 @@ services:
 
   redis:
     image: redis:7-alpine
-    command: redis-server --requirepass ${REDIS_PASSWORD}
+    command: redis-server /usr/local/etc/redis/redis.conf --requirepass ${REDIS_PASSWORD}
     container_name: ifrs9pro_redis
+    volumes:
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
     restart: unless-stopped
     networks:
       - ifrs9pro_network
