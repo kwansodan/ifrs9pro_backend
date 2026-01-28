@@ -93,7 +93,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: ifrs9pro_celery_worker
-    command: celery -A app.celery_app worker --loglevel=info
+    command: celery -A app.celery_app worker -E --loglevel=info
     env_file:
       - ./.env
     environment:
