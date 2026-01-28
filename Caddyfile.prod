@@ -1,4 +1,11 @@
 do-site.service4gh.com {
-    reverse_proxy ifrs9pro_fastapi:8000
+    handle_path /flower* {
+        reverse_proxy ifrs9pro_flower:5555
+    }
+
+    handle {
+        reverse_proxy ifrs9pro_fastapi:8000
+    }
+
     tls admin@ifrs9pro.com
 }

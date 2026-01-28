@@ -118,6 +118,23 @@ services:
           cpus: '0.4'
           memory: 800M
 
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: ifrs9pro_flower
+    command: celery -A app.celery_app flower --url_prefix=flower
+    env_file: .env
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    # Ports removed because Caddy handles access
+    depends_on:
+      - redis
+    restart: unless-stopped
+    networks:
+      - ifrs9pro_network
+
 networks:
   ifrs9pro_network:
     driver: bridge
