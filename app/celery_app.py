@@ -19,8 +19,8 @@ celery_app.conf.update(
     result_serializer="json",
     accept_content=["json"],
     task_track_started=True,
-    task_time_limit=3600,  # 1 hour timeout
-    worker_concurrency=2   # Adjust based on resources
+    task_time_limit=7200,  # 2 hour timeout as a safety buffer
+    worker_concurrency=1   # Maximize stability on 1-core CPU
 )
 
 # We will create these modules next

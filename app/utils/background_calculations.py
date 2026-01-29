@@ -7,7 +7,7 @@ import pandas as pd
 from typing import Optional, Dict, Any
 from datetime import date, datetime
 from decimal import Decimal
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 import pickle
 from app.database import SessionLocal
 from app.models import (
@@ -71,23 +71,33 @@ def process_loan_sync(loan_data, selected_dt_str):
             raise ValueError("loan_term must be integer-like")
 
         arrears = safe_float(loan_data.get("accumulated_arrears", 0))
-        start_date = pd.to_datetime(loan_data.get("deduction_start_period"), errors="coerce")
-        monthly_installment = safe_float(loan_data.get("monthly_installment", 0))
-        pd_rate = safe_float(loan_data.get("pd_value", 0))
-        administrative_fees = safe_float(loan_data.get("administrative_fees", 0))
-
+        loan_issue_date = pd.to_datetime(loan_data.get("loan_issue_date"), errors="coerce")
         submission_period = pd.to_datetime(loan_data.get("submission_period"), errors="coerce")
         maturity_period = pd.to_datetime(loan_data.get("maturity_period"), errors="coerce")
 
-        loan_result = {}
-
-        # basic validations
-        if start_date is pd.NaT:
-            raise ValueError(f"Invalid start date for loan {loan_data.get('id')}")
-        if term_months < 0:
-            raise ValueError(f"Negative loan_term for loan {loan_data.get('id')}")
+        # PRIORITY FIX: Fallback for deduction_start_period
+        if pd.isna(start_date):
+            if not pd.isna(loan_issue_date):
+                logger.warning(f"Loan {loan_data.get('id')}: Using loan_issue_date as fallback for deduction_start_period")
+                start_date = loan_issue_date
+            else:
+                return loan_data["id"], None, f"Missing both deduction_start_period and loan_issue_date"
+        
+        if term_months < 1:
+            logger.warning(f"Loan {loan_data.get('id')} has invalid term_months={term_months}, using 1 month fallback")
+            term_months = 1
 
         end_date = start_date + relativedelta(months=term_months)
+        
+        # Fallback for submission_period if missing
+        if pd.isna(submission_period):
+            submission_period = start_date
+            
+        # Fallback for maturity_period if missing
+        if pd.isna(maturity_period):
+            maturity_period = end_date
+
+        loan_result = {}
 
         # Handle matured or future loans (defensive)
         # if loan matured before or is future with no arrears -> minimal fields, return
@@ -98,14 +108,14 @@ def process_loan_sync(loan_data, selected_dt_str):
                 loan_result[field] = 0.0 if arrears <= 0 else round(arrears, 2)
             loan_result["calculation_date"] = selected_dt.to_pydatetime()
             # final_ecl enforced below, so it's present
-            return loan_data["id"], loan_result
+            return loan_data["id"], loan_result, None
 
         # handle trivially invalid loans
         if principal <= 0 or term_months <= 0 or monthly_installment <= 0:
             for field in ["ead", "pd", "final_ecl", "ecl_12", "ecl_lifetime", "amortised_bal", "adjusted_amortised_bal", "theoretical_balance"]:
                 loan_result[field] = 0.0
             loan_result["calculation_date"] = selected_dt.to_pydatetime()
-            return loan_data["id"], loan_result
+            return loan_data["id"], loan_result, None
 
         # Calculate EIR (may raise internally)
         eir = calculate_effective_interest_rate_lender(
@@ -181,22 +191,12 @@ def process_loan_sync(loan_data, selected_dt_str):
             raise RuntimeError(f"final_ecl not computed for loan {loan_data.get('id')}")
 
         # Log computed result (structured)
-        logger.info(
-            "loan_ecl_computed",
-            extra={
-                "loan_id": loan_data.get("id"),
-                "final_ecl": loan_result.get("final_ecl"),
-                "ead": loan_result.get("ead"),
-                "pd": loan_result.get("pd"),
-            },
-        )
-
-        return loan_data["id"], loan_result
+        return loan_data["id"], loan_result, None
 
     except Exception as exc:
-        # Make sure we raise; don't return (id, None) — that hides failures.
-        logger.exception(f"Error processing loan ID {loan_data.get('id', 'unknown')}: {exc}")
-        raise
+        err_msg = f"Calculation error: {str(exc)}"
+        logger.error(f"Error processing loan ID {loan_data.get('id', 'unknown')}: {err_msg}")
+        return loan_data.get("id"), None, err_msg
 
 
 # --- Main controller for ECL calculations---
@@ -228,6 +228,7 @@ async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, d
         while True:
             loans = (
                 db.query(Loan)
+                .options(joinedload(Loan.client)) # Eager load client data
                 .filter(Loan.portfolio_id == portfolio_id)
                 .order_by(Loan.id)
                 .offset(offset)
@@ -239,6 +240,11 @@ async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, d
 
             tasks = []
             for loan in loans:
+                # Eagerly access client YOB to avoid N+1 queries
+                client_yob = None
+                if loan.client and loan.client.date_of_birth:
+                    client_yob = loan.client.date_of_birth.year
+
                 pd_value = calculate_probability_of_default(
                     employee_id=loan.employee_id,
                     outstanding_loan_balance=loan.outstanding_loan_balance,
@@ -247,6 +253,7 @@ async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, d
                     end_date=loan.maturity_period,
                     arrears=loan.accumulated_arrears,
                     db=db,
+                    client_yob=client_yob
                 )
                 
                 # CRITICAL FIX: Use default PD if calculation returns None or 0
@@ -260,6 +267,7 @@ async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, d
                     "loan_term": loan.loan_term,
                     "accumulated_arrears": loan.accumulated_arrears,
                     "deduction_start_period": loan.deduction_start_period,
+                    "loan_issue_date": loan.loan_issue_date,  # Added fallback
                     "monthly_installment": loan.monthly_installment,
                     "administrative_fees": loan.administrative_fees,
                     "ifrs9_stage": loan.ifrs9_stage,
@@ -271,32 +279,42 @@ async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, d
                 task = asyncio.get_running_loop().run_in_executor(executor, process_loan_sync, loan_data, selected_dt_str)
                 tasks.append(task)
 
-            # gather without return_exceptions=True -> first exception will propagate
-            try:
-                results = await asyncio.gather(*tasks)
-            except Exception as e:
-                # Fatal: send failed email, log and re-raise so outer except handles summary & failure email
-                logger.exception("One or more loan calculations failed; aborting batch.")
-                try:
-                    await send_calc_ecl_failed_email(user_email, first_name, portfolio_id, cc_emails=["support@service4gh.com"])
-                except Exception as inner_e:
-                    logger.error(f"Failed to send ECL calculation FAILED email: {inner_e}")
-                raise
+            # return_exceptions=True ensures one failure doesn't stop the batch
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # At this point, all results are (loan_id, loan_fields)
-            for res in results:
-                if not (isinstance(res, tuple) and len(res) == 2):
-                    logger.error("Unexpected process_loan_sync result shape: %r", res)
+            batch_fail_count = 0
+            for i, res in enumerate(results):
+                loan_id = loans[i].id
+                
+                # Check for unexpected exceptions in the thread
+                if isinstance(res, Exception):
+                    logger.error(f"Loan {loan_id}: Worker thread crashed: {res}")
+                    batch_fail_count += 1
                     continue
-                loan_id, loan_fields = res
-                # Update DB row with calculated fields
-                db.query(Loan).filter(Loan.id == loan_id).update(loan_fields)
-                loan_count += 1
-                grand_total_ecl += float(loan_fields.get("final_ecl", 0.0))
+                
+                # Unpack (loan_id, fields, error)
+                if not (isinstance(res, tuple) and len(res) == 3):
+                    logger.error(f"Loan {loan_id}: Unexpected result format: {res}")
+                    batch_fail_count += 1
+                    continue
+                
+                res_id, loan_fields, error_msg = res
+                
+                if error_msg:
+                    logger.warning(f"Loan {res_id}: {error_msg}")
+                    batch_fail_count += 1
+                    continue
+                
+                if loan_fields:
+                    # Update DB row with calculated fields
+                    db.query(Loan).filter(Loan.id == res_id).update(loan_fields)
+                    loan_count += 1
+                    grand_total_ecl += float(loan_fields.get("final_ecl", 0.0))
 
             db.commit()
             processed_count += len(loans)
-            logger.info("Processed and saved %d loans...", processed_count)
+            logger.info("Processed batch of %d. Success: %d, Failed: %d. Total processed: %d", 
+                        len(loans), len(loans) - batch_fail_count, batch_fail_count, processed_count)
 
             offset += batch_size
 
@@ -340,21 +358,22 @@ async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, d
 # --- Move process_loan to pure sync ---
 def process_loan_local_sync(loan_data, relevant_prov_rate, selected_dt_str):
     try:
-        selected_dt = pd.to_datetime(selected_dt_str)
-        ead = Decimal(safe_float(loan_data.get('ead', 0)))
+        ead = Decimal(str(safe_float(loan_data.get('ead', 0))))
         if not loan_data.get('bog_stage'):
-            print(f"Warning: Loan ID {loan_data['id']} has no bog_stage!")
+            return loan_data['id'], None, "Missing bog_stage"
 
         loan_result = {}
-        rate=relevant_prov_rate
-        loan_result = {}
-        loan_result['bog_prov_rate']=relevant_prov_rate
-        loan_result['bog_provision'] = round(float(rate * ead),2)
-        return loan_data['id'], loan_result
+        # Ensure we use safe values for the calculation
+        rate = Decimal(str(safe_float(relevant_prov_rate, 0)))
+        loan_result['bog_prov_rate'] = float(rate)
+        loan_result['bog_provision'] = round(float(rate * ead), 2)
+        
+        return loan_data['id'], loan_result, None
 
     except Exception as e:
-        print(f"Error processing loan ID {loan_data.get('id', 'unknown')}: {e}")
-        return loan_data.get('id', None)
+        err_msg = f"BOG calculation error: {str(e)}"
+        logger.error(f"Error processing loan ID {loan_data.get('id', 'unknown')}: {err_msg}")
+        return loan_data.get('id'), None, err_msg
 
 
 async def process_bog_impairment_calculation_sync(
@@ -452,16 +471,38 @@ async def process_bog_impairment_calculation_sync(
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            for res in results:
-                if isinstance(res, tuple) and res[1] is not None:
-                    loan_id, loan_fields = res
-                    db.query(Loan).filter(Loan.id == loan_id).update(loan_fields)
+            batch_fail_count = 0
+            for i, res in enumerate(results):
+                loan_id = loans[i].id
+                
+                # Worker crash
+                if isinstance(res, Exception):
+                    logger.error(f"Loan {loan_id}: BOG worker thread crashed: {res}")
+                    batch_fail_count += 1
+                    continue
+                
+                # Unpack
+                if not (isinstance(res, tuple) and len(res) == 3):
+                    logger.error(f"Loan {loan_id}: Unexpected BOG result format: {res}")
+                    batch_fail_count += 1
+                    continue
+                
+                res_id, loan_fields, error_msg = res
+                
+                if error_msg:
+                    logger.warning(f"Loan {res_id}: {error_msg}")
+                    batch_fail_count += 1
+                    continue
+                
+                if loan_fields:
+                    db.query(Loan).filter(Loan.id == res_id).update(loan_fields)
                     loan_count += 1
-                    grand_total_local += loan_fields.get("bog_provision", 0.0)
+                    grand_total_local += float(loan_fields.get("bog_provision", 0.0))
 
             db.commit()
             processed_count += len(loans)
-            print(f"Processed and saved {processed_count} loans...")
+            logger.info("Processed BOG batch of %d. Success: %d, Failed: %d. Total processed: %d", 
+                        len(loans), len(loans) - batch_fail_count, batch_fail_count, processed_count)
 
             offset += batch_size
 

@@ -17,7 +17,10 @@ def run_ingestion_task(self, portfolio_id: int, tenant_id: int, file_mappings: d
     """
     logger.info(f"Starting Celery ingestion task for portfolio {portfolio_id}")
     
-    dataframes = {
+    import os
+    import tempfile
+    
+    file_paths = {
         "loan_details_content": None,
         "client_data_content": None,
         "loan_guarantee_content": None,
@@ -25,46 +28,44 @@ def run_ingestion_task(self, portfolio_id: int, tenant_id: int, file_mappings: d
     }
     
     uploaded_filenames = []
+    temp_files = []
     
     try:
-        # Download and parse files
+        # 1. Download files from MinIO to local temp storage
         for file_type, file_key in file_mappings.items():
             if not file_key:
                 continue
                 
             try:
-                obj = s3_client.get_object(Bucket=settings.MINIO_BUCKET_NAME, Key=file_key)
-                file_bytes = obj["Body"].read()
-                df = pd.read_excel(BytesIO(file_bytes))
+                fd, temp_path = tempfile.mkstemp(suffix=".xlsx", prefix=f"celery_{file_type}_")
+                with os.fdopen(fd, 'wb') as tmp:
+                    s3_client.download_fileobj(settings.MINIO_BUCKET_NAME, file_key, tmp)
                 
+                temp_files.append(temp_path)
+                logger.info(f"Downloaded {file_key} to {temp_path}")
+                
+                # Map to correct argument name for the sync utility
                 if file_type == "loan_details":
-                    dataframes["loan_details_content"] = df
+                    file_paths["loan_details_content"] = temp_path
                     uploaded_filenames.append("loan_details")
                 elif file_type == "client_data":
-                    dataframes["client_data_content"] = df
+                    file_paths["client_data_content"] = temp_path
                     uploaded_filenames.append("client_data")
                 elif file_type == "loan_guarantee_data":
-                    dataframes["loan_guarantee_content"] = df
+                    file_paths["loan_guarantee_content"] = temp_path
                     uploaded_filenames.append("loan_guarantee_data")
                 elif file_type == "loan_collateral_data":
-                    dataframes["loan_collateral_data_content"] = df
+                    file_paths["loan_collateral_data_content"] = temp_path
                     uploaded_filenames.append("loan_collateral_data")
                     
             except Exception as e:
-                logger.error(f"Failed to process file {file_key}: {e}")
-                # We might want to notify or fail here, but for now log and continue/fail later
+                logger.error(f"Failed to download file {file_key}: {e}")
                 raise e
 
-        # Run the synchronous processing logic
+        # 2. Run the processing utility (supports path inputs)
         with SessionLocal() as db:
-             # Since process_portfolio_ingestion_sync is an async function in the utils, 
-             # but we are in a sync Celery worker, we have two options:
-             # 1. Refactor process_portfolio_ingestion_sync to be sync (Ideal for Celery)
-             # 2. Run it with asyncio.run() (Quickest for now)
-             
              import asyncio
              
-             # Create loop for async execution
              loop = asyncio.new_event_loop()
              asyncio.set_event_loop(loop)
              
@@ -78,25 +79,22 @@ def run_ingestion_task(self, portfolio_id: int, tenant_id: int, file_mappings: d
                          user_email=user_email,
                          first_name=first_name,
                          uploaded_filenames=uploaded_filenames,
-                         **dataframes
+                         **file_paths
                      )
                  )
              finally:
                  loop.close()
-                 
-        # Cleanup MinIO files
-        for file_key in file_mappings.values():
-            if file_key:
-                try:
-                    s3_client.delete_object(Bucket=settings.MINIO_BUCKET_NAME, Key=file_key)
-                except Exception as e:
-                    logger.warning(f"Failed to cleanup file {file_key}: {e}")
 
         return results
 
     except Exception as e:
         logger.error(f"Celery ingestion task failed: {e}")
-        # Send failure email handled inside process_portfolio_ingestion_sync mostly, 
-        # but if it crashed before that, we might need handling.
-        # For now, let Celery retry or log.
         raise e
+    finally:
+        # Cleanup local temp files
+        for tf in temp_files:
+            try:
+                if os.path.exists(tf):
+                    os.remove(tf)
+                    logger.debug(f"Cleaned up Celery temp file: {tf}")
+            except: pass
