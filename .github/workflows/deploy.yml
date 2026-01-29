@@ -185,12 +185,13 @@ jobs:
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ github.ref_name == 'main' && secrets.PROD_DROPLET_HOST || secrets.STAGING_DROPLET_HOST }}
-          username: ${{ github.ref_name == 'main' && secrets.PROD_USER || (secrets.STAGING_USER || secrets.DROPLET_USER) }}
+          username: ${{ github.ref_name == 'main' && (secrets.PROD_USER || secrets.DROPLET_USER) || (secrets.STAGING_USER || secrets.DROPLET_USER) }}
           password: ${{ github.ref_name == 'main' && secrets.PROD_PASSWORD || secrets.STAGING_PASSWORD }}
           key: ${{ secrets.DROPLET_SSH_KEY }}
           port: 22
           script: |
-            export REMOTE_PATH=/root/ifrs9pro_backend
+            # Using ~/ is more robust than hardcoding /root/ as it handles different SSH users automatically
+            export REMOTE_PATH=~/ifrs9pro_backend
             export SCRIPT=${{ steps.vars.outputs.SCRIPT }}
             
             cd "$REMOTE_PATH" || { echo "Remote path not found: $REMOTE_PATH"; exit 1; }
