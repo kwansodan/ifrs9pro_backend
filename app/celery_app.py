@@ -8,6 +8,13 @@ celery_app = Celery(
 )
 
 celery_app.conf.update(
+    worker_send_task_events=True,
+    task_send_sent_event=True,
+
+    worker_enable_remote_control=True,
+    worker_disable_remote_control=False,
+
+    broker_connection_retry_on_startup=True,
     task_serializer="json",
     result_serializer="json",
     accept_content=["json"],
