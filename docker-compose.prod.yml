@@ -112,11 +112,11 @@ services:
     restart: unless-stopped
     networks:
       - ifrs9pro_network
-    deploy:
-      resources:
-        limits:
-          cpus: '0.4'
-          memory: 800M
+    healthcheck:
+      test: [ "CMD-SHELL", "celery -A app.celery_app inspect ping -d celery@$${HOSTNAME}" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   flower:
     build:
@@ -134,6 +134,11 @@ services:
     restart: unless-stopped
     networks:
       - ifrs9pro_network
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:5555/flower/" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 networks:
   ifrs9pro_network:
