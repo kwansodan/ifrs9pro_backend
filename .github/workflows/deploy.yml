@@ -185,10 +185,9 @@ jobs:
         if: github.ref_name == 'staging'
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.STAGING_DROPLET_HOST }}
-          username: ${{ secrets.STAGING_USER || secrets.DROPLET_USER }}
-          password: ${{ secrets.STAGING_PASSWORD }}
-          key: ${{ secrets.DROPLET_SSH_KEY }}
+          host: ${{ secrets.STAGING_SSH_HOST }}
+          username: ${{ secrets.STAGING_SSH_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
           port: 22
           script: |
             export REMOTE_PATH=~/ifrs9pro_backend
@@ -201,15 +200,14 @@ jobs:
             ./"$SCRIPT"
             echo "✅ Staging deployment completed successfully."
 
-      # 17️⃣ Deploy to Production (SSH Key + Password Fallback)
+      # 17️⃣ Deploy to Production (SSH Key only)
       - name: Deploy to Production
         if: github.ref_name == 'main'
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.PROD_DROPLET_HOST }}
-          username: ${{ secrets.PROD_USER || secrets.DROPLET_USER }}
-          password: ${{ secrets.PROD_PASSWORD }}
-          key: ${{ secrets.DROPLET_SSH_KEY }}
+          host: ${{ secrets.PROD_SSH_HOST }}
+          username: ${{ secrets.PROD_SSH_USER }}
+          key: ${{ secrets.PROD_SSH_KEY }}
           port: 22
           script: |
             export REMOTE_PATH=~/ifrs9pro_backend
