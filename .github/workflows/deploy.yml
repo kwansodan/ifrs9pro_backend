@@ -180,27 +180,44 @@ jobs:
             echo "SCRIPT=setup_prod.sh" >> $GITHUB_OUTPUT
           fi
 
-      # 16️⃣ Deploy via SSH
-      - name: Deploy to remote droplet
+      # 16️⃣ Deploy to Staging (SSH Key only)
+      - name: Deploy to Staging
+        if: github.ref_name == 'staging'
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ github.ref_name == 'main' && secrets.PROD_DROPLET_HOST || secrets.STAGING_DROPLET_HOST }}
-          username: ${{ github.ref_name == 'main' && (secrets.PROD_USER || secrets.DROPLET_USER) || (secrets.STAGING_USER || secrets.DROPLET_USER) }}
-          password: ${{ github.ref_name == 'main' && secrets.PROD_PASSWORD || secrets.STAGING_PASSWORD }}
+          host: ${{ secrets.STAGING_DROPLET_HOST }}
+          username: ${{ secrets.STAGING_USER || secrets.DROPLET_USER }}
+          password: ${{ secrets.STAGING_PASSWORD }}
           key: ${{ secrets.DROPLET_SSH_KEY }}
           port: 22
           script: |
-            # Using ~/ is more robust than hardcoding /root/ as it handles different SSH users automatically
             export REMOTE_PATH=~/ifrs9pro_backend
             export SCRIPT=${{ steps.vars.outputs.SCRIPT }}
-            
             cd "$REMOTE_PATH" || { echo "Remote path not found: $REMOTE_PATH"; exit 1; }
-            
-            # Pull latest changes from GitHub
             echo "Pulling latest changes..."
             git fetch origin
             git reset --hard origin/$(git rev-parse --abbrev-ref HEAD)
-            
             chmod +x "$SCRIPT" || true
             ./"$SCRIPT"
-            echo "✅ Deployment completed successfully."
+            echo "✅ Staging deployment completed successfully."
+
+      # 17️⃣ Deploy to Production (SSH Key + Password Fallback)
+      - name: Deploy to Production
+        if: github.ref_name == 'main'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PROD_DROPLET_HOST }}
+          username: ${{ secrets.PROD_USER || secrets.DROPLET_USER }}
+          password: ${{ secrets.PROD_PASSWORD }}
+          key: ${{ secrets.DROPLET_SSH_KEY }}
+          port: 22
+          script: |
+            export REMOTE_PATH=~/ifrs9pro_backend
+            export SCRIPT=${{ steps.vars.outputs.SCRIPT }}
+            cd "$REMOTE_PATH" || { echo "Remote path not found: $REMOTE_PATH"; exit 1; }
+            echo "Pulling latest changes..."
+            git fetch origin
+            git reset --hard origin/$(git rev-parse --abbrev-ref HEAD)
+            chmod +x "$SCRIPT" || true
+            ./"$SCRIPT"
+            echo "✅ Production deployment completed successfully."
