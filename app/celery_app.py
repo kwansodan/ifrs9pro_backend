@@ -1,5 +1,24 @@
+import os
+import multiprocessing
 from celery import Celery
 from app.config import settings
+
+def get_cpu_limit():
+    # cgroup v2 (modern systems)
+    try:
+        with open("/sys/fs/cgroup/cpu.max") as f:
+            quota, period = f.read().strip().split()
+            if quota != "max":
+                return max(1, int(int(quota) / int(period)))
+    except Exception:
+        pass
+
+    # fallback
+    return multiprocessing.cpu_count()
+
+def calculate_concurrency():
+    cores = get_cpu_limit()
+    return max(1, cores - 1)
 
 celery_app = Celery(
     "ifrs9pro",
@@ -20,8 +39,10 @@ celery_app.conf.update(
     accept_content=["json"],
     task_track_started=True,
     task_time_limit=7200,  # 2 hour timeout as a safety buffer
-    worker_concurrency=1   # Maximize stability on 1-core CPU
 )
+
+# Dynamically set concurrency based on CPU limits
+celery_app.conf.worker_concurrency = calculate_concurrency()
 
 # We will create these modules next
 celery_app.autodiscover_tasks(["app.tasks.ingestion", "app.tasks.calculation"])
