@@ -170,36 +170,38 @@ jobs:
         if: always()
         run: docker compose -f docker-compose.local.yml down
 
-      # 1️⃣5️⃣ SSH agent
-      - name: Start SSH agent
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.DROPLET_SSH_KEY }}
-
-      # 1️⃣6️⃣ Determine deploy target
+      # 15️⃣ Determine deploy target
       - name: Set deployment variables
         id: vars
         run: |
           BRANCH="${GITHUB_REF##*/}"
           if [ "$BRANCH" = "staging" ]; then
             echo "HOST=${{ secrets.STAGING_DROPLET_HOST }}" >> $GITHUB_OUTPUT
+            echo "USER=${{ secrets.STAGING_USER || secrets.DROPLET_USER }}" >> $GITHUB_OUTPUT
+            echo "PASSWORD=${{ secrets.STAGING_PASSWORD }}" >> $GITHUB_OUTPUT
+            echo "KEY=${{ secrets.DROPLET_SSH_KEY }}" >> $GITHUB_OUTPUT
             echo "SCRIPT=setup-docker.sh" >> $GITHUB_OUTPUT
           elif [ "$BRANCH" = "main" ]; then
             echo "HOST=${{ secrets.PROD_DROPLET_HOST }}" >> $GITHUB_OUTPUT
+            echo "USER=${{ secrets.PROD_USER }}" >> $GITHUB_OUTPUT
+            echo "PASSWORD=${{ secrets.PROD_PASSWORD }}" >> $GITHUB_OUTPUT
+            echo "KEY=${{ secrets.DROPLET_SSH_KEY }}" >> $GITHUB_OUTPUT
             echo "SCRIPT=setup_prod.sh" >> $GITHUB_OUTPUT
           fi
 
-      # 1️⃣7️⃣ Deploy via SSH
+      # 16️⃣ Deploy via SSH
       - name: Deploy to remote droplet
-        env:
-          DROPLET_USER: ${{ secrets.DROPLET_USER }}
-          HOST: ${{ steps.vars.outputs.HOST }}
-          SCRIPT: ${{ steps.vars.outputs.SCRIPT }}
-          REMOTE_PATH: /root/ifrs9pro_backend
-        run: |
-          echo "Deploying $SCRIPT to $HOST"
-          ssh -o StrictHostKeyChecking=no $DROPLET_USER@$HOST "REMOTE_PATH='$REMOTE_PATH' SCRIPT='$SCRIPT' bash -s" << 'EOF'
-            set -euo pipefail
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ steps.vars.outputs.HOST }}
+          username: ${{ steps.vars.outputs.USER }}
+          password: ${{ steps.vars.outputs.PASSWORD }}
+          key: ${{ steps.vars.outputs.KEY }}
+          port: 22
+          script: |
+            export REMOTE_PATH=/root/ifrs9pro_backend
+            export SCRIPT=${{ steps.vars.outputs.SCRIPT }}
+            
             cd "$REMOTE_PATH" || { echo "Remote path not found: $REMOTE_PATH"; exit 1; }
             
             # Pull latest changes from GitHub
@@ -210,4 +212,3 @@ jobs:
             chmod +x "$SCRIPT" || true
             ./"$SCRIPT"
             echo "✅ Deployment completed successfully."
-          EOF
