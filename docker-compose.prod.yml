@@ -20,6 +20,11 @@ services:
     restart: unless-stopped
     networks:
       - ifrs9pro_network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 600M
 
   db:
     image: postgres:16-alpine

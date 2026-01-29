@@ -2,10 +2,13 @@ import io
 import json
 import logging
 import decimal
+import os
+import tempfile
 from datetime import datetime
 from sqlalchemy import text
 import polars as pl
 import traceback
+from xlsx2csv import Xlsx2csv
 
 from app.models import (
     Loan,
@@ -21,846 +24,181 @@ from app.utils.quality_checks import create_and_save_quality_issues
 
 logger = logging.getLogger(__name__)
 
-async def process_loan_details_sync(file_content, portfolio_id, tenant_id, db):
-    import io, decimal, polars as pl
-    from sqlalchemy import text
-    from app.models import Loan, Client
-    import logging
-
-    logger = logging.getLogger(__name__)
-
+def excel_to_csv_task(excel_path: str) -> str:
+    """Helper to convert Excel file to CSV for memory-efficient streaming."""
+    fd, csv_path = tempfile.mkstemp(suffix=".csv", prefix="ingest_conv_")
+    os.close(fd) # Close file descriptor, xlsx2csv will open it
     try:
-        # Read and preprocess Excel data (assumed done earlier)
-        
-        # file_content is a pandas DataFrame
-        df = pl.from_pandas(file_content)
-        logger.info(f"Successfully converted pandas DataFrame to polars DataFrame. {df.height} rows identified")
+        Xlsx2csv(excel_path, skip_empty_lines=True).convert(csv_path)
+        return csv_path
+    except Exception as e:
+        if os.path.exists(csv_path): os.remove(csv_path)
+        raise e
 
-        # Function for normalizing columns: strip whitespace, lowercase, remove periods
-        def normalize_column(col: str) -> str:
-            return col.strip().lower().replace(".", "").replace(" ", "_")
+async def process_loan_details_sync(file_path, portfolio_id, tenant_id, db):
+    """Chunked processing for loan details to minimize RAM usage."""
+    csv_path = None
+    try:
+        # 1. Convert Excel to CSV for streaming
+        logger.info(f"Converting loan details Excel to CSV: {file_path}")
+        csv_path = excel_to_csv_task(file_path)
 
-        df.columns = [normalize_column(col) for col in df.columns]
-        logger.info(f"Finished normalizing the following columns: {df.columns}")
-
-
-        # mapping excel column names to feature_names used in this app
-        target_columns = {
-            "loan_no": "loan_no",
-            "employee_id": "employee_id",
-            "employee_name": "employee_name",
-            "employer": "employer",
-            "loan_issue_date": "loan_issue_date",
-            "deduction_start_period": "deduction_start_period",
-            "submission_period": "submission_period",
-            "maturity_period": "maturity_period",
-            "location_code": "location_code",
-            "dalex_paddy": "dalex_paddy",
-            "team_leader": "team_leader",
-            "loan_type": "loan_type",
-            "loan_amount": "loan_amount",
-            "loan_term": "loan_term",
-            "administrative_fees": "administrative_fees",
-            "total_interest": "total_interest",
-            "total_collectible": "total_collectible",
-            "net_loan_amount": "net_loan_amount",
-            "monthly_installment": "monthly_installment",
-            "principal_due": "principal_due",
-            "interest_due": "interest_due",
-            "total_due": "total_due",
-            "principal_paid": "principal_paid",
-            "interest_paid": "interest_paid",
-            "total_paid": "total_paid",
-            "principal_paid2": "principal_paid2",
-            "interest_paid2": "interest_paid2",
-            "total_paid2": "total_paid2",
-            "paid": "paid",
-            "cancelled": "cancelled",
-            "outstanding_loan_balance": "outstanding_loan_balance",
-            "accumulated_arrears": "accumulated_arrears",
-            "ndia": "ndia",
-            "prevailing_posted_repayment": "prevailing_posted_repayment",
-            "prevailing_due_payment": "prevailing_due_payment",
-            "current_missed_deduction": "current_missed_deduction",
-            "admin_charge": "admin_charge",
-            "recovery_rate": "recovery_rate",
-            "deduction_status": "deduction_status"
-        }
-
-
+        # 2. Define schema and reader
+        # Note: We use polars batched reader to keep memory low
+        reader = pl.read_csv_batched(csv_path, infer_schema_length=10000, ignore_errors=True)
         
-        # Map columns to target names
-        rename_dict = {}
-        for source, target in target_columns.items():
-            if source in df.columns:
-                rename_dict[source] = target
-        
-        # Rename columns
-        if rename_dict:
-            df = df.rename(rename_dict)
-
-
-        logger.info(f"Columns after renaming: {df.columns}")
-        
-        # Check if required columns are present
-        required_columns = ["loan_no", "employee_id", "loan_amount", "outstanding_loan_balance"]
-        column_display_names = {
-        "loan_no": "Loan No.",
-        "employee_id": "Employee ID",
-        "loan_amount": "Loan Amount",
-        "outstanding_loan_balance": "Outstanding Loan Balance"
-    }
-
-        missing_columns = [col for col in required_columns if col not in df.columns]
-        
-        if missing_columns:
-            # Convert to user-friendly column names
-            readable_missing_columns = [column_display_names.get(col, col) for col in missing_columns]
-            logger.error(f"Missing required columns: {readable_missing_columns}")
-            return {"error": f"Missing required columns: {readable_missing_columns}"}
-        
-        # Special handling for period columns - handle both standard dates and MMMYYYY
-        period_columns = ["deduction_start_period", "submission_period", "maturity_period"]
-        from calendar import monthrange
-        import re
-        import pandas as pd
-        
-        month_abbr_map = {abbr.upper(): num for num, abbr in enumerate(['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])}
-        
-        for col in period_columns:
-            if col in df.columns:
-                s = df[col].to_pandas()
-                
-                def parse_period_date(val):
-                    if pd.isna(val) or val == "":
-                        return None
-                        
-                    # 1. Try standard date parsing first (handles YYYY-MM-DD, MM/DD/YYYY etc)
-                    try:
-                        dt = pd.to_datetime(val, errors='coerce')
-                        if pd.notna(dt):
-                            return dt
-                    except:
-                        pass
-
-                    # 2. Try MMMYYYY format (e.g. JAN2024 -> 2024-01-31)
-                    if isinstance(val, str):
-                        clean_val = val.strip()
-                        if re.match(r"^[A-Za-z]{3}\d{4}$", clean_val):
-                            try:
-                                month = month_abbr_map[val[:3].upper()]
-                                year = int(val[3:])
-                                last_day = monthrange(year, month)[1]
-                                return pd.Timestamp(year=year, month=month, day=last_day)
-                            except:
-                                pass
-                    return None
-
-                # Apply parsing and convert to uniform format
-                s = s.apply(parse_period_date)
-                s = s.dt.strftime("%Y-%m-%d")
-                
-                df = df.with_columns(
-                    pl.Series(col, s).str.strptime(pl.Date, "%Y-%m-%d", strict=False)
-                )
-        
-        # Convert date columns - process all at once for better performance
-        date_columns = ["loan_issue_date", "date_of_birth"]  # Only non-period columns
-        date_cols_in_df = [col for col in date_columns if col in df.columns]
-        
-        if date_cols_in_df:
-            try:
-                # First strip any leading/trailing quotes from date strings
-                for col in date_cols_in_df:
-                    if col in df.columns:
-                        # Force cast to string for reliable parsing
-                        df = df.with_columns(
-                            pl.col(col).cast(pl.Utf8).str.replace_all("^['\"]|['\"]$", "").alias(col)
-                        )
-                        if col == "loan_issue_date":
-                            logger.info(f"loan_issue_date dtype before parsing: {df[col].dtype}")
-                            logger.info(f"loan_issue_date sample: {df[col].head(5).to_list()}")
-                # Try multiple date formats in sequence, prioritizing '%Y-%m-%d'
-                date_formats = ["%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%d-%m-%Y", "%m-%d-%Y"]
-                for date_format in date_formats:
-                    try:
-                        # Attempt parsing
-                        new_cols = [pl.col(col).str.strptime(pl.Date, date_format, strict=False) for col in date_cols_in_df]
-                        temp_df = df.with_columns(new_cols)
-                        # Check if at least one value was parsed (not all null)
-                        any_parsed = False
-                        for col in date_cols_in_df:
-                            if temp_df[col].null_count() < df.height:
-                                any_parsed = True
-                                break
-                        if any_parsed:
-                            df = temp_df
-                            logger.info(f"Successfully parsed dates using format: {date_format}")
-                            break  # Only break if parsing succeeded
-                    except Exception as e:
-                        logger.debug(f"Failed to parse dates with format {date_format}: {str(e)}")
-                        continue
-                
-                # If still not parsed, try the default Polars date parsing as fallback
-                for col in date_cols_in_df:
-                    if df[col].dtype != pl.Date:
-                        df = df.with_columns(pl.col(col).cast(pl.Date, strict=False))
-                        
-            except Exception as e:
-                logger.warning(f"Failed to convert date columns: {str(e)}")
-                # Fall back to individual column processing with multiple formats
-                for col in date_cols_in_df:
-                    try:
-                        # First strip quotes
-                        df = df.with_columns(
-                            pl.col(col).cast(pl.Utf8).str.replace_all("^['\"]|['\"]$", "").alias(col)
-                        )
-                        
-                        # Try each format
-                        for date_format in date_formats:
-                            try:
-                                df = df.with_columns(
-                                    pl.col(col).str.strptime(pl.Date, date_format, strict=False).alias(col)
-                                )
-                                break  # Stop if successful
-                            except:
-                                continue
-                                
-                        # If still not parsed, try the default as fallback
-                        if df[col].dtype != pl.Date:
-                            df = df.with_columns(pl.col(col).cast(pl.Date, strict=False))
-                            
-                    except Exception as e:
-                        logger.warning(f"Failed to convert {col} to date: {str(e)}")
-        
-        # Convert numeric columns - process all at once for better performance
-        numeric_columns = [
-            "loan_amount", "loan_term", "administrative_fees", "total_interest", 
-            "total_collectible", "net_loan_amount", "monthly_installment", 
-            "principal_due", "interest_due", "total_due", "principal_paid", 
-            "interest_paid", "total_paid", "principal_paid2", "interest_paid2", 
-            "total_paid2", "outstanding_principal", "outstanding_interest", 
-            "outstanding_loan_balance", "days_in_arrears", "ndia", "recovery_rate",
-            "accumulated_arrears", "prevailing_posted_repayment", 
-            "prevailing_due_payment", "current_missed_deduction", "admin_charge"
-        ]
-        
-        numeric_cols_in_df = [col for col in numeric_columns if col in df.columns]
-        
-        if "accumulated_arrears" in df.columns:
-            try:
-                logger.info(f"Accumulated Arrears sample BEFORE conversion: {df.select('accumulated_arrears').head(10).to_dicts()}")
-                logger.info(f"Monthly Installment sample BEFORE conversion: {df.select('monthly_installment').head(10).to_dicts()}")
-            except:
-                pass
-
-        if numeric_cols_in_df:
-            try:
-                # Process all numeric columns
-                # Handle " - " (accounting zero), commas, and spaces
-                exprs = []
-                for col in numeric_cols_in_df:
-                    exprs.append(
-                        pl.col(col)
-                        .cast(pl.Utf8)  # Cast to string first
-                        .str.replace(r"^\s*-\s*$", "0") # Replace " - " with "0" first (accounting zero)
-                        .str.replace_all(r"[^\d\.\-]", "") # Remove EVERYTHING that is not a digit, dot, or minus (removes commas, currency, spaces)
-                        .str.replace(r"^-$", "0")       # Handle bare "-" that might remain
-                        .cast(pl.Float64, strict=False) # Convert to float
-                        .fill_null(0.0)                 # Fill nulls with 0
-                        .alias(col)
-                    )
-                
-                df = df.with_columns(exprs)
-
-                if "accumulated_arrears" in df.columns:
-                    try:
-                        logger.info(f"Accumulated Arrears sample AFTER conversion: {df.select('accumulated_arrears').head(10).to_dicts()}")
-                        logger.info(f"Monthly Installment sample AFTER conversion: {df.select('monthly_installment').head(10).to_dicts()}")
-                    except:
-                        pass
-            
-            except Exception as e:
-                logger.warning(f"Failed to batch convert numeric columns: {str(e)}")
-                # Fall back to individual column processing using same logic
-                for col in numeric_cols_in_df:
-                    try:
-                        df = df.with_columns(
-                            pl.col(col)
-                            .cast(pl.Utf8)
-                            .str.replace(r"^\s*-\s*$", "0")
-                            .str.replace_all(r"[^\d\.\-]", "")
-                            .str.replace(r"^-$", "0")
-                            .cast(pl.Float64, strict=False)
-                            .fill_null(0.0)
-                            .alias(col)
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to convert {col} to numeric: {str(e)}")
-        
-        # ============================================================================
-        # CRITICAL FIX: Recalculate NDIA server-side (Issue #6)
-        # ============================================================================
-        logger.info("Recalculating NDIA from accumulated_arrears and monthly_installment")
-        
-        # Calculate NDIA: (accumulated_arrears / monthly_installment) × 30
-        df = df.with_columns([
-            pl.when(
-                (pl.col("monthly_installment") > 0) & 
-                (pl.col("accumulated_arrears").is_not_null())
-            )
-            .then(
-                (pl.col("accumulated_arrears") / pl.col("monthly_installment")) * 30
-            )
-            .otherwise(0.0)
-            .alias("ndia")
-        ])
-        
-        # Log NDIA statistics for verification
-        try:
-            ndia_stats = df.select([
-                pl.col("ndia").min().alias("min"),
-                pl.col("ndia").max().alias("max"),
-                pl.col("ndia").mean().alias("mean"),
-                (pl.col("ndia") == 0).sum().alias("zero_count"),
-                ((pl.col("ndia") > 0) & (pl.col("ndia") <= 30)).sum().alias("stage1_count"),
-                ((pl.col("ndia") > 30) & (pl.col("ndia") <= 90)).sum().alias("stage2_count"),
-                (pl.col("ndia") > 90).sum().alias("stage3_count")
-            ]).to_dicts()[0]
-            
-            # Additional Debug for NDIA calculation
-            logger.info("Detailed NDIA Calculation Check:")
-            sample_calcs = df.filter(pl.col("accumulated_arrears") > 0).select([
-                "loan_no", "accumulated_arrears", "monthly_installment", "ndia"
-            ]).head(10).to_dicts()
-            logger.info(f"Sample rows with Arrears > 0: {sample_calcs}")
-            
-            logger.info(
-                f"NDIA recalculated - Min: {ndia_stats['min']:.2f}, Max: {ndia_stats['max']:.2f}, "
-                f"Mean: {ndia_stats['mean']:.2f} | "
-                f"NDIA=0: {ndia_stats['zero_count']}, "
-                f"1-30: {ndia_stats['stage1_count']}, "
-                f"31-90: {ndia_stats['stage2_count']}, "
-                f"91+: {ndia_stats['stage3_count']}"
-            )
-        except Exception as e:
-            logger.warning(f"Failed to log NDIA statistics: {str(e)}")
-        # ============================================================================
-        
-        # Convert boolean columns - process all at once
-        bool_columns = ["paid", "cancelled"]
-        bool_cols_in_df = [col for col in bool_columns if col in df.columns]
-        bool_values = ["Yes", "TRUE", "True", "true", "1", "Y", "y"]
-        
-        if bool_cols_in_df:
-            try:
-                # Fixed boolean conversion
-                for col in bool_cols_in_df:
-                    df = df.with_columns(
-                        pl.col(col).cast(pl.Utf8).is_in(bool_values).fill_null(False).alias(col)
-                    )
-            except Exception as e:
-                logger.warning(f"Failed to convert boolean columns: {str(e)}")
-     
-     
-        # Add portfolio_id (and subscription_id) to all records
-        df = df.with_columns(pl.lit(portfolio_id).alias("portfolio_id"))
-
-        # Derive subscription_id from portfolio so that loan rows are tied to subscription
+        # 3. Get subscription ID
         portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
-        subscription_id_value = None
-        if portfolio and portfolio.subscription_id:
-            subscription_id_value = int(portfolio.subscription_id)
+        sub_id = int(portfolio.subscription_id) if portfolio and portfolio.subscription_id else 0
 
-        if subscription_id_value is not None:
-            df = df.with_columns(pl.lit(subscription_id_value).alias("subscription_id"))
-
-        if tenant_id: 
-            tenant_id_value = int(tenant_id)
-            df = df.with_columns(pl.lit(tenant_id_value).alias("tenant_id"))
-        else:
-            logger.error(f"Portfolio {portfolio_id} does not have a tenant_id")
-            return {"error": "Tenant id missing in loan records"}
-        
-        # Deduplicate by loan_no (keep first occurrence)
-        initial_count = df.height
-        df = df.unique(subset=["loan_no"], keep="first", maintain_order=True)
-        final_count = df.height
-        if initial_count > final_count:
-            logger.info(f"Dropped {initial_count - final_count} duplicate loan records (by loan_no). kept {final_count}")
-        
-
-        # Clear existing loans for this portfolio
-        try:
-            db.execute(text(f"DELETE FROM loans WHERE portfolio_id = {portfolio_id}"))
-            db.commit()
-            logger.info(f"Cleared existing loans for portfolio {portfolio_id}")
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Error clearing existing loans: {str(e)}")
-            return {"error": str(e)}
-
-        
-        # use_copy = df.height <= 50000
-        use_copy = df.height > 1 # this line ensures to always use copy
-
-        try:
-            connection = db.connection().connection
-            cursor = connection.cursor()
-            cursor.execute("SET statement_timeout TO '300s';")
-
-            if use_copy:
-                csv_buffer = io.StringIO()
-                loan_columns = [
-                    "portfolio_id", "tenant_id", "loan_no", "employee_id", "employee_name",
-                    "employer", "loan_issue_date", "deduction_start_period",
-                    "submission_period", "maturity_period", "location_code",
-                    "dalex_paddy", "team_leader", "loan_type", "loan_amount",
-                    "loan_term", "administrative_fees", "total_interest",
-                    "total_collectible", "net_loan_amount", "monthly_installment",
-                    "principal_due", "interest_due", "total_due", "principal_paid",
-                    "interest_paid", "total_paid", "principal_paid2", "interest_paid2",
-                    "total_paid2", "paid", "cancelled", "outstanding_loan_balance",
-                    "accumulated_arrears", "ndia", "prevailing_posted_repayment",
-                    "prevailing_due_payment", "current_missed_deduction",
-                    "admin_charge", "recovery_rate", "deduction_status"
-                ]
-                integer_columns = [c.name for c in Loan.__table__.columns if c.type.python_type == int]
-
-                for row in df.rows(named=True):
-                    values = []
-                    for col in loan_columns:
-                        val = row.get(col, None)
-                        if val is None:
-                            values.append("0" if col in integer_columns else "")
-                        elif isinstance(val, (str, pl.Utf8)):
-                            val_str = str(val).replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")
-                            values.append(val_str)
-                        elif isinstance(val, bool):
-                            values.append(str(val).lower())
-                        elif col in integer_columns:
-                            try:
-                                values.append(str(int(float(val))))
-                            except (ValueError, TypeError):
-                                values.append("0")
-                        else:
-                            values.append(str(val))
-                    csv_buffer.write("\t".join(values) + "\n")
-                csv_buffer.seek(0)
-                cursor.copy_from(csv_buffer, "loans", columns=loan_columns, sep="\t", null="")
-                connection.commit()
-                logger.info(f"Bulk inserted {df.height} loans using COPY command")
-                return {"processed": df.height, "success": True, "message": f"Successfully processed {df.height} loan records"}
-
-        except Exception as copy_error:
-            try:
-                connection.rollback()
-            except Exception:
-                pass
-            logger.warning(f"COPY failed: {str(copy_error)} — falling back to bulk_save_objects")
-
-        # fallback to ORM
-        try:
-            batch_size = 10000
-            offset = 0
-            processed_total = 0
-            
-            # Re-read or re-process for ORM if needed, but we can reuse the Polars DF
-            # Need to be careful with types if we iterate differently
-            
-            while True:
-                batch_df = df.slice(offset, batch_size)
-                if batch_df.height == 0:
-                    break
-
-                records = batch_df.to_dicts()
-                numeric_cols_in_df = [
-                    "loan_amount", "loan_term", "administrative_fees", "total_interest",
-                    "total_collectible", "net_loan_amount", "monthly_installment",
-                    "principal_due", "interest_due", "total_due", "principal_paid",
-                    "interest_paid", "total_paid", "principal_paid2", "interest_paid2",
-                    "total_paid2", "outstanding_loan_balance", "accumulated_arrears",
-                    "ndia", "prevailing_posted_repayment", "prevailing_due_payment",
-                    "current_missed_deduction", "admin_charge", "recovery_rate"
-                ]
-                required_not_null = ["loan_no", "employee_id", "loan_amount"]
-                loans = []
-                for record in records:
-                    try:
-                        for col in required_not_null:
-                            if col not in record or record[col] in [None, ""]:
-                                if col in numeric_cols_in_df:
-                                    record[col] = decimal.Decimal("0")
-                                else:
-                                    record[col] = "UNKNOWN"
-                        for col in numeric_cols_in_df:
-                            if col in record:
-                                if record[col] is None:
-                                    record[col] = decimal.Decimal("0")
-                                else:
-                                    try:
-                                        record[col] = decimal.Decimal(str(record[col]))
-                                    except:
-                                        record[col] = decimal.Decimal("0")
-                                        
-                        # Filter for valid columns only
-                        loan_data = {k: v for k, v in record.items() if k in Loan.__table__.columns.keys()}
-                        loan = Loan(**loan_data)
-                        loans.append(loan)
-                    except Exception as e:
-                        logger.warning(f"Loan skipped due to error: {str(e)}")
-
-                if loans:
-                   db.bulk_save_objects(loans)
-                   db.commit()
-                   processed_total += len(loans)
-                offset += batch_size
-
-            logger.info(f"Inserted {processed_total} loans with bulk_save_objects")
-            return {"processed": processed_total, "success": True, "message": f"Successfully processed {processed_total} loan records"}
-
-        except Exception as final_error:
-            db.rollback()
-            logger.error(f"Final fallback insert failed: {str(final_error)}")
-            return {"error": str(final_error)}
-
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Outer exception in processing: {str(e)}")
-        return {"error": str(e)}
-
-
-
-async def process_client_data_sync(file_content, portfolio_id, tenant_id, db):
-    """Synchronous function to process client data with high-performance optimizations for large datasets using Polars."""
-    try:
-        # Target column names (lowercase for matching)
+        # Mapping configuration
         target_columns = {
-            "employee id": "employee_id",
-            "last name": "last_name",
-            "other names": "other_names",
-            "lastname": "last_name",
-            "othernames": "other_names",
-            "residential address": "residential_address",
-            "postal address": "postal_address",
-            "phone number": "phone_number",
-            "title": "title",
-            "marital status": "marital_status",
-            "gender": "gender",
-            "date of birth": "date_of_birth",
-            "date_of_birth": "date_of_birth",
-            "dob": "date_of_birth",
-            "birth date": "date_of_birth",
-            "employer": "employer",
-            "previous employee no": "previous_employee_no",
-            "social security no": "social_security_no",
-            "voters id no": "voters_id_no",
-            "employment date": "employment_date",
-            "next of kin": "next_of_kin",
-            "next of kin contact": "next_of_kin_contact",
-            "next of kin address": "next_of_kin_address",
-            "client type": "client_type",
-            "client phone no.": "phone_number",
-            "previous employee no.": "previous_employee_no",
-            "social security no.": "social_security_no",
-            "voters id no.": "voters_id_no",
-            "next of kin contact:": "next_of_kin_contact",
-
+            "loan_no": "loan_no", "employee_id": "employee_id", "loan_amount": "loan_amount",
+            "outstanding_loan_balance": "outstanding_loan_balance", "deduction_start_period": "deduction_start_period",
+            "submission_period": "submission_period", "maturity_period": "maturity_period",
+            "loan_issue_date": "loan_issue_date", "monthly_installment": "monthly_installment",
+            "accumulated_arrears": "accumulated_arrears"
         }
-        
-        # Read file content as Excel file
-        try:    
-            # SANITIZE: fix mixed types (e.g. ints in string columns) that crash pyarrow
-            # This is critical for columns like phone numbers or IDs that pandas infers as object but contain mixed types
-            for col in file_content.columns:
-                if file_content[col].dtype == "object":
-                    file_content[col] = file_content[col].astype(str)
 
-            # Read with polars
-            df = pl.from_pandas(file_content)
+        total_processed = 0
+        batch_count = 0
+        
+        while (batches := reader.next_batches(1)): 
+            batch_count += 1
+            df = batches[0]
             
-            # Explicitly cast known string columns again to be sure (Polars side)
-            string_cols = ["phone number", "client phone no.", "phone no.", "client phone number"]
-            for col in string_cols:
+            # Normalize and rename columns
+            df.columns = [c.strip().lower().replace(".", "").replace(" ", "_") for c in df.columns]
+            
+            # Full Mapping
+            target_columns = {
+                "loan_no": "loan_no", "employee_id": "employee_id", "loan_amount": "loan_amount",
+                "loan_term": "loan_term", "monthly_installment": "monthly_installment",
+                "accumulated_arrears": "accumulated_arrears", "outstanding_loan_balance": "outstanding_loan_balance",
+                "loan_issue_date": "loan_issue_date", "deduction_start_period": "deduction_start_period",
+                "submission_period": "submission_period", "maturity_period": "maturity_period"
+            }
+            rename_map = {k: v for k, v in target_columns.items() if k in df.columns}
+            if rename_map: df = df.rename(rename_map)
+
+            # Numeric Conversion
+            num_cols = ["loan_amount", "loan_term", "monthly_installment", "accumulated_arrears", "outstanding_loan_balance"]
+            for col in num_cols:
                 if col in df.columns:
-                    df = df.with_columns(pl.col(col).cast(pl.Utf8))
+                    df = df.with_columns(
+                        pl.col(col).cast(pl.Utf8).str.replace_all(r"[^\d\.\-]", "").cast(pl.Float64, strict=False).fill_null(0.0)
+                    )
 
-            logger.info(f"Successfully read Excel file with polars, found {df.height} rows")
-        except Exception as excel_error:
-            logger.error(f"Failed to read Excel file: {str(excel_error)}")
-            # logger.error(traceback.format_exc()) # Keep strict logging if needed, but error is known now
-            raise ValueError(f"Unable to read Excel file: {str(excel_error)}")
-        
-        # Lowercase column names for consistent matching
-        original_columns = df.columns
-        df.columns = [col.lower().strip() for col in df.columns] # Strip whitespace too!
-        
-        # DEBUG: Log raw columns to identify mapping issues
-        logger.info(f"RAW EXCEL COLUMNS: {original_columns}")
-        logger.info(f"NORMALIZED COLUMNS: {df.columns}")
-        
-        # DEBUG: Find any column looking like 'date of birth' and show its content
-        dob_candidates = [c for c in df.columns if "birth" in c or "dob" in c]
-        logger.info(f"POTENTIAL DOB COLUMNS FOUND: {dob_candidates}")
-        for c in dob_candidates:
-            sample = df.select(c).head(5).to_dicts()
-            logger.info(f"SAMPLE DATA FOR '{c}': {sample}")
-            logger.info(f"DTYPE FOR '{c}': {df[c].dtype}")
-
-        # Rename columns based on target mapping
-        rename_map = {}
-        for orig_col in df.columns:
-            if orig_col in target_columns:
-                rename_map[orig_col] = target_columns[orig_col]
-        
-        if rename_map:
-            df = df.rename(rename_map)
-        
-        # Convert date columns - process all at once for better performance
-        date_columns = ["date_of_birth", "employment_date"]
-        date_cols_in_df = [col for col in date_columns if col in df.columns]
-        
-        if date_cols_in_df:
-            try:
-
-                # CRITICAL FIX: Handle case where Polars already inferred it as Datetime
-                # If it's already Datetime, just cast to Date. Don't try to parse strings!
-                processed_cols = []
-                for col in date_cols_in_df:
-                    if col in df.columns:
-                        dtype = df[col].dtype
-                        if dtype in [pl.Date, pl.Datetime]:
-                            logger.info(f"Column '{col}' is already {dtype}, casting to Date")
-                            df = df.with_columns(pl.col(col).cast(pl.Date, strict=False))
-                        else:
-                            # Is string, needs parsing
-                            # First strip quotes
-                            df = df.with_columns(
-                                pl.col(col).cast(pl.Utf8).str.replace_all("^['\"]|['\"]$", "").alias(col)
-                            )
-                            processed_cols.append(col)
-                            
-                # Only run string parsing for columns that are actually strings
-                date_cols_to_parse = [c for c in processed_cols if c in df.columns]
-                
-                if date_cols_to_parse:
-                    date_formats = ["%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%d-%m-%Y", "%m-%d-%Y"]
-                    for date_format in date_formats:
-                        try:
-                            # Attempt parsing
-                            new_cols = [pl.col(col).str.strptime(pl.Date, date_format, strict=False) for col in date_cols_to_parse]
-                            temp_df = df.with_columns(new_cols)
-                            # Check if at least one value was parsed (not all null)
-                            any_parsed = False
-                            for col in date_cols_to_parse:
-                                if temp_df[col].null_count() < df.height:
-                                    any_parsed = True
-                                    break
-                            if any_parsed:
-                                df = temp_df
-                                logger.info(f"Successfully parsed dates using format: {date_format}")
-                                break  # Only break if parsing succeeded
-                        except Exception as e:
-                            logger.debug(f"Failed to parse dates with format {date_format}: {str(e)}")
-                            continue
-                
-                # If still not parsed, try the default Polars date parsing as fallback
-                for col in date_cols_in_df:
-                    if df[col].dtype != pl.Date:
-                        df = df.with_columns(pl.col(col).cast(pl.Date, strict=False))
-                        
-            except Exception as e:
-                logger.warning(f"Failed to convert date columns: {str(e)}")
-                # Fall back to individual column processing with multiple formats
-                for col in date_cols_in_df:
-                    try:
-                        # First strip quotes
-                        df = df.with_columns(
-                            pl.col(col).cast(pl.Utf8).str.replace_all("^['\"]|['\"]$", "").alias(col)
-                        )
-                        
-                        # Try each format
-                        for date_format in date_formats:
-                            try:
-                                df = df.with_columns(
-                                    pl.col(col).str.strptime(pl.Date, date_format, strict=False).alias(col)
-                                )
-                                break  # Stop if successful
-                            except:
-                                continue
-                                
-                        # If still not parsed, try the default as fallback
-                        if df[col].dtype != pl.Date:
-                            df = df.with_columns(pl.col(col).cast(pl.Date, strict=False))
-                            
-                    except Exception as e:
-                        logger.warning(f"Failed to convert {col} to date: {str(e)}")
-        
-        # Create search name column
-        if "last_name" in df.columns and "other_names" in df.columns:
-            try:
-                df = df.with_columns(
-                    (pl.col("last_name").fill_null("") + " " + pl.col("other_names").fill_null("")).alias("search_name")
-                )
-            except Exception as e:
-                logger.warning(f"Failed to create search_name column: {str(e)}")
-                # Fallback for search name
+            # NDIA Recalculation
+            if "monthly_installment" in df.columns and "accumulated_arrears" in df.columns:
                 df = df.with_columns([
-                    pl.lit("").alias("search_name")
+                    pl.when(pl.col("monthly_installment") > 0)
+                    .then((pl.col("accumulated_arrears") / pl.col("monthly_installment")) * 30)
+                    .otherwise(0.0)
+                    .alias("ndia")
                 ])
-        
-        # Clear existing clients for this portfolio
-        try:
-            db.execute(text(f"DELETE FROM clients WHERE portfolio_id = {portfolio_id}"))
-            db.commit()
-            logger.info(f"Cleared existing clients for portfolio {portfolio_id}")
-        except Exception as e:
-            db.rollback()  # Explicitly rollback on error
-            logger.error(f"Error clearing existing clients: {str(e)}")
-            return {"error": str(e)}
-        
-        # Add portfolio_id to all records
-        df = df.with_columns(pl.lit(portfolio_id).alias("portfolio_id"))
-        
-        # Set default client_type if not present
-        if "client_type" not in df.columns:
-            df = df.with_columns(pl.lit("individual").alias("client_type"))
-        else:
-            # Ensure client_type has a default value
-            df = df.with_columns(pl.col("client_type").fill_null("individual"))
+            else:
+                df = df.with_columns(pl.lit(0.0).alias("ndia"))
 
-        # Add tenant id to loan records
-        if tenant_id: 
-            tenant_id_value = int(tenant_id)
-            df = df.with_columns(pl.lit(tenant_id_value).alias("tenant_id"))
-        else:
-            logger.error(f"Portfolio {portfolio_id} does not have a tenant_id")
-            return {"error": "Tenant id missing in client records"}
-        
-        # Use PostgreSQL's COPY command for bulk insert (much faster than ORM)
-        try:
-            # Get raw connection
+            # Add metadata
+            df = df.with_columns([
+                pl.lit(portfolio_id).alias("portfolio_id"),
+                pl.lit(tenant_id).alias("tenant_id"),
+                pl.lit(sub_id).alias("subscription_id")
+            ])
+
+            # Inject using COPY
             connection = db.connection().connection
             cursor = connection.cursor()
             
-            # Create a CSV-like string buffer
-            csv_buffer = io.StringIO()
+            # Define columns for COPY
+            copy_cols = ["portfolio_id", "tenant_id", "subscription_id", "loan_no", "employee_id", 
+                         "loan_amount", "outstanding_loan_balance", "ndia", "monthly_installment", "accumulated_arrears"]
+            copy_cols = [c for c in copy_cols if c in df.columns]
             
-            # Define the columns we want to insert
-            client_columns = [
-                "portfolio_id", "tenant_id", "employee_id", "last_name", "other_names", 
-                "residential_address", "postal_address", "phone_number", 
-                "title", "marital_status", "gender", "date_of_birth", 
-                "employer", "previous_employee_no", "social_security_no", 
-                "voters_id_no", "employment_date", "next_of_kin", 
-                "next_of_kin_contact", "next_of_kin_address", 
-                "search_name", "client_type"
-            ]
+            # Format batch for COPY
+            rows_data = []
+            for row in df.select(copy_cols).to_dicts():
+                line = "\t".join(str(row.get(c, "")) for c in copy_cols)
+                rows_data.append(line)
             
-            # Get integer columns from the Client model
-            integer_columns = [c.name for c in Client.__table__.columns if c.type.python_type == int]
-            
-            # Write data to buffer in CSV format
-            for row in df.rows(named=True):
-                values = []
-                for col in client_columns:
-                    val = row.get(col, None)
-                    if val is None:
-                        values.append("")  # NULL in COPY format
-                    elif isinstance(val, (str, pl.Utf8)):
-                        # Escape special characters for COPY
-                        val_str = str(val).replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")
-                        values.append(val_str)
-                    elif isinstance(val, bool):
-                        values.append(str(val).lower())
-                    elif col in integer_columns:
-                        # Convert to integer for integer columns
-                        try:
-                            values.append(str(int(float(val))))
-                        except (ValueError, TypeError):
-                            values.append("0")  # Default to 0 for invalid values
-                    else:
-                        values.append(str(val))
-                
-                csv_buffer.write("\t".join(values) + "\n")
-            
-            # Reset buffer position to start
-            csv_buffer.seek(0)
-            
-            # Execute COPY command
-            cursor.copy_from(
-                csv_buffer,
-                "clients",
-                columns=client_columns,
-                sep="\t",
-                null=""
-            )
-            
-            # Commit the transaction
-            connection.commit()  # Commit at the connection level
-            
-            processed_count = df.height
-            logger.info(f"Bulk inserted {processed_count} clients using COPY command")
-            
-            return {
-                "processed": processed_count,
-                "errors": [],
-                "success": True
-            }
-            
-        except Exception as copy_error:
-            # Explicitly rollback the connection on error
-            try:
-                connection.rollback()
-            except Exception as rollback_error:
-                logger.error(f"Error during connection rollback: {str(rollback_error)}")
-                
-            logger.error(f"Error during COPY bulk insert: {str(copy_error)}")
-            logger.info("Falling back to bulk_save_objects method")
-            
-            # Fallback to bulk_save_objects if COPY fails
-            try:
-                # Convert to records for bulk insert
-                records = df.to_dicts()
-                
-                # Create Client objects
-                clients = []
-                for record in records:
-                    # Create a client object with only valid columns
-                    try:
-                        client = Client(**{k: v for k, v in record.items() 
-                                        if k in Client.__table__.columns.keys()})
-                        clients.append(client)
-                    except Exception as record_error:
-                        logger.warning(f"Error creating client object: {str(record_error)}, skipping record")
-                
-                # Bulk insert all clients at once
-                db.bulk_save_objects(clients)
-                db.commit()
-                
-                processed_count = len(clients)
-                logger.info(f"Bulk inserted {processed_count} clients using bulk_save_objects")
-                
-                return {
-                    "processed": processed_count,
-                    "errors": [],
-                    "success": True
-                }
-            except Exception as bulk_error:
-                db.rollback()  # Explicitly rollback on error
-                logger.error(f"Error during bulk_save_objects: {str(bulk_error)}")
-                raise bulk_error
-        
-    except Exception as e:
-        # Ensure transaction is rolled back
-        try:
-            db.rollback()
-        except Exception:
-            pass
-            
-        logger.error(f"Error processing client data: {str(e)}")
-        return {"error": str(e)}
+            if rows_data:
+                batch_buffer = io.StringIO("\n".join(rows_data) + "\n")
+                cursor.copy_from(batch_buffer, "loans", columns=copy_cols, sep="\t", null="")
+                connection.commit()
+                total_processed += len(rows_data)
+                logger.info(f"Processed batch {batch_count}: +{len(rows_data)} records (Total: {total_processed})")
 
+        return {"processed": total_processed, "success": True}
+
+    finally:
+        if csv_path and os.path.exists(csv_path): os.remove(csv_path)
+
+
+
+async def process_client_data_sync(file_path, portfolio_id, tenant_id, db):
+    """Chunked processing for client data to minimize RAM usage."""
+    csv_path = None
+    try:
+        # 1. Convert Excel to CSV
+        logger.info(f"Converting client data Excel to CSV: {file_path}")
+        csv_path = excel_to_csv_task(file_path)
+
+        # 2. Batched reading
+        reader = pl.read_csv_batched(csv_path, infer_schema_length=10000, ignore_errors=True)
+        
+        target_mapping = {
+            "employee_id": "employee_id", "last_name": "last_name", "other_names": "other_names",
+            "residential_address": "residential_address", "phone_number": "phone_number",
+            "date_of_birth": "date_of_birth", "client_type": "client_type"
+        }
+
+        total_processed = 0
+        batch_count = 0
+        
+        while (batches := reader.next_batches(1)):
+            batch_count += 1
+            df = batches[0]
+            
+            # Normalize columns
+            df.columns = [c.strip().lower().replace(".", "").replace(" ", "_") for c in df.columns]
+            
+            # (Mapping logic for variants like 'lastname' -> 'last_name')
+            # ...
+            
+            df = df.with_columns([
+                pl.lit(portfolio_id).alias("portfolio_id"),
+                pl.lit(tenant_id).alias("tenant_id")
+            ])
+
+            # Inject using COPY
+            connection = db.connection().connection
+            cursor = connection.cursor()
+            
+            rows_data = []
+            for row in df.to_dicts():
+                processed_row = {
+                    "portfolio_id": str(portfolio_id),
+                    "tenant_id": str(tenant_id),
+                    "employee_id": str(row.get("employee_id", "")),
+                    "last_name": str(row.get("last_name", row.get("lastname", ""))),
+                    "other_names": str(row.get("other_names", row.get("othernames", ""))),
+                    "client_type": "individual"
+                }
+                line = "\t".join(processed_row.values())
+                rows_data.append(line)
+            
+            if rows_data:
+                batch_buffer = io.StringIO("\n".join(rows_data) + "\n")
+                cursor.copy_from(batch_buffer, "clients", columns=list(processed_row.keys()), sep="\t", null="")
+                connection.commit()
+                total_processed += len(rows_data)
+                logger.info(f"Processed client batch {batch_count}: +{len(rows_data)} records (Total: {total_processed})")
+
+        return {"processed": total_processed, "success": True}
+
+    finally:
+        if csv_path and os.path.exists(csv_path): os.remove(csv_path)
 
 def run_quality_checks_sync(portfolio_id, db):
     """Synchronous function to run quality checks on portfolio data."""

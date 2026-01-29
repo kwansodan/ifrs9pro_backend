@@ -2,16 +2,28 @@ import io
 import pandas as pd
 import polars as pl
 import numpy as np
+import os
+import tempfile
+from xlsx2csv import Xlsx2csv
 from datetime import datetime  # Import datetime for type checking
 import concurrent.futures
 from sqlalchemy import text
 from app.models import (
-    Loan,
-    Guarantee,
-    Client,
     Security,
-    Portfolio
+    Portfolio,
+    Client
 )
+
+def excel_to_csv_helper(excel_path: str) -> str:
+    """Helper to convert Excel file to CSV for memory-efficient streaming."""
+    fd, csv_path = tempfile.mkstemp(suffix=".csv", prefix="proc_conv_")
+    os.close(fd)
+    try:
+        Xlsx2csv(excel_path, skip_empty_lines=True).convert(csv_path)
+        return csv_path
+    except Exception as e:
+        if os.path.exists(csv_path): os.remove(csv_path)
+        raise e
 
 async def process_loan_details(loan_details, portfolio_id, db):
     """Function to process loan details with high-performance optimizations for large datasets using Polars."""
@@ -482,348 +494,101 @@ async def process_client_data(client_data, portfolio_id, db):
         }
 
 
-async def process_loan_guarantees(loan_guarantee_data, portfolio_id, db):
-    """Process loan guarantees file using Polars for high-performance data processing."""
-    try:
-        if loan_guarantee_data.empty:
-            return {"status": "success", "rows_processed": 0, "filename": "in-memory-dataframe"}
-        
-        # Target column names (lowercase for matching)
-        target_columns = {
-            "loan no.": "loan_no",
-            "guarantor name": "guarantor_name",
-            "guarantor phone": "guarantor_phone",
-            "guarantor address": "guarantor_address",
-            "guarantor id": "guarantor_id",
-            "relationship": "relationship",
-            "guarantee amount": "guarantee_amount",
-        }
-        
-        # Get existing guarantees from the database using raw SQL for performance
-        existing_guarantees_query = text("""
-            SELECT loan_no, guarantor_name, id FROM guarantees 
-            WHERE loan_no IS NOT NULL AND guarantor_name IS NOT NULL
-        """)
-        result = db.execute(existing_guarantees_query)
-        existing_guarantees = {(loan_no, guarantor_name): guarantor_id for loan_no, guarantor_name, guarantor_id in result}
-        
-        # Read Excel file with Polars
-        df = pl.from_pandas(loan_guarantee_data)
-        
-        # Create a mapping of actual column names to our target column names
-        case_insensitive_mapping = {}
-        for col in df.columns:
-            col_lower = str(col).lower().strip() if col is not None else ""
-            if col_lower in target_columns:
-                case_insensitive_mapping[col] = target_columns[col_lower]
-        
-        # Rename columns using our case-insensitive mapping
-        for old_col, new_col in case_insensitive_mapping.items():
-            if old_col in df.columns:
-                df = df.rename({old_col: new_col})
-        
-        # Clean numeric columns
-        if "guarantee_amount" in df.columns:
-            df = df.with_columns(
-                pl.col("guarantee_amount")
-                .cast(pl.Utf8)
-                .str.replace(r"^\s*-\s*$|^\s*$|None|NaN|nan|-", "")
-                .cast(pl.Float64, strict=False)
-                .fill_null(0.0)
-            )
-        
-        # Filter out rows with no loan_no or guarantor_name
-        if "loan_no" in df.columns and "guarantor_name" in df.columns:
-            df = df.filter(
-                pl.col("loan_no").is_not_null() & 
-                pl.col("guarantor_name").is_not_null()
-            )
-            
-            # Convert to pandas for easier processing with existing_guarantees
-            pdf = df.to_pandas()
-            
-            # Create a composite key for matching
-            pdf["composite_key"] = pdf.apply(lambda row: (row["loan_no"], row["guarantor_name"]), axis=1)
-            
-            # Split into updates and inserts
-            mask_update = pdf["composite_key"].isin(existing_guarantees.keys())
-            df_update = pdf[mask_update].copy()
-            df_insert = pdf[~mask_update].copy()
-            
-            # Add id column to updates
-            if not df_update.empty:
-                df_update["id"] = df_update["composite_key"].map(existing_guarantees)
-            
-            # ULTRA-OPTIMIZED: Use PostgreSQL COPY command for bulk inserts
-            # This is much faster than individual INSERT statements
-            
-            # Create a CSV-like string buffer
-            csv_buffer = io.StringIO()
-            
-            # Write data to the buffer in CSV format
-            for _, row in df_insert.iterrows():
-                values = []
-                for col in ["loan_no", "guarantor_name", "guarantor_phone", "guarantor_address", 
-                           "guarantor_id", "relationship", "guarantee_amount"]:
-                    if col in row:
-                        if pd.isna(row[col]):
-                            values.append("")  # NULL in COPY format
-                        elif col == "guarantee_amount" and pd.notna(row[col]):
-                            values.append(str(row[col]))
-                        else:
-                            val = str(row[col])
-                            # Escape special characters for COPY
-                            val = val.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")
-                            values.append(val)
-                    else:
-                        values.append("")  # NULL in COPY format
-                csv_buffer.write("\t".join(values) + "\n")
-            
-            # Reset buffer position to start
-            csv_buffer.seek(0)
-            
-            # Get raw connection from SQLAlchemy session
-            connection = db.connection().connection
-            
-            # Create a cursor
-            cursor = connection.cursor()
-            
-            # Execute COPY command
-            cursor.copy_from(
-                csv_buffer,
-                'guarantees',
-                columns=["loan_no", "guarantor_name", "guarantor_phone", "guarantor_address", 
-                        "guarantor_id", "relationship", "guarantee_amount"]
-            )
-            
-            # Prepare SQL templates
-            update_template = """
-                UPDATE guarantees SET
-                    guarantor_phone = data.guarantor_phone,
-                    guarantor_address = data.guarantor_address,
-                    guarantor_id = data.guarantor_id,
-                    relationship = data.relationship,
-                    guarantee_amount = data.guarantee_amount
-                FROM (VALUES
-            """
-            
-            if not df_update.empty:
-                # Prepare values for SQL UPDATE
-                values_list = []
-                for _, row in df_update.iterrows():
-                    values = []
-                    for col in ["id", "guarantor_phone", "guarantor_address",
-                               "guarantor_id", "relationship", "guarantee_amount"]:
-                        if col in row:
-                            if col == "guarantee_amount" and pd.notna(row[col]):
-                                values.append(str(row[col]))
-                            elif pd.isna(row[col]):
-                                values.append("NULL")
-                            else:
-                                val = str(row[col])
-                                val = val.replace("'", "''")  # SQL standard for escaping single quotes
-                                values.append(f"'{val}'")
-                        else:
-                            values.append("NULL")
-                    values_list.append(f"({', '.join(values)})")
-                
-                # Execute in batches of 5000 to avoid transaction issues
-                for i in range(0, len(values_list), 5000):
-                    batch_values = values_list[i:i+5000]
-                    update_sql = update_template + ",\n".join(batch_values) + ") AS data(id, guarantor_phone, guarantor_address, guarantor_id, relationship, guarantee_amount) WHERE guarantees.id = data.id"
-                    db.execute(text(update_sql))
-                    db.flush()
-        
-        # Commit all changes
-        db.commit()
-        
-        return {
-            "status": "success",
-            "rows_processed": len(df) if isinstance(df, pl.DataFrame) else 0,
-            "filename": getattr(loan_guarantee_data, "filename", "in-memory-file"),
-        }
-    except Exception as e:
-        db.rollback()
-        return {
-            "status": "error",
-            "message": str(e),
-            "filename": getattr(loan_guarantee_data, "filename", "in-memory-file"),
-        }
+async def process_loan_guarantees(file_path, portfolio_id, db):
+    """Chunked processing for loan guarantees."""
+    if not isinstance(file_path, str) or not os.path.exists(file_path):
+        return {"processed": 0, "success": True}
 
-async def process_collateral_data(collateral_data, portfolio_id, db):
-    """Process loan collateral (securities) data using optimized bulk operations with Polars."""
+    csv_path = None
     try:
-        if collateral_data.empty:
-            return {"status": "success", "rows_processed": 0, "filename": "in-memory-dataframe"}
+        csv_path = excel_to_csv_helper(file_path)
+        df = pl.read_csv(csv_path, infer_schema_length=5000, ignore_errors=True)
         
-        # Target column names (lowercase for matching)
+        if df.height == 0: return {"processed": 0, "success": True}
+
+        # Normalize columns
+        df.columns = [c.strip().lower().replace(".", "").replace(" ", "_") for c in df.columns]
+        
+        # Mapping
         target_columns = {
-            "loan no.": "loan_no",
-            "security type": "security_type",
-            "security description": "collateral_description",
-            "security value": "collateral_value",
-            # Fields not in model but in input, map them to something or ignore
-            # "valuation date": "valuation_date", 
-            # "location": "location",
-            # "registration details": "registration_details",
-            # "ownership": "ownership",
-            # Map input "security_type" to "cash_or_non_cash" purely for tracking existance if needed, 
-            # but model has cash_or_non_cash. Let's map it but maybe we need logic?
-            # For now, let's just map description and value which are main fields.
+            "loan_no": "loan_no", "guarantor_name": "guarantor_name", "guarantee_amount": "guarantee_amount"
         }
+        rename_map = {k: v for k, v in target_columns.items() if k in df.columns}
+        if rename_map: df = df.rename(rename_map)
+
+        # Insert using COPY
+        connection = db.connection().connection
+        cursor = connection.cursor()
         
-        # Get existing securities from the database using raw SQL for performance
-        # Use collateral_description
-        existing_securities_query = text("""
-            SELECT s.id, c.employee_id, s.collateral_description 
-            FROM securities s
-            JOIN clients c ON s.client_id = c.id
-            WHERE c.portfolio_id = :portfolio_id
-        """)
-        result = db.execute(existing_securities_query, {"portfolio_id": portfolio_id})
-        # Key: (employee_id, collateral_description) - removed security_type from unique check as it's not simply mapped
-        existing_securities = {(emp_id, col_desc): sec_id for sec_id, emp_id, col_desc in result}
+        copy_cols = ["loan_no", "guarantor_name", "guarantee_amount"]
+        copy_cols = [c for c in copy_cols if c in df.columns]
+        
+        rows_data = []
+        for row in df.select(copy_cols).to_dicts():
+            line = "\t".join(str(row.get(c, "")) for c in copy_cols)
+            rows_data.append(line)
+        
+        if rows_data:
+            batch_buffer = io.StringIO("\n".join(rows_data) + "\n")
+            cursor.copy_from(batch_buffer, "guarantees", columns=copy_cols, sep="\t", null="")
+            connection.commit()
+
+        return {"processed": len(rows_data), "success": True}
+
+    finally:
+        if csv_path and os.path.exists(csv_path): os.remove(csv_path)
+
+async def process_collateral_data(file_path, portfolio_id, db):
+    """Chunked processing for loan collateral (securities)."""
+    if not isinstance(file_path, str) or not os.path.exists(file_path):
+        return {"processed": 0, "success": True}
+
+    csv_path = None
+    try:
+        csv_path = excel_to_csv_helper(file_path)
+        # Using a small batch or just one-shot if collateral is small, but reader is safer
+        df = pl.read_csv(csv_path, infer_schema_length=5000, ignore_errors=True)
+        
+        if df.height == 0: return {"processed": 0, "success": True}
+
+        # Normalize columns
+        df.columns = [c.strip().lower().replace(".", "").replace(" ", "_") for c in df.columns]
         
         # Get client mapping: employee_id -> client_id
         clients_query = text("SELECT employee_id, id FROM clients WHERE portfolio_id = :portfolio_id")
         clients_result = db.execute(clients_query, {"portfolio_id": portfolio_id})
-        client_map = {emp_id: c_id for emp_id, c_id in clients_result if emp_id}
+        client_map = {str(emp_id): c_id for emp_id, c_id in clients_result if emp_id}
 
-        # Read Excel file with Polars
-        df = pl.from_pandas(collateral_data)
-        
-        # Create a mapping of actual column names to our target column names
-        case_insensitive_mapping = {}
-        for col in df.columns:
-            col_lower = str(col).lower().strip() if col is not None else ""
-            if col_lower in target_columns:
-                case_insensitive_mapping[col] = target_columns[col_lower]
-        
-        # Rename columns using our case-insensitive mapping
-        for old_col, new_col in case_insensitive_mapping.items():
-            if old_col in df.columns:
-                df = df.rename({old_col: new_col})
-        
-        # Clean numeric columns
-        if "collateral_value" in df.columns:
-            df = df.with_columns(
-                pl.col("collateral_value")
-                .cast(pl.Utf8)
-                .str.replace(r"^\s*-\s*$|^\s*$|None|NaN|nan|-", "")
-                .cast(pl.Float64, strict=False)
-                .fill_null(0.0)
-            )
-        
-        # Filter out rows with no loan_no or collateral_description
-        if all(col in df.columns for col in ["loan_no", "collateral_description"]):
-            df = df.filter(
-                pl.col("loan_no").is_not_null() & 
-                pl.col("collateral_description").is_not_null()
-            )
-            
-            # Convert to pandas for easier processing
-            pdf = df.to_pandas()
-            
-            pdf["loan_no"] = pdf["loan_no"].astype(str)
-            pdf["client_id"] = pdf["loan_no"].map(client_map)
-            
-            # Filter out records where client mapping failed
-            pdf = pdf[pdf["client_id"].notna()]
-            
-            # Create a composite key for matching - simplified to (loan_no, description)
-            pdf["composite_key"] = pdf.apply(
-                lambda row: (row["loan_no"], row["collateral_description"]), 
-                axis=1
-            )
-            
-            # Split into updates and inserts
-            mask_update = pdf["composite_key"].isin(existing_securities.keys())
-            df_update = pdf[mask_update].copy()
-            df_insert = pdf[~mask_update].copy()
-            
-            # Add id column to updates
-            if not df_update.empty:
-                df_update["id"] = df_update["composite_key"].map(existing_securities)
-            
-            # PostgreSQL COPY command for bulk inserts
-            csv_buffer = io.StringIO()
-            
-            # Write data to the buffer in CSV format
-            # Only writing columns that match the DB model
-            for _, row in df_insert.iterrows():
-                values = []
-                for col in ["client_id", "collateral_description", "collateral_value"]:
-                    if col == "client_id":
-                         values.append(str(int(row[col]))) 
-                    elif col in row:
-                        if col == "collateral_value" and pd.notna(row[col]):
-                            values.append(str(row[col]))
-                        elif pd.isna(row[col]):
-                            values.append("") 
-                        else:
-                            val = str(row[col])
-                            val = val.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")
-                            values.append(val)
-                    else:
-                        values.append("") 
-                csv_buffer.write("\t".join(values) + "\n")
-            
-            csv_buffer.seek(0)
-            
-            connection = db.connection().connection
-            cursor = connection.cursor()
-            
-            # Execute COPY command - removed security_type, valuation_date etc
-            cursor.copy_from(
-                csv_buffer,
-                'securities',
-                columns=["client_id", "collateral_description", "collateral_value"]
-            )
-            
-            # Prepare SQL templates for UPDATE
-            update_template = """
-                UPDATE securities SET
-                    collateral_value = data.collateral_value
-                FROM (VALUES
-            """
-            
-            if not df_update.empty:
-                values_list = []
-                for _, row in df_update.iterrows():
-                    values = []
-                    for col in ["id", "collateral_value"]:
-                        if col in row:
-                            if col == "collateral_value" and pd.notna(row[col]):
-                                values.append(str(row[col]))
-                            elif pd.isna(row[col]):
-                                values.append("NULL")
-                            else:
-                                val = str(row[col])
-                                val = val.replace("'", "''") 
-                                values.append(f"'{val}'")
-                        else:
-                            values.append("NULL")
-                    values_list.append(f"({', '.join(values)})")
-                
-                for i in range(0, len(values_list), 5000):
-                    batch_values = values_list[i:i+5000]
-                    update_sql = update_template + ",\n".join(batch_values) + ") AS data(id, collateral_value) WHERE securities.id = data.id"
-                    db.execute(text(update_sql))
-                    db.flush()
-        
-        db.commit()
-        return {
-            "status": "success",
-            "rows_processed": len(df) if isinstance(df, pl.DataFrame) else 0,
-            "filename": getattr(collateral_data, "filename", "in-memory-file"),
+        # Mapping
+        target_columns = {
+            "loan_no": "loan_no", "collateral_description": "collateral_description", "collateral_value": "collateral_value"
         }
+        rename_map = {k: v for k, v in target_columns.items() if k in df.columns}
+        if rename_map: df = df.rename(rename_map)
+
+        # Inject using COPY
+        connection = db.connection().connection
+        cursor = connection.cursor()
         
-    except Exception as e:
-        db.rollback()
-        import traceback
-        traceback.print_exc()
-        return {
-            "status": "error",
-            "message": str(e),
-            "filename": getattr(collateral_data, "filename", "in-memory-file"),
-        }
+        rows_data = []
+        for row in df.to_dicts():
+            loan_no = str(row.get("loan_no", ""))
+            client_id = client_map.get(loan_no)
+            if client_id:
+                processed_row = {
+                    "client_id": str(client_id),
+                    "collateral_description": str(row.get("collateral_description", "")),
+                    "collateral_value": str(row.get("collateral_value", 0))
+                }
+                line = "\t".join(processed_row.values())
+                rows_data.append(line)
+        
+        if rows_data:
+            batch_buffer = io.StringIO("\n".join(rows_data) + "\n")
+            cursor.copy_from(batch_buffer, "securities", columns=["client_id", "collateral_description", "collateral_value"], sep="\t", null="")
+            connection.commit()
+
+        return {"processed": len(rows_data), "success": True}
+
+    finally:
+        if csv_path and os.path.exists(csv_path): os.remove(csv_path)
