@@ -38,7 +38,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -58,10 +58,10 @@ services:
     volumes:
       - minio_data:/data
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9100:9000"
+      - "9101:9001"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
       interval: 30s
       timeout: 20s
       retries: 5
@@ -75,8 +75,7 @@ services:
     env_file:
       - stack.env
     command: >
-      redis-server /usr/local/etc/redis/redis.conf
-      --requirepass ${REDIS_PASSWORD}
+      redis-server /usr/local/etc/redis/redis.conf --requirepass ${REDIS_PASSWORD}
     volumes:
       - ./redis.conf:/usr/local/etc/redis/redis.conf
     restart: unless-stopped
@@ -101,11 +100,7 @@ services:
     networks:
       - ifrs9pro_network
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "celery -A app.celery_app inspect ping -d celery@$${HOSTNAME}",
-        ]
+      test: [ "CMD-SHELL", "celery -A app.celery_app inspect ping -d celery@$${HOSTNAME}" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -116,9 +111,7 @@ services:
       dockerfile: Dockerfile.prod
     container_name: ifrs9pro_flower
     command: >
-      celery -A app.celery_app flower
-      --port=5555
-      --basic_auth=admin:${FLOWER_PASSWORD}
+      celery -A app.celery_app flower --port=5555 --basic_auth=admin:${FLOWER_PASSWORD}
     env_file:
       - stack.env
     environment:
@@ -132,7 +125,7 @@ services:
     networks:
       - ifrs9pro_network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5555/"]
+      test: [ "CMD", "curl", "-f", "http://localhost:5555/" ]
       interval: 30s
       timeout: 10s
       retries: 3
