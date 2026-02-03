@@ -113,7 +113,9 @@ async def process_loan_details_sync(file_path, portfolio_id, tenant_id, db):
             
             # Define columns for COPY
             copy_cols = ["portfolio_id", "tenant_id", "subscription_id", "loan_no", "employee_id", 
-                         "loan_amount", "outstanding_loan_balance", "ndia", "monthly_installment", "accumulated_arrears"]
+                         "loan_amount", "outstanding_loan_balance", "ndia", "monthly_installment", 
+                         "accumulated_arrears", "loan_term", "deduction_start_period", 
+                         "loan_issue_date", "submission_period", "maturity_period"]
             copy_cols = [c for c in copy_cols if c in df.columns]
             
             # Format batch for COPY

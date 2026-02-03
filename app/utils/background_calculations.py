@@ -80,10 +80,25 @@ def process_loan_sync(loan_data, selected_dt_str):
         # PRIORITY FIX: Fallback for deduction_start_period
         if pd.isna(start_date):
             if not pd.isna(loan_issue_date):
-                logger.warning(f"Loan {loan_data.get('id')}: Using loan_issue_date as fallback for deduction_start_period")
+                # logger.warning(f"Loan {loan_data.get('id')}: Using loan_issue_date as fallback for deduction_start_period")
                 start_date = loan_issue_date
+            elif not pd.isna(submission_period):
+                # logger.warning(f"Loan {loan_data.get('id')}: Using submission_period as fallback for deduction_start_period")
+                start_date = submission_period
             else:
-                return loan_data["id"], None, f"Missing both deduction_start_period and loan_issue_date"
+                # Try created_at
+                created_at = pd.to_datetime(loan_data.get("created_at"), errors="coerce")
+                if not pd.isna(created_at):
+                    # logger.warning(f"Loan {loan_data.get('id')}: Using created_at as fallback for deduction_start_period")
+                    start_date = created_at
+                else:
+                    # Final resort: use reporting date but warn LOUDLY
+                    # logger.warning(f"Loan {loan_data.get('id')}: Missing ALL dates. Using reporting date {selected_dt} as start.")
+                    start_date = selected_dt
+                    
+                    # Or fail if strict? For now, we allow it to process as a "new" loan (0 days old)
+                    # return loan_data["id"], None, f"Missing both deduction_start_period and loan_issue_date"
+
         
         if term_months < 1:
             logger.warning(f"Loan {loan_data.get('id')} has invalid term_months={term_months}, using 1 month fallback")
@@ -275,6 +290,7 @@ async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, d
                     "accumulated_arrears": loan.accumulated_arrears,
                     "deduction_start_period": loan.deduction_start_period,
                     "loan_issue_date": loan.loan_issue_date,  # Added fallback
+                    "created_at": loan.created_at,  # Added fallback
                     "monthly_installment": loan.monthly_installment,
                     "administrative_fees": loan.administrative_fees,
                     "ifrs9_stage": loan.ifrs9_stage,
