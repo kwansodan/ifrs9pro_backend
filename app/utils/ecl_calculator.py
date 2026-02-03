@@ -40,7 +40,7 @@ def calculate_effective_interest_rate_lender(loan_amount, administrative_fees, l
 
 
 
-    elif submission_period and maturity_period > report_date: #loans not yet started
+    elif submission_period and submission_period > report_date: #loans not yet started
         try:
             return 0.00
 
