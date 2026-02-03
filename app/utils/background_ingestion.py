@@ -180,6 +180,7 @@ async def process_portfolio_ingestion_sync(
                 results["files_processed"] += 1
                 logger.info(f"Processed {loan_results.get('processed', 0)} loan records")
             except Exception as e:
+                db.rollback()
                 logger.error(f"Error processing loan details: {str(e)}")
                 results["details"]["loan_details"] = {"error": str(e)}
                 results.setdefault("errors", []).append(f"Error processing loan details: {str(e)}")
@@ -196,6 +197,7 @@ async def process_portfolio_ingestion_sync(
                 results["files_processed"] += 1
                 logger.info(f"Processed {client_results.get('processed', 0)} client records")
             except Exception as e:
+                db.rollback()
                 logger.error(f"Error processing client data: {str(e)}")
                 results["details"]["client_data"] = {"error": str(e)}
                 results.setdefault("errors", []).append(f"Error processing client data: {str(e)}")
@@ -212,6 +214,7 @@ async def process_portfolio_ingestion_sync(
                 results["files_processed"] += 1
                 logger.info(f"Processed {guarantee_results.get('processed', 0)} guarantee records")
             except Exception as e:
+                db.rollback()
                 logger.error(f"Error processing loan guarantee data: {str(e)}")
                 results["details"]["loan_guarantee_data"] = {"error": str(e)}
                 results.setdefault("errors", []).append(f"Error processing loan guarantee data: {str(e)}")
@@ -228,6 +231,7 @@ async def process_portfolio_ingestion_sync(
                 results["files_processed"] += 1
                 logger.info(f"Processed {collateral_results.get('processed', 0)} collateral records")
             except Exception as e:
+                db.rollback()
                 logger.error(f"Error processing loan collateral data: {str(e)}")
                 results["details"]["loan_collateral_data"] = {"error": str(e)}
                 results.setdefault("errors", []).append(f"Error processing loan collateral data: {str(e)}")
@@ -242,6 +246,7 @@ async def process_portfolio_ingestion_sync(
             results["quality_checks"] = quality_results
             logger.info(f"Found {quality_results.get('total_issues', 0)} quality issues")
         except Exception as e:
+            db.rollback()
             logger.error(f"Error running quality checks: {str(e)}")
             results["quality_checks"] = {"error": str(e)}
             results.setdefault("errors", []).append(f"Error running quality checks: {str(e)}")
@@ -257,6 +262,7 @@ async def process_portfolio_ingestion_sync(
             db.commit()
             logger.info(f"Successfully completed staging for portfolio {portfolio_id}")
         except Exception as e:
+            db.rollback()
             logger.error(f"Error during loan staging: {str(e)}")
             results["staging"] = {"error": str(e)}
             results.setdefault("errors", []).append(f"Error during loan staging: {str(e)}")

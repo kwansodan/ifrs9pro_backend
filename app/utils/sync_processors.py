@@ -88,6 +88,14 @@ async def process_loan_details_sync(file_path, portfolio_id, tenant_id, db):
                     df = df.with_columns(
                         pl.col(col).cast(pl.Utf8).str.replace_all(r"[^\d\.\-]", "").cast(pl.Float64, strict=False).fill_null(0.0)
                     )
+            
+            # Explicitly cast to Int for integer columns to avoid "66.0" format
+            int_cols = ["loan_term"]
+            for col in int_cols:
+                if col in df.columns:
+                     df = df.with_columns(
+                        pl.col(col).cast(pl.Int64, strict=False).fill_null(0)
+                     )
 
             # NDIA Recalculation
             if "monthly_installment" in df.columns and "accumulated_arrears" in df.columns:
