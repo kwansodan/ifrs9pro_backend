@@ -9,6 +9,8 @@ from sqlalchemy import text
 import polars as pl
 import traceback
 from xlsx2csv import Xlsx2csv
+from dateutil import parser
+import re
 
 from app.models import (
     Loan,
@@ -34,6 +36,27 @@ def excel_to_csv_task(excel_path: str) -> str:
     except Exception as e:
         if os.path.exists(csv_path): os.remove(csv_path)
         raise e
+
+def parse_date_safe(date_str):
+    """Robustly parse dates including formats like SEP2020"""
+    if not date_str: return None
+    try:
+        # Fast path for ISO format
+        if isinstance(date_str, str) and "-" in date_str and len(date_str) == 10:
+            return date_str
+            
+        s = str(date_str).strip()
+        if not s or s.lower() == "nan" or s.lower() == "none":
+            return None
+            
+        # Handle SEP2020 format - insert space
+        if re.match(r"^[A-Za-z]{3}\d{4}$", s):
+            s = s[:3] + " " + s[3:]
+            
+        dt = parser.parse(s)
+        return dt.strftime("%Y-%m-%d")
+    except:
+        return None
 
 async def process_loan_details_sync(file_path, portfolio_id, tenant_id, db):
     """Chunked processing for loan details to minimize RAM usage."""
@@ -96,6 +119,20 @@ async def process_loan_details_sync(file_path, portfolio_id, tenant_id, db):
                      df = df.with_columns(
                         pl.col(col).cast(pl.Int64, strict=False).fill_null(0)
                      )
+
+                     df = df.with_columns(
+                        pl.col(col).cast(pl.Int64, strict=False).fill_null(0)
+                     )
+
+            # Date Parsing
+            date_cols = ["deduction_start_period", "loan_issue_date", "submission_period", "maturity_period"]
+            for col in date_cols:
+                if col in df.columns:
+                    df = df.with_columns(
+                        pl.col(col).map_elements(
+                            lambda x: parse_date_safe(x), return_dtype=pl.Utf8, skip_nulls=False
+                        ).alias(col)
+                    )
 
             # NDIA Recalculation
             if "monthly_installment" in df.columns and "accumulated_arrears" in df.columns:
