@@ -75,6 +75,8 @@ def process_loan_sync(loan_data, selected_dt_str):
         submission_period = pd.to_datetime(loan_data.get("submission_period"), errors="coerce")
         maturity_period = pd.to_datetime(loan_data.get("maturity_period"), errors="coerce")
 
+        start_date = pd.to_datetime(loan_data.get("deduction_start_period"), errors="coerce")
+
         # PRIORITY FIX: Fallback for deduction_start_period
         if pd.isna(start_date):
             if not pd.isna(loan_issue_date):
@@ -96,6 +98,11 @@ def process_loan_sync(loan_data, selected_dt_str):
         # Fallback for maturity_period if missing
         if pd.isna(maturity_period):
             maturity_period = end_date
+
+        # FIX: Extract missing variables to avoid UnboundLocalError
+        pd_rate = safe_float(loan_data.get("pd_value", 0))
+        administrative_fees = safe_float(loan_data.get("administrative_fees", 0))
+        monthly_installment = safe_float(loan_data.get("monthly_installment", 0))
 
         loan_result = {}
 

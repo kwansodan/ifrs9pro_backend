@@ -204,9 +204,30 @@ def calculate_probability_of_default(employee_id, outstanding_loan_balance, star
         if year_of_birth is None:
             return 0.05  # Default PD if no data found
 
+        # FIX: Ensure selected_dt is a date object for comparison
+        if isinstance(selected_dt, str):
+            try:
+                selected_dt = pd.to_datetime(selected_dt, errors="coerce").date()
+            except Exception:
+                pass # Will likely fail comparison later if still string
+        elif isinstance(selected_dt, datetime):
+            selected_dt = selected_dt.date()
+        
+        # Ensure start_date/end_date are dates (handle datetime or None)
+        if hasattr(start_date, 'date'): start_date = start_date.date()
+        if hasattr(end_date, 'date'): end_date = end_date.date()
+
         # Main logic
         result = 0.00
         if outstanding_loan_balance >= 0:
+            # Safe comparisons processing
+            if not start_date or not end_date or pd.isna(start_date) or pd.isna(end_date):
+                 # Fallback if dates are missing but we need to return something
+                 model = get_pd_model()
+                 if model:
+                    return calculate_pd_from_yob(year_of_birth, model)
+                 return 0.05
+
             if start_date <= selected_dt and end_date > selected_dt:
                 model = get_pd_model()
                 if model:
