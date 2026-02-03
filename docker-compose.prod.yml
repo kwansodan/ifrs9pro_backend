@@ -10,11 +10,15 @@ services:
       - stack.env
     environment:
       DEBUG: "False"
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/1
     depends_on:
       db:
         condition: service_healthy
       minio:
         condition: service_healthy
+      redis:  # Add this dependency
+        condition: service_started
     volumes:
       - ./reports:/app/reports
       - ./app/ml_models:/app/app/ml_models
@@ -86,8 +90,8 @@ services:
     env_file:
       - stack.env
     environment:
-      CELERY_BROKER_URL: redis://:ioih!yv37Hh@redis:6379/0
-      CELERY_RESULT_BACKEND: redis://:ioih!yv37Hh@redis:6379/1
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/1
     depends_on:
       - redis
       - db
