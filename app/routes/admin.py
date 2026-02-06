@@ -152,7 +152,11 @@ async def export_users_csv(
     return StreamingResponse(
         iter([output.getvalue()]),
         media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Access-Control-Allow-Origin": "https://ifrs9pro.service4gh.com",
+            "Access-Control-Allow-Credentials": "true"
+        }
     )
 
 

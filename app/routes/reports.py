@@ -75,6 +75,7 @@ async def generate_report(
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    logger.info("ENTER generate report")
     filename = f"{report_request.report_type.value}_{uuid4().hex}.xlsx"
     file_path = f"reports/{filename}"
 
@@ -107,6 +108,9 @@ async def generate_report(
             db.commit()
             raise e
 
+            raise e
+
+        logger.info("EXIT generate report")
         return {"message": "Report generation started", "report_id": report.id}
 
     except Exception as e:
@@ -299,7 +303,11 @@ async def download_report_excel(
         return StreamingResponse(
             file_data,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f"attachment; filename={report_name}"}
+            headers={
+                "Content-Disposition": f"attachment; filename={report_name}",
+                "Access-Control-Allow-Origin": "https://ifrs9pro.service4gh.com",
+                "Access-Control-Allow-Credentials": "true"
+            }
         )
 
     except FileNotFoundError:

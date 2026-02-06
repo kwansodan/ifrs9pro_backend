@@ -238,7 +238,11 @@ async def download_all_quality_issues_excel(
     return StreamingResponse(
         buffer,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Access-Control-Allow-Origin": "https://ifrs9pro.service4gh.com",
+            "Access-Control-Allow-Credentials": "true"
+        },
     )
 
 
@@ -768,5 +772,9 @@ async def download_quality_issue_excel(
     return StreamingResponse(
         buffer,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Access-Control-Allow-Origin": "https://ifrs9pro.service4gh.com",
+            "Access-Control-Allow-Credentials": "true"
+        },
     )
