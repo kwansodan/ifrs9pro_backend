@@ -17,7 +17,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-      redis:  # Add this dependency
+      redis:
+        # Add this dependency
         condition: service_started
     volumes:
       - ./reports:/app/reports
@@ -64,6 +65,11 @@ services:
     ports:
       - "9100:9000"
       - "9101:9001"
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
+      interval: 30s
+      timeout: 20s
+      retries: 3
     restart: unless-stopped
     networks:
       - ifrs9pro_network
