@@ -77,7 +77,9 @@ async def generate_report(
 ):
     logger.info("ENTER generate report")
     filename = f"{report_request.report_type.value}_{uuid4().hex}.xlsx"
-    file_path = f"reports/{filename}"
+    import tempfile
+    import os
+    file_path = os.path.join(tempfile.gettempdir(), filename)
 
     try:
         if report_request.report_type not in ["ecl_detailed_report", "ecl_report_summarised_by_stages", "BOG_impairment_detailed_report", "BOG_impairment_summary_by_stages", "journals_report"]:
