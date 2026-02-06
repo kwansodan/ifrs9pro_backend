@@ -48,33 +48,7 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning, message="X does not have valid feature names")
 warnings.filterwarnings("ignore", category=UserWarning, message="Trying to unpickle estimator")
 
-PRELOADED_PD_MODEL = None
-PD_MODEL_FEATURE_NAME = 'year_of_birth' # Default, will be updated on load if possible
 
-try:
-    # Ensure the path is correct relative to the execution context
-    model_path = "app/ml_models/logistic_model.pkl"
-    print(f"Loading PD model from: {model_path}")
-    with open(model_path, "rb") as file:
-        PRELOADED_PD_MODEL = pickle.load(file)
-        print("PD model loaded successfully.")
-        # Try to get the actual feature name used during training
-        if hasattr(PRELOADED_PD_MODEL, 'feature_names_in_'):
-            try:
-                PD_MODEL_FEATURE_NAME = PRELOADED_PD_MODEL.feature_names_in_[0]
-                print(f"Using feature name from model: {PD_MODEL_FEATURE_NAME}")
-            except IndexError:
-                 print(f"Warning: Model feature_names_in_ is empty. Using default '{PD_MODEL_FEATURE_NAME}'.")
-            except Exception as e:
-                 print(f"Warning: Could not get feature name from model ({e}). Using default '{PD_MODEL_FEATURE_NAME}'.")
-
-except FileNotFoundError:
-    print(f"FATAL ERROR: PD Model file not found at {model_path}")
-    # PRELOADED_PD_MODEL remains None
-except Exception as e:
-    print(f"FATAL ERROR: Failed to load PD model from {model_path}: {e}")
-    traceback.print_exc()
-    # PRELOADED_PD_MODEL remains None
 
 class StreamingLoanDataIterator:
     def __init__(self, file_path):
