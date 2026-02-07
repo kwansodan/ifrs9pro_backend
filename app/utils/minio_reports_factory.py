@@ -1,5 +1,7 @@
 import boto3
 from botocore.client import Config
+from botocore.exceptions import ClientError
+import time
 from datetime import datetime, timedelta, date
 from app.config import settings
 import io
@@ -219,16 +221,39 @@ def download_report(bucket_name: str, object_name: str) -> BytesIO:
     except Exception:
         raise FileNotFoundError(f"Bucket '{bucket_name}' not found")
 
-    # Download the file into memory
-    try:
-        file_obj = BytesIO()
-        s3_client.download_fileobj(bucket_name, object_name, file_obj)
-        file_obj.seek(0)
-        return file_obj
-    except s3_client.exceptions.NoSuchKey:
-        raise FileNotFoundError(f"Object '{object_name}' not found in bucket '{bucket_name}'")
-    except Exception as e:
-        raise RuntimeError(f"Error downloading '{object_name}' from '{bucket_name}': {str(e)}")
+    start_time = time.time()
+    last_error = None
+
+    # Retry for up to 10 seconds
+    while time.time() - start_time < 10:
+        try:
+            file_obj = BytesIO()
+            s3_client.download_fileobj(bucket_name, object_name, file_obj)
+            file_obj.seek(0)
+            return file_obj
+        except s3_client.exceptions.NoSuchKey:
+            last_error = FileNotFoundError(f"Object '{object_name}' not found in bucket '{bucket_name}'")
+            time.sleep(1)
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code")
+            if error_code == "404" or error_code == "NotFound":
+                 last_error = FileNotFoundError(f"Object '{object_name}' not found in bucket '{bucket_name}' - {str(e)}")
+                 time.sleep(1)
+            else:
+                 # If it's another client error, raise immediately
+                 raise RuntimeError(f"Error downloading '{object_name}' from '{bucket_name}': {str(e)}")
+        except Exception as e:
+            # If it's a different kind of error, we might want to retry or fail.
+            # For network blips, retrying might be good.
+            last_error = RuntimeError(f"Error downloading '{object_name}' from '{bucket_name}': {str(e)}")
+            time.sleep(1)
+            
+    # If we fall through here, we ran out of time
+    if last_error:
+        raise last_error
+    else:
+        # Should not happen if loop logic is correct
+        raise TimeoutError(f"Timed out trying to download '{object_name}'")
     
 
 def run_and_save_report_task(report_id: int, report_type: str, file_path: str, portfolio_id: int):
