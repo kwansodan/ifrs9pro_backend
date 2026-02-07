@@ -29,8 +29,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.5"
-          memory: 600M
+          cpus: "2"
+          memory: 2G
 
   db:
     image: postgres:16-alpine
@@ -48,6 +48,11 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
     networks:
       - ifrs9pro_network
 
@@ -79,6 +84,11 @@ services:
       start_period: 20s
 
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
 
     networks:
       - ifrs9pro_network
@@ -93,6 +103,11 @@ services:
     volumes:
       - ./redis.conf:/usr/local/etc/redis/redis.conf
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
     networks:
       - ifrs9pro_network
 
@@ -111,6 +126,11 @@ services:
       - redis
       - db
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 3G
     networks:
       - ifrs9pro_network
     healthcheck:
@@ -136,6 +156,11 @@ services:
     depends_on:
       - redis
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
     networks:
       - ifrs9pro_network
 
@@ -143,6 +168,11 @@ services:
     image: caddy:2.8
     container_name: ifrs9pro_caddy
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
     ports:
       - "80:80"
       - "443:443"
