@@ -313,11 +313,14 @@ async def download_report_excel(
         )
 
     except FileNotFoundError:
+        # This handles the case where the file is not found in MinIO
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Report '{report_name}' not found in bucket '{bucket_name}'"
+            detail=f"Report '{report_name}' not yet available or not found. Please try again later."
         )
     except Exception as e:
+        # Log the full error for debugging but return a generic 500
+        logger.error(f"Error downloading report {report_name}: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error downloading report: {str(e)}"
