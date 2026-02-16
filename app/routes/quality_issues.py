@@ -53,8 +53,8 @@ def transform_affected_records(quality_issues: List[QualityIssue]) -> List[Quali
 
 
 @router.get("/{portfolio_id}/quality-issues", 
-            description="Get all quality issues for a specific portfolio", 
-            response_model=List[QualityIssueResponse],
+            description="Get unique quality issues with occurrence counts for a specific portfolio", 
+            response_model=List[Dict[str, Any]],
             responses={404: {"description": "Portfolio not found"},
                        401: {"description": "Not authenticated"}},
             )
@@ -66,7 +66,8 @@ def get_quality_issues(
     current_user: User = Depends(get_current_active_user),
 ):
     """
-    Retrieve quality issues for a specific portfolio.
+    Retrieve unique quality issues with occurrence counts for a specific portfolio.
+    Groups issues by issue_type and description, returning count of occurrences.
     Optional filtering by status and issue type.
     """
     # Verify portfolio exists and belongs to current user
@@ -90,20 +91,53 @@ def get_quality_issues(
     if issue_type:
         query = query.filter(QualityIssue.issue_type == issue_type)
 
-    # Order by severity (most severe first) and then by created date (newest first)
-    quality_issues = query.order_by(
-        QualityIssue.severity.desc(), QualityIssue.created_at.desc()
-    ).all()
+    # Get all quality issues
+    quality_issues = query.all()
 
     if not quality_issues:
-        raise HTTPException(
-            status_code=status.HTTP_200_OK, detail="No quality issues found"
-        )
+        return []
 
-    # Transform affected_records from dictionary to list format if needed
-    quality_issues = transform_affected_records(quality_issues)
+    # Group issues by description to get unique issues with counts
+    unique_issues = {}
+    for issue in quality_issues:
+        # Create a unique key based on description only
+        key = issue.description
+        
+        if key not in unique_issues:
+            unique_issues[key] = {
+                "issue_type": issue.issue_type,
+                "description": issue.description,
+                "severity": issue.severity,
+                "occurrence_count": 1,
+                "statuses": {issue.status: 1},
+                "first_occurrence": issue.created_at,
+                "last_occurrence": issue.updated_at,
+                "sample_issue_ids": [issue.id],
+            }
+        else:
+            unique_issues[key]["occurrence_count"] += 1
+            # Track status counts
+            if issue.status in unique_issues[key]["statuses"]:
+                unique_issues[key]["statuses"][issue.status] += 1
+            else:
+                unique_issues[key]["statuses"][issue.status] = 1
+            # Update timestamps
+            if issue.created_at < unique_issues[key]["first_occurrence"]:
+                unique_issues[key]["first_occurrence"] = issue.created_at
+            if issue.updated_at > unique_issues[key]["last_occurrence"]:
+                unique_issues[key]["last_occurrence"] = issue.updated_at
+            # Add sample issue ID (limit to first 5)
+            if len(unique_issues[key]["sample_issue_ids"]) < 5:
+                unique_issues[key]["sample_issue_ids"].append(issue.id)
 
-    return quality_issues
+    # Convert to list and sort by occurrence count (descending) and severity
+    result = sorted(
+        unique_issues.values(),
+        key=lambda x: (x["occurrence_count"], x["severity"] == "high", x["severity"] == "medium"),
+        reverse=True
+    )
+
+    return result
 
 
 @router.get("/{portfolio_id}/quality-issues/download", 
