@@ -26,6 +26,7 @@ from app.schemas import (
     QualityIssueCommentCreate,
     QualityIssueCommentModel,
     QualityCheckSummary,
+    QualityIssueSummary,
 )
 from app.utils.quality_checks import create_quality_issues_if_needed
 
