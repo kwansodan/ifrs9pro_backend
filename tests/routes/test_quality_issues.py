@@ -55,26 +55,46 @@ def test_get_quality_issues(client, portfolio, quality_issue):
     assert response.status_code == 200
 
     data = response.json()
-    assert len(data) == 1  # since only one issue exists
+    assert len(data) == 1
 
     issue = data[0]
 
     assert issue["description"] == quality_issue.description
+    assert issue["issue_type"] == quality_issue.issue_type
+    assert issue["severity"] == quality_issue.severity
     assert issue["occurrence_count"] == 1
+
+    # status distribution check
     assert quality_issue.status in issue["statuses"]
+    assert issue["statuses"][quality_issue.status] == 1
 
 def test_get_quality_issues_with_status_filter(client, portfolio, quality_issue):
-    """Test getting quality issues filtered by status"""
-    response = client.get(f"/portfolios/{portfolio.id}/quality-issues?status_type=open")
+    response = client.get(
+        f"/portfolios/{portfolio.id}/quality-issues?status_type={quality_issue.status}"
+    )
+
     assert response.status_code == 200
 
+    data = response.json()
+    assert len(data) == 1
+
+    issue = data[0]
+
+    # Ensure only filtered status appears
+    assert list(issue["statuses"].keys()) == [quality_issue.status]
 
 def test_get_quality_issues_with_type_filter(client, portfolio, quality_issue):
-    """Test getting quality issues filtered by issue type"""
     response = client.get(
-        f"/portfolios/{portfolio.id}/quality-issues?issue_type=duplicate_customer_ids"
+        f"/portfolios/{portfolio.id}/quality-issues?issue_type={quality_issue.issue_type}"
     )
+
     assert response.status_code == 200
+
+    data = response.json()
+    assert len(data) == 1
+
+    issue = data[0]
+    assert issue["issue_type"] == quality_issue.issue_type
 
 
 def test_download_all_quality_issues_excel(client, portfolio, quality_issue):
