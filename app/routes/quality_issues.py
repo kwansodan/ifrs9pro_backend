@@ -26,6 +26,7 @@ from app.schemas import (
     QualityIssueCommentCreate,
     QualityIssueCommentModel,
     QualityCheckSummary,
+    QualityIssueSummary,
 )
 from app.utils.quality_checks import create_quality_issues_if_needed
 
@@ -57,7 +58,7 @@ def transform_affected_records(quality_issues: List[QualityIssue]) -> List[Quali
 @router.get(
     "/{portfolio_id}/quality-issues",
     description="Get aggregated quality issues for a specific portfolio",
-    response_model=List[Dict[str, Any]],
+    response_model=List[QualityIssueSummary],
 )
 def get_quality_issues(
     portfolio_id: int,

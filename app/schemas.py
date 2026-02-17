@@ -1072,3 +1072,12 @@ class SystemStats(BaseModel):
     total_portfolios: int
     total_loans: int
     total_value_locked: float
+
+class QualityIssueSummary(BaseModel):
+    description: str
+    issue_type: str
+    severity: str
+    occurrence_count: int
+    first_occurrence: datetime
+    last_occurrence: datetime
+    statuses: Dict[str, int]
