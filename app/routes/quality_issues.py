@@ -172,15 +172,15 @@ def get_quality_issues(
         key = (row.description, row.issue_type, row.severity)
 
         response.append(
-            {
-                "description": row.description,
-                "issue_type": row.issue_type,
-                "severity": row.severity,
-                "occurrence_count": row.occurrence_count,
-                "first_occurrence": row.first_occurrence,
-                "last_occurrence": row.last_occurrence,
-                "statuses": status_map.get(key, {}),
-            }
+            QualityIssueSummary(
+                description=row.description,
+                issue_type=row.issue_type,
+                severity=row.severity,
+                occurrence_count=row.occurrence_count,
+                first_occurrence=row.first_occurrence,
+                last_occurrence=row.last_occurrence,
+                statuses=status_map.get(key, {}),
+            )
         )
 
     # -----------------------------

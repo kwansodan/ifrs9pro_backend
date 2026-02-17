@@ -1078,6 +1078,6 @@ class QualityIssueSummary(BaseModel):
     issue_type: str
     severity: str
     occurrence_count: int
-    first_occurrence: datetime
-    last_occurrence: datetime
+    first_occurrence: Optional[datetime]
+    last_occurrence: Optional[datetime]
     statuses: Dict[str, int]
