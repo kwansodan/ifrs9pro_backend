@@ -8,7 +8,9 @@ from fastapi import (
 )
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from typing import List, Dict, Optional, Any
+from sqlalchemy import func
+from typing import List, Dict, Any, Optional
+from fastapi import HTTPException, Depends, status
 from datetime import datetime
 from io import BytesIO
 import pandas as pd
@@ -52,12 +54,11 @@ def transform_affected_records(quality_issues: List[QualityIssue]) -> List[Quali
     return quality_issues
 
 
-@router.get("/{portfolio_id}/quality-issues", 
-            description="Get unique quality issues with occurrence counts for a specific portfolio", 
-            response_model=List[Dict[str, Any]],
-            responses={404: {"description": "Portfolio not found"},
-                       401: {"description": "Not authenticated"}},
-            )
+@router.get(
+    "/{portfolio_id}/quality-issues",
+    description="Get aggregated quality issues for a specific portfolio",
+    response_model=List[Dict[str, Any]],
+)
 def get_quality_issues(
     portfolio_id: int,
     status_type: Optional[str] = None,
@@ -66,81 +67,134 @@ def get_quality_issues(
     current_user: User = Depends(get_current_active_user),
 ):
     """
-    Retrieve unique quality issues with occurrence counts for a specific portfolio.
-    Groups issues by issue_type and description, returning count of occurrences.
-    Optional filtering by status and issue type.
+    Production-grade aggregation:
+    - SQL-based grouping
+    - Ownership validation
+    - Efficient status distribution
     """
-    # Verify portfolio exists and belongs to current user
+
+    # ✅ SECURITY FIX — verify ownership
     portfolio = (
         db.query(Portfolio)
-        .filter(Portfolio.id == portfolio_id)
+        .filter(
+            Portfolio.id == portfolio_id,
+            Portfolio.user_id == current_user.id,
+        )
         .first()
     )
 
     if not portfolio:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Portfolio not found",
         )
 
-    # Build query for quality issues
-    query = db.query(QualityIssue).filter(QualityIssue.portfolio_id == portfolio_id)
-    
-    # Apply filters if provided
+    # -----------------------------
+    # BASE FILTER
+    # -----------------------------
+    base_filter = [QualityIssue.portfolio_id == portfolio_id]
+
     if status_type:
-        query = query.filter(QualityIssue.status == status_type)
+        base_filter.append(QualityIssue.status == status_type)
+
     if issue_type:
-        query = query.filter(QualityIssue.issue_type == issue_type)
+        base_filter.append(QualityIssue.issue_type == issue_type)
 
-    # Get all quality issues
-    quality_issues = query.all()
-
-    if not quality_issues:
-        return []
-
-    # Group issues by description to get unique issues with counts
-    unique_issues = {}
-    for issue in quality_issues:
-        # Create a unique key based on description only
-        key = issue.description
-        
-        # Use updated_at if available, otherwise fall back to created_at
-        issue_last_occurrence = issue.updated_at if issue.updated_at is not None else issue.created_at
-        
-        if key not in unique_issues:
-            unique_issues[key] = {
-                "issue_type": issue.issue_type,
-                "description": issue.description,
-                "severity": issue.severity,
-                "occurrence_count": 1,
-                "statuses": {issue.status: 1},
-                "first_occurrence": issue.created_at,
-                "last_occurrence": issue_last_occurrence,
-                "sample_issue_ids": [issue.id],
-            }
-        else:
-            unique_issues[key]["occurrence_count"] += 1
-            # Track status counts
-            if issue.status in unique_issues[key]["statuses"]:
-                unique_issues[key]["statuses"][issue.status] += 1
-            else:
-                unique_issues[key]["statuses"][issue.status] = 1
-            # Update timestamps (with null-safe comparisons)
-            if issue.created_at and unique_issues[key]["first_occurrence"] and issue.created_at < unique_issues[key]["first_occurrence"]:
-                unique_issues[key]["first_occurrence"] = issue.created_at
-            if issue_last_occurrence and unique_issues[key]["last_occurrence"] and issue_last_occurrence > unique_issues[key]["last_occurrence"]:
-                unique_issues[key]["last_occurrence"] = issue_last_occurrence
-            # Add sample issue ID (limit to first 5)
-            if len(unique_issues[key]["sample_issue_ids"]) < 5:
-                unique_issues[key]["sample_issue_ids"].append(issue.id)
-
-    # Convert to list and sort by occurrence count (descending) and severity
-    result = sorted(
-        unique_issues.values(),
-        key=lambda x: (x["occurrence_count"], x["severity"] == "high", x["severity"] == "medium"),
-        reverse=True
+    # -----------------------------
+    # MAIN AGGREGATION QUERY
+    # -----------------------------
+    aggregated_query = (
+        db.query(
+            QualityIssue.description,
+            QualityIssue.issue_type,
+            QualityIssue.severity,
+            func.count(QualityIssue.id).label("occurrence_count"),
+            func.min(QualityIssue.created_at).label("first_occurrence"),
+            func.max(
+                func.coalesce(QualityIssue.updated_at, QualityIssue.created_at)
+            ).label("last_occurrence"),
+        )
+        .filter(*base_filter)
+        .group_by(
+            QualityIssue.description,
+            QualityIssue.issue_type,
+            QualityIssue.severity,
+        )
     )
 
-    return result
+    aggregated_results = aggregated_query.all()
+
+    if not aggregated_results:
+        return []
+
+    # -----------------------------
+    # STATUS DISTRIBUTION QUERY
+    # -----------------------------
+    status_query = (
+        db.query(
+            QualityIssue.description,
+            QualityIssue.issue_type,
+            QualityIssue.severity,
+            QualityIssue.status,
+            func.count(QualityIssue.id).label("count"),
+        )
+        .filter(*base_filter)
+        .group_by(
+            QualityIssue.description,
+            QualityIssue.issue_type,
+            QualityIssue.severity,
+            QualityIssue.status,
+        )
+    )
+
+    status_results = status_query.all()
+
+    # -----------------------------
+    # BUILD STATUS MAP
+    # -----------------------------
+    status_map = {}
+
+    for row in status_results:
+        key = (row.description, row.issue_type, row.severity)
+
+        if key not in status_map:
+            status_map[key] = {}
+
+        status_map[key][row.status] = row.count
+
+    # -----------------------------
+    # BUILD FINAL RESPONSE
+    # -----------------------------
+    response = []
+
+    for row in aggregated_results:
+        key = (row.description, row.issue_type, row.severity)
+
+        response.append(
+            {
+                "description": row.description,
+                "issue_type": row.issue_type,
+                "severity": row.severity,
+                "occurrence_count": row.occurrence_count,
+                "first_occurrence": row.first_occurrence,
+                "last_occurrence": row.last_occurrence,
+                "statuses": status_map.get(key, {}),
+            }
+        )
+
+    # -----------------------------
+    # SORT RESULTS (same logic)
+    # -----------------------------
+    response.sort(
+        key=lambda x: (
+            x["occurrence_count"],
+            x["severity"] == "high",
+            x["severity"] == "medium",
+        ),
+        reverse=True,
+    )
+
+    return response
 
 
 @router.get("/{portfolio_id}/quality-issues/download", 
