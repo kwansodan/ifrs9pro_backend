@@ -1083,7 +1083,7 @@ async def stage_loans_local_impairment_optimized(portfolio_id: int, config: Loca
                 ) as calculated_ndia,
                 outstanding_loan_balance
             FROM loans
-            WHERE portfolio_id = :portfolio_id
+            WHERE portfolio_id = :portfolio_id AND outstanding_loan_balance > 0
         ),
         staged_loans AS (
             SELECT
