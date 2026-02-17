@@ -103,6 +103,9 @@ def get_quality_issues(
         # Create a unique key based on description only
         key = issue.description
         
+        # Use updated_at if available, otherwise fall back to created_at
+        issue_last_occurrence = issue.updated_at if issue.updated_at is not None else issue.created_at
+        
         if key not in unique_issues:
             unique_issues[key] = {
                 "issue_type": issue.issue_type,
@@ -111,7 +114,7 @@ def get_quality_issues(
                 "occurrence_count": 1,
                 "statuses": {issue.status: 1},
                 "first_occurrence": issue.created_at,
-                "last_occurrence": issue.updated_at,
+                "last_occurrence": issue_last_occurrence,
                 "sample_issue_ids": [issue.id],
             }
         else:
@@ -121,11 +124,11 @@ def get_quality_issues(
                 unique_issues[key]["statuses"][issue.status] += 1
             else:
                 unique_issues[key]["statuses"][issue.status] = 1
-            # Update timestamps
-            if issue.created_at < unique_issues[key]["first_occurrence"]:
+            # Update timestamps (with null-safe comparisons)
+            if issue.created_at and unique_issues[key]["first_occurrence"] and issue.created_at < unique_issues[key]["first_occurrence"]:
                 unique_issues[key]["first_occurrence"] = issue.created_at
-            if issue.updated_at > unique_issues[key]["last_occurrence"]:
-                unique_issues[key]["last_occurrence"] = issue.updated_at
+            if issue_last_occurrence and unique_issues[key]["last_occurrence"] and issue_last_occurrence > unique_issues[key]["last_occurrence"]:
+                unique_issues[key]["last_occurrence"] = issue_last_occurrence
             # Add sample issue ID (limit to first 5)
             if len(unique_issues[key]["sample_issue_ids"]) < 5:
                 unique_issues[key]["sample_issue_ids"].append(issue.id)
