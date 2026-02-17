@@ -1074,6 +1074,7 @@ class SystemStats(BaseModel):
     total_value_locked: float
 
 class QualityIssueSummary(BaseModel):
+    issue_id: int
     description: str
     issue_type: str
     severity: str

@@ -103,10 +103,34 @@ def get_quality_issues(
     if issue_type:
         base_filter.append(QualityIssue.issue_type == issue_type)
 
-    # --- Aggregated query
+    # --- Issue type to generic description mapping
+    ISSUE_TYPE_DESCRIPTIONS = {
+        "duplicate_customer_id": "Duplicate employee ID found across multiple clients",
+        "duplicate_customer_ids": "Duplicate employee ID found across multiple clients",
+        "duplicate_address": "Duplicate residential address found across multiple clients",
+        "duplicate_addresses": "Duplicate residential address found across multiple clients",
+        "duplicate_dob": "Duplicate date of birth found across multiple clients",
+        "duplicate_loan_id": "Duplicate loan number found across multiple loans",
+        "duplicate_loan_ids": "Duplicate loan number found across multiple loans",
+        "duplicate_phone": "Duplicate phone number found across multiple clients",
+        "duplicate_phones": "Duplicate phone number found across multiple clients",
+        "client_without_matching_loan": "Client has no matching loan records",
+        "loan_without_matching_client": "Loan has no matching client records",
+        "missing_dob": "Client record is missing date of birth",
+        "missing_address": "Client record is missing residential address",
+        "missing_loan_number": "Loan record is missing loan number",
+        "missing_loan_date": "Loan record is missing issue date",
+        "missing_loan_term": "Loan record is missing term",
+        "missing_interest_rate": "Loan record is missing interest rate or fees",
+        "missing_loan_amount": "Loan record is missing principal amount",
+        "unmatched_employee_id": "Client has no matching loan records",
+        "loan_customer_mismatch": "Loan has no matching client records",
+    }
+
+    # --- Aggregated query (Grouped by issue_type and severity)
     agg_query = (
         db.query(
-            QualityIssue.description,
+            func.max(QualityIssue.id).label("issue_id"),
             QualityIssue.issue_type,
             QualityIssue.severity,
             func.count(QualityIssue.id).label("occurrence_count"),
@@ -114,48 +138,56 @@ def get_quality_issues(
             func.max(func.coalesce(QualityIssue.updated_at, QualityIssue.created_at)).label("last_occurrence"),
         )
         .filter(*base_filter)
-        .group_by(QualityIssue.description, QualityIssue.issue_type, QualityIssue.severity)
+        .group_by(QualityIssue.issue_type, QualityIssue.severity)
     )
     agg_results = agg_query.all()
 
     if not agg_results:
         return []
 
-    # --- Status distribution
+    # --- Status distribution (Grouped by issue_type and severity)
     status_query = (
         db.query(
-            QualityIssue.description,
             QualityIssue.issue_type,
             QualityIssue.severity,
             QualityIssue.status,
             func.count(QualityIssue.id).label("count"),
         )
         .filter(*base_filter)
-        .group_by(QualityIssue.description, QualityIssue.issue_type, QualityIssue.severity, QualityIssue.status)
+        .group_by(QualityIssue.issue_type, QualityIssue.severity, QualityIssue.status)
     )
     status_results = status_query.all()
 
     # --- Build status map
     status_map = {}
     for row in status_results:
-        key = (row.description, row.issue_type, row.severity)
+        key = (row.issue_type, row.severity)
         if key not in status_map:
             status_map[key] = {}
         status_map[key][row.status] = row.count
 
     # --- Build final response as Pydantic models
-    response_models = [
-        QualityIssueSummary(
-            description=row.description,
-            issue_type=row.issue_type,
-            severity=row.severity,
-            occurrence_count=row.occurrence_count,
-            first_occurrence=row.first_occurrence,
-            last_occurrence=row.last_occurrence,
-            statuses=status_map.get((row.description, row.issue_type, row.severity), {}),
+    response_models = []
+    for row in agg_results:
+        issue_type = row.issue_type
+        severity = row.severity
+        key = (issue_type, severity)
+        
+        # Get generic description or fallback to the issue type itself
+        description = ISSUE_TYPE_DESCRIPTIONS.get(issue_type, issue_type.replace("_", " ").capitalize())
+        
+        response_models.append(
+            QualityIssueSummary(
+                issue_id=row.issue_id,
+                description=description,
+                issue_type=issue_type,
+                severity=severity,
+                occurrence_count=row.occurrence_count,
+                first_occurrence=row.first_occurrence,
+                last_occurrence=row.last_occurrence,
+                statuses=status_map.get(key, {}),
+            )
         )
-        for row in agg_results
-    ]
 
     # --- Sort by occurrence and severity
     response_models.sort(
