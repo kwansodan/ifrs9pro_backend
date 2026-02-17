@@ -50,11 +50,18 @@ def quality_issue_comment(db_session, quality_issue, regular_user):
 
 
 def test_get_quality_issues(client, portfolio, quality_issue):
-    """Test getting all quality issues for a portfolio"""
     response = client.get(f"/portfolios/{portfolio.id}/quality-issues")
-    assert response.status_code == 200
-    assert len(response.json()) > 0
 
+    assert response.status_code == 200
+
+    data = response.json()
+    assert len(data) == 1  # since only one issue exists
+
+    issue = data[0]
+
+    assert issue["description"] == quality_issue.description
+    assert issue["occurrence_count"] == 1
+    assert quality_issue.status in issue["statuses"]
 
 def test_get_quality_issues_with_status_filter(client, portfolio, quality_issue):
     """Test getting quality issues filtered by status"""
