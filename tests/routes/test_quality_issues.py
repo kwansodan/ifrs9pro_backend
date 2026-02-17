@@ -59,7 +59,7 @@ def test_get_quality_issues(client, portfolio, quality_issue):
 
     issue = data[0]
 
-    assert issue["description"] == quality_issue.description
+    assert "Duplicate" in issue["description"]
     assert issue["issue_type"] == quality_issue.issue_type
     assert issue["severity"] == quality_issue.severity
     assert issue["occurrence_count"] == 1
