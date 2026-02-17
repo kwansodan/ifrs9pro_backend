@@ -57,7 +57,7 @@ def transform_affected_records(quality_issues: List[QualityIssue]) -> List[Quali
 @router.get(
     "/{portfolio_id}/quality-issues",
     description="Get aggregated quality issues for a specific portfolio",
-    response_model=List[Dict[str, Any]],
+    response_model=List[QualityIssueSummary],
 )
 def get_quality_issues(
     portfolio_id: int,
