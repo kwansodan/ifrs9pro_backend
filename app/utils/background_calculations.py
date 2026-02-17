@@ -251,7 +251,10 @@ async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, d
             loans = (
                 db.query(Loan)
                 .options(joinedload(Loan.client)) # Eager load client data
-                .filter(Loan.portfolio_id == portfolio_id)
+                .filter(
+                    Loan.portfolio_id == portfolio_id,
+                    Loan.outstanding_loan_balance > 0
+                )
                 .order_by(Loan.id)
                 .offset(offset)
                 .limit(batch_size)
@@ -459,7 +462,10 @@ async def process_bog_impairment_calculation_sync(
             # Fetch loans in batches
             loans = (
                 db.query(Loan)
-                .filter(Loan.portfolio_id == portfolio_id)
+                .filter(
+                    Loan.portfolio_id == portfolio_id,
+                    Loan.outstanding_loan_balance > 0
+                )
                 .order_by(Loan.id)
                 .offset(offset)
                 .limit(batch_size)
@@ -1021,7 +1027,10 @@ async def process_local_impairment_calculation_sync(
     logger.info(f"Calculating local impairment ECL for portfolio {portfolio_id}")
 
     try:
-        loans = db.query(Loan).filter(Loan.portfolio_id == portfolio_id).yield_per(2000)
+        loans = db.query(Loan).filter(
+            Loan.portfolio_id == portfolio_id,
+            Loan.outstanding_loan_balance > 0
+        ).yield_per(2000)
         
         # Standard local impairment provision rates
         stage_provision_rates = {

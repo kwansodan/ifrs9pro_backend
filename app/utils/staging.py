@@ -98,7 +98,10 @@ async def stage_loans_ecl_orm(portfolio_id: int, db: Session, user_email, first_
 
             loan_batch = (
                 db.query(Loan)
-                .filter(Loan.portfolio_id == portfolio_id)
+                .filter(
+                    Loan.portfolio_id == portfolio_id,
+                    Loan.outstanding_loan_balance > 0
+                )
                 .order_by(Loan.id)
                 .offset(offset)
                 .limit(batch_size)
@@ -243,7 +246,10 @@ async def stage_loans_local_impairment_orm(
         while True:
             loan_batch = (
                 db.query(Loan)
-                .filter(Loan.portfolio_id == portfolio_id)
+                .filter(
+                    Loan.portfolio_id == portfolio_id,
+                    Loan.outstanding_loan_balance > 0
+                )
                 .order_by(Loan.id)
                 .offset(offset)
                 .limit(batch_size)
