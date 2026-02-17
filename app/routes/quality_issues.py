@@ -67,14 +67,7 @@ def get_quality_issues(
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """
-    Production-grade aggregation:
-    - SQL-based grouping
-    - Ownership validation
-    - Efficient status distribution
-    """
-
-    # ✅ SECURITY FIX — verify ownership
+    # --- Verify portfolio ownership
     portfolio = (
         db.query(Portfolio)
         .filter(
@@ -83,54 +76,35 @@ def get_quality_issues(
         )
         .first()
     )
-
     if not portfolio:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Portfolio not found",
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found")
 
-    # -----------------------------
-    # BASE FILTER
-    # -----------------------------
+    # --- Base filters
     base_filter = [QualityIssue.portfolio_id == portfolio_id]
-
     if status_type:
         base_filter.append(QualityIssue.status == status_type)
-
     if issue_type:
         base_filter.append(QualityIssue.issue_type == issue_type)
 
-    # -----------------------------
-    # MAIN AGGREGATION QUERY
-    # -----------------------------
-    aggregated_query = (
+    # --- Aggregated query
+    agg_query = (
         db.query(
             QualityIssue.description,
             QualityIssue.issue_type,
             QualityIssue.severity,
             func.count(QualityIssue.id).label("occurrence_count"),
             func.min(QualityIssue.created_at).label("first_occurrence"),
-            func.max(
-                func.coalesce(QualityIssue.updated_at, QualityIssue.created_at)
-            ).label("last_occurrence"),
+            func.max(func.coalesce(QualityIssue.updated_at, QualityIssue.created_at)).label("last_occurrence"),
         )
         .filter(*base_filter)
-        .group_by(
-            QualityIssue.description,
-            QualityIssue.issue_type,
-            QualityIssue.severity,
-        )
+        .group_by(QualityIssue.description, QualityIssue.issue_type, QualityIssue.severity)
     )
+    agg_results = agg_query.all()
 
-    aggregated_results = aggregated_query.all()
-
-    if not aggregated_results:
+    if not agg_results:
         return []
 
-    # -----------------------------
-    # STATUS DISTRIBUTION QUERY
-    # -----------------------------
+    # --- Status distribution
     status_query = (
         db.query(
             QualityIssue.description,
@@ -140,62 +114,40 @@ def get_quality_issues(
             func.count(QualityIssue.id).label("count"),
         )
         .filter(*base_filter)
-        .group_by(
-            QualityIssue.description,
-            QualityIssue.issue_type,
-            QualityIssue.severity,
-            QualityIssue.status,
-        )
+        .group_by(QualityIssue.description, QualityIssue.issue_type, QualityIssue.severity, QualityIssue.status)
     )
-
     status_results = status_query.all()
 
-    # -----------------------------
-    # BUILD STATUS MAP
-    # -----------------------------
+    # --- Build status map
     status_map = {}
-
     for row in status_results:
         key = (row.description, row.issue_type, row.severity)
-
         if key not in status_map:
             status_map[key] = {}
-
         status_map[key][row.status] = row.count
 
-    # -----------------------------
-    # BUILD FINAL RESPONSE
-    # -----------------------------
-    response = []
-
-    for row in aggregated_results:
-        key = (row.description, row.issue_type, row.severity)
-
-        response.append(
-            {
-                "description": row.description,
-                "issue_type": row.issue_type,
-                "severity": row.severity,
-                "occurrence_count": row.occurrence_count,
-                "first_occurrence": row.first_occurrence,
-                "last_occurrence": row.last_occurrence,
-                "statuses": status_map.get(key, {}),
-            }
+    # --- Build final response as Pydantic models
+    response_models = [
+        QualityIssueSummary(
+            description=row.description,
+            issue_type=row.issue_type,
+            severity=row.severity,
+            occurrence_count=row.occurrence_count,
+            first_occurrence=row.first_occurrence,
+            last_occurrence=row.last_occurrence,
+            statuses=status_map.get((row.description, row.issue_type, row.severity), {}),
         )
+        for row in agg_results
+    ]
 
-    # -----------------------------
-    # SORT RESULTS (same logic)
-    # -----------------------------
-    response.sort(
-        key=lambda x: (
-            x["occurrence_count"],
-            x["severity"] == "high",
-            x["severity"] == "medium",
-        ),
+    # --- Sort by occurrence and severity
+    response_models.sort(
+        key=lambda x: (x.occurrence_count, x.severity == "high", x.severity == "medium"),
         reverse=True,
     )
 
-    return response
+    # --- Convert to JSON-compatible dicts for Swagger/testclient
+    return [item.model_dump() for item in response_models]
 
 
 @router.get("/{portfolio_id}/quality-issues/download", 
