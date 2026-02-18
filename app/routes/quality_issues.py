@@ -127,67 +127,66 @@ def get_quality_issues(
         "loan_customer_mismatch": "Loan has no matching client records",
     }
 
-    # --- Aggregated query (Grouped by issue_type and severity)
-    agg_query = (
-        db.query(
-            func.max(QualityIssue.id).label("issue_id"),
-            QualityIssue.issue_type,
-            QualityIssue.severity,
-            func.count(QualityIssue.id).label("occurrence_count"),
-            func.min(QualityIssue.created_at).label("first_occurrence"),
-            func.max(func.coalesce(QualityIssue.updated_at, QualityIssue.created_at)).label("last_occurrence"),
-        )
+    # --- Fetch all issues matching the filters
+    issues = (
+        db.query(QualityIssue)
         .filter(*base_filter)
-        .group_by(QualityIssue.issue_type, QualityIssue.severity)
+        .all()
     )
-    agg_results = agg_query.all()
 
-    if not agg_results:
+    if not issues:
         return []
 
-    # --- Status distribution (Grouped by issue_type and severity)
-    status_query = (
-        db.query(
-            QualityIssue.issue_type,
-            QualityIssue.severity,
-            QualityIssue.status,
-            func.count(QualityIssue.id).label("count"),
+    # --- Group and aggregate in Python
+    unique_issues = {}
+    for issue in issues:
+        key = (issue.issue_type, issue.severity)
+        
+        # Determine generic description
+        description = ISSUE_TYPE_DESCRIPTIONS.get(
+            issue.issue_type, 
+            issue.issue_type.replace("_", " ").capitalize()
         )
-        .filter(*base_filter)
-        .group_by(QualityIssue.issue_type, QualityIssue.severity, QualityIssue.status)
-    )
-    status_results = status_query.all()
-
-    # --- Build status map
-    status_map = {}
-    for row in status_results:
-        key = (row.issue_type, row.severity)
-        if key not in status_map:
-            status_map[key] = {}
-        status_map[key][row.status] = row.count
+        
+        if key not in unique_issues:
+            unique_issues[key] = {
+                "issue_id": issue.id,
+                "issue_type": issue.issue_type,
+                "description": description,
+                "severity": issue.severity,
+                "occurrence_count": 0,
+                "first_occurrence": issue.created_at,
+                "last_occurrence": issue.updated_at or issue.created_at,
+                "affected_records": [],
+                "statuses": {}
+            }
+        
+        entry = unique_issues[key]
+        entry["occurrence_count"] += 1
+        
+        # Update first occurrence
+        if issue.created_at and (not entry["first_occurrence"] or issue.created_at < entry["first_occurrence"]):
+            entry["first_occurrence"] = issue.created_at
+            
+        # Update last occurrence
+        last_occ = issue.updated_at or issue.created_at
+        if last_occ and (not entry["last_occurrence"] or last_occ > entry["last_occurrence"]):
+            entry["last_occurrence"] = last_occ
+            
+        # Add to affected_records (handling both list and dict formats)
+        if isinstance(issue.affected_records, list):
+            entry["affected_records"].extend(issue.affected_records)
+        elif isinstance(issue.affected_records, dict):
+            entry["affected_records"].append(issue.affected_records)
+            
+        # Update statuses distribution
+        entry["statuses"][issue.status] = entry["statuses"].get(issue.status, 0) + 1
 
     # --- Build final response as Pydantic models
-    response_models = []
-    for row in agg_results:
-        issue_type = row.issue_type
-        severity = row.severity
-        key = (issue_type, severity)
-        
-        # Get generic description or fallback to the issue type itself
-        description = ISSUE_TYPE_DESCRIPTIONS.get(issue_type, issue_type.replace("_", " ").capitalize())
-        
-        response_models.append(
-            QualityIssueSummary(
-                issue_id=row.issue_id,
-                description=description,
-                issue_type=issue_type,
-                severity=severity,
-                occurrence_count=row.occurrence_count,
-                first_occurrence=row.first_occurrence,
-                last_occurrence=row.last_occurrence,
-                statuses=status_map.get(key, {}),
-            )
-        )
+    response_models = [
+        QualityIssueSummary(**data)
+        for data in unique_issues.values()
+    ]
 
     # --- Sort by occurrence and severity
     response_models.sort(
