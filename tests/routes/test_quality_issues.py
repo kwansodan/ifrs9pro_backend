@@ -2,19 +2,6 @@ import pytest
 from app.models import Portfolio, QualityIssue, QualityIssueComment
 
 
-@pytest.fixture
-def portfolio(db_session, regular_user, tenant):
-    """Create a test portfolio"""
-    portfolio = Portfolio(
-        name="Test Portfolio",
-        user_id=regular_user.id,
-        tenant_id=tenant.id,
-        description="Test description",
-    )
-    db_session.add(portfolio)
-    db_session.commit()
-    db_session.refresh(portfolio)
-    return portfolio
 
 
 @pytest.fixture
