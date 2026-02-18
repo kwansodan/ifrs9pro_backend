@@ -1082,3 +1082,4 @@ class QualityIssueSummary(BaseModel):
     first_occurrence: Optional[datetime]
     last_occurrence: Optional[datetime]
     statuses: Dict[str, int]
+    affected_records: List[Dict]

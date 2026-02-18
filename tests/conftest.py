@@ -10,7 +10,8 @@ from app.models import (
     SubscriptionPlan,
     TenantSubscription,
     SubscriptionUsage,
-    Tenant
+    Tenant,
+    Portfolio
 )
 from app.routes import reports
 
@@ -222,3 +223,16 @@ def client(db_session, admin_user, regular_user, admin_with_active_subscription,
 
     return TestClient(app)
 
+@pytest.fixture
+def portfolio(db_session, regular_user, tenant):
+    """Create a test portfolio"""
+    portfolio = Portfolio(
+        name="Test Portfolio",
+        user_id=regular_user.id,
+        tenant_id=tenant.id,
+        description="Test description",
+    )
+    db_session.add(portfolio)
+    db_session.commit()
+    db_session.refresh(portfolio)
+    return portfolio
