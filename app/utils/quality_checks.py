@@ -281,68 +281,6 @@ def create_quality_issues_if_needed(db: Session, portfolio_id: int) -> Dict[str,
 def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str = None) -> Dict[str, Any]:
     """
     Create quality issues for a portfolio and save them to the database.
-    Optimized for large datasets with batch processing and progress reporting.
-    
-    Args:
-        db: Database session
-        portfolio_id: ID of the portfolio to check
-        task_id: Optional task ID for progress reporting
-        
-    Returns:
-        Dictionary with counts of issues by type
-    """
-    from app.utils.background_tasks import get_task_manager
-    import logging
-    
-    logger = logging.getLogger(__name__)
-    logger.info(f"Starting quality issue creation for portfolio {portfolio_id}")
-    
-    # Get the portfolio
-    portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
-    if not portfolio:
-        raise ValueError(f"Portfolio with ID {portfolio_id} not found")
-        
-    tenant_id = portfolio.tenant_id
-
-    # Initialize issue counts dictionary
-    issue_counts = {
-        "duplicate_customer_ids": 0,
-        "duplicate_addresses": 0,
-        "duplicate_dob": 0,
-        "duplicate_loan_ids": 0,
-        "duplicate_phones": 0,
-        "clients_without_matching_loans": 0,
-        "loans_without_matching_clients": 0,
-        "missing_dob": 0,
-        "missing_addresses": 0,
-        "missing_loan_numbers": 0,
-        "missing_loan_dates": 0,
-        "missing_loan_terms": 0,
-        "missing_interest_rates": 0,
-        "missing_loan_amounts": 0,
-    }
-    
-    # First, clear existing quality issues for this portfolio
-    if task_id:
-        get_task_manager().update_task(
-            task_id,
-            status_message="Clearing existing quality issues"
-        )
-        time.sleep(0.1)
-    
-    try:
-        deleted_count = db.query(QualityIssue).filter(
-            QualityIssue.portfolio_id == portfolio_id
-        ).delete()
-        db.commit()
-        logger.info(f"Deleted {deleted_count} existing quality issues for portfolio {portfolio_id}")
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Error deleting existing quality issues: {str(e)}")
-    
-def create_and_save_quality_issues(db: Session, portfolio_id: int, task_id: str = None) -> Dict[str, Any]:
-    """
-    Create quality issues for a portfolio and save them to the database.
     Optimized for large datasets with batch processing.
     """
     from app.utils.background_tasks import get_task_manager

@@ -243,6 +243,9 @@ async def process_client_data_sync(file_path, portfolio_id, tenant_id, db):
                     "employee_id": str(row.get("employee_id", "")),
                     "last_name": str(row.get("last_name", row.get("lastname", ""))),
                     "other_names": str(row.get("other_names", row.get("othernames", ""))),
+                    "residential_address": str(row.get("residential_address", "") or ""),
+                    "phone_number": str(row.get("phone_number", "") or ""),
+                    "date_of_birth": row.get("date_of_birth") or None,  # keep as None so DB stores NULL cleanly
                     "client_type": "individual"
                 }
                 line = "\t".join(processed_row.values())
