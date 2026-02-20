@@ -1,0 +1,42 @@
+FROM python:3.12-slim
+
+# Faster + reliable apt mirror (keep yours)
+RUN echo "deb http://151.101.130.132/debian trixie main" > /etc/apt/sources.list && \
+    echo "deb http://151.101.130.132/debian trixie-updates main" >> /etc/apt/sources.list && \
+    echo "deb http://151.101.130.132/debian-security trixie-security main" >> /etc/apt/sources.list
+
+# System dependencies (same as prod — correct)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python settings optimized for dev
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+
+WORKDIR /app
+
+# Install dependencies only (no code copy!)
+COPY requirements.txt .
+
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Create runtime dirs
+RUN mkdir -p /app/reports /app/site
+
+# Expose port
+EXPOSE 8000
+
+# Healthcheck stays useful in dev
+HEALTHCHECK CMD curl -f http://localhost:8000/health || exit 1
+
+# IMPORTANT:
+# Do NOT start uvicorn here.
+# Dev compose will control it.
+CMD ["sleep", "infinity"]

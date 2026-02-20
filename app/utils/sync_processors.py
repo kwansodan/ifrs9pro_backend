@@ -99,13 +99,14 @@ async def process_loan_details_sync(file_path, portfolio_id, tenant_id, db):
                 "loan_term": "loan_term", "monthly_installment": "monthly_installment",
                 "accumulated_arrears": "accumulated_arrears", "outstanding_loan_balance": "outstanding_loan_balance",
                 "loan_issue_date": "loan_issue_date", "deduction_start_period": "deduction_start_period",
-                "submission_period": "submission_period", "maturity_period": "maturity_period"
+                "submission_period": "submission_period", "maturity_period": "maturity_period",
+                "theoretical_balance": "theoretical_balance"
             }
             rename_map = {k: v for k, v in target_columns.items() if k in df.columns}
             if rename_map: df = df.rename(rename_map)
 
             # Numeric Conversion
-            num_cols = ["loan_amount", "loan_term", "monthly_installment", "accumulated_arrears", "outstanding_loan_balance"]
+            num_cols = ["loan_amount", "loan_term", "monthly_installment", "accumulated_arrears", "outstanding_loan_balance", "theoretical_balance"]
             for col in num_cols:
                 if col in df.columns:
                     df = df.with_columns(
@@ -145,6 +146,17 @@ async def process_loan_details_sync(file_path, portfolio_id, tenant_id, db):
             else:
                 df = df.with_columns(pl.lit(0.0).alias("ndia"))
 
+            # Calculate outstanding_balance (difference)
+            # outstanding_balance = (Outstanding balance) - (Theoritical balance + Accumulated arrears)
+            if "outstanding_loan_balance" in df.columns:
+                theo_bal = pl.col("theoretical_balance") if "theoretical_balance" in df.columns else pl.lit(0.0)
+                acc_arr = pl.col("accumulated_arrears") if "accumulated_arrears" in df.columns else pl.lit(0.0)
+                df = df.with_columns([
+                    (pl.col("outstanding_loan_balance") - (theo_bal + acc_arr)).alias("balance_difference")
+                ])
+            else:
+                df = df.with_columns(pl.lit(0.0).alias("balance_difference"))
+
             # Add metadata
             df = df.with_columns([
                 pl.lit(portfolio_id).alias("portfolio_id"),
@@ -160,7 +172,8 @@ async def process_loan_details_sync(file_path, portfolio_id, tenant_id, db):
             copy_cols = ["portfolio_id", "tenant_id", "subscription_id", "loan_no", "employee_id", 
                          "loan_amount", "outstanding_loan_balance", "ndia", "monthly_installment", 
                          "accumulated_arrears", "loan_term", "deduction_start_period", 
-                         "loan_issue_date", "submission_period", "maturity_period"]
+                         "loan_issue_date", "submission_period", "maturity_period",
+                         "theoretical_balance", "balance_difference"]
             copy_cols = [c for c in copy_cols if c in df.columns]
             
             # Format batch for COPY

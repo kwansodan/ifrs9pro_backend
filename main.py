@@ -37,7 +37,7 @@ import asyncio
 from app.utils.billing import require_active_subscription
 from contextlib import asynccontextmanager
 from app.database import SessionLocal
-from app.utils.seed_subscription_plans import seed_subscription_plans
+# from app.utils.seed_subscription_plans import seed_subscription_plans
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -60,9 +60,9 @@ async def lifespan(app):
     # Seed subscription plans
     db = SessionLocal()
     try:
-        logger.info("Seeding subscription plans...")
-        seed_subscription_plans(db)
-        logger.info("Subscription plans seeded successfully")
+        # seed_subscription_plans(db)
+        # logger.info("Subscription plans seeded successfully")
+        pass
     except Exception as e:
         logger.error(f"Error seeding subscription plans: {e}")
     finally:

@@ -1057,6 +1057,7 @@ def generate_ecl_detailed_report(
             db.query(func.sum(Loan.ead * Loan.lgd)).filter(Loan.portfolio_id == portfolio_id).scalar()
         ) or 0.0
         total_ecl_calc = db.query(func.sum(Loan.final_ecl)).filter(Loan.portfolio_id == portfolio_id).scalar() or 0.0
+        total_balance_diff_calc = db.query(func.sum(Loan.balance_difference)).filter(Loan.portfolio_id == portfolio_id).scalar() or 0.0
         total_loan_count_actual = (
             db.query(func.count(Loan.id)).filter(Loan.portfolio_id == portfolio_id).scalar()
         ) or 0
@@ -1126,6 +1127,7 @@ def generate_ecl_detailed_report(
                     "employee_name": client_name,
                     "loan_value": str(loan_data.loan_amount or '0'),
                     "outstanding_loan_balance": str(float(loan_data.ead or 0.0)),
+                    "balance_difference": str(float(loan_data.balance_difference or 0.0)),
                     "accumulated_arrears": str(float(loan_data.accumulated_arrears or 0.0)),
                     "ndia": str(float(loan_data.ndia or 0.0)),
                     "stage": str(loan_data.ifrs9_stage or 'Unknown'),
@@ -1139,7 +1141,8 @@ def generate_ecl_detailed_report(
                     loan_totals = {
                         "ead": loan_data.ead,
                         "lgd": lgd,
-                        "ecl": ecl_amount
+                        "ecl": ecl_amount,
+                        "balance_difference": float(loan_data.balance_difference or 0.0)
                     }
 
                     return loan_entry, loan_totals
@@ -1156,12 +1159,7 @@ def generate_ecl_detailed_report(
             batch_loan_count = 0
             for loan_entry, loan_totals in batch_results:
                 if loan_entry and loan_totals:
-                    total_loan_count_actual += 1
                     batch_loan_count += 1
-                    total_ead_calc += Decimal(str(loan_totals["ead"] or 0))
-                    total_lgd_calc += Decimal(str(loan_totals["lgd"] or 0))
-                    total_ecl_calc += Decimal(str(loan_totals["ecl"] or 0))
-
                     if not first_loan:
                         temp_file.write(',\n')
                     first_loan = False
@@ -1195,6 +1193,7 @@ def generate_ecl_detailed_report(
             "total_ead": total_ead_calc,
             "total_lgd": total_lgd_calc,
             "total_ecl": total_ecl_calc,
+            "total_balance_difference": total_balance_diff_calc,
             "total_loan_count": total_loan_count_actual
         }
 
@@ -1301,24 +1300,32 @@ def generate_ecl_report_summarised(
         "stage_1": {
             "loan_value": stage_1_loan_value,
             "outstanding_balance": stage_1_outstanding,
+            "balance_difference": stage_1_data.get("balance_difference", 0),
             "ecl": stage_1_ecl,
             "num_loans": stage_1_count
         },
         "stage_2": {
             "loan_value": stage_2_loan_value,
             "outstanding_balance": stage_2_outstanding,
+            "balance_difference": stage_2_data.get("balance_difference", 0),
             "ecl": stage_2_ecl,
             "num_loans": stage_2_count
         },
         "stage_3": {
             "loan_value": stage_3_loan_value,
             "outstanding_balance": stage_3_outstanding,
+            "balance_difference": stage_3_data.get("balance_difference", 0),
             "ecl": stage_3_ecl,
             "num_loans": stage_3_count
         },
         "total": {
             "loan_value": total_loan_value,
             "outstanding_balance": total_outstanding,
+            "balance_difference": sum([
+                stage_1_data.get("balance_difference", 0),
+                stage_2_data.get("balance_difference", 0),
+                stage_3_data.get("balance_difference", 0)
+            ]),
             "ecl": total_ecl,
             "num_loans": total_loans
         }
@@ -1469,6 +1476,7 @@ def generate_local_impairment_details_report(
                         "employee_name": client_name,
                         "loan_value": str(loan_data.loan_amount or '0'),
                         "outstanding_balance": str(loan_data.outstanding_loan_balance or '0'),
+                        "balance_difference": str(float(loan_data.balance_difference or 0.0)),
                         "accumulated_arrears": str(loan_data.accumulated_arrears or '0'),
                         "ndia": str(float(loan_data.ndia or 0.0)),
                         "impairment_category": category,
@@ -1652,27 +1660,32 @@ def generate_local_impairment_report_summarised(
         "report_run_date": datetime.now().date(),
         "current": {
             "loan_value": current_loan_value,
-            "outstanding_balance": current_loan_value,  # Same as loan value in this context
+            "outstanding_balance": current_loan_value,
+            "balance_difference": current_data.get("balance_difference", 0),
             "provision": current_provision
         },
         "olem": {
             "loan_value": olem_loan_value,
             "outstanding_balance": olem_loan_value,
+            "balance_difference": olem_data.get("balance_difference", 0),
             "provision": olem_provision
         },
         "substandard": {
             "loan_value": substandard_loan_value,
             "outstanding_balance": substandard_loan_value,
+            "balance_difference": substandard_data.get("balance_difference", 0),
             "provision": substandard_provision
         },
         "doubtful": {
             "loan_value": doubtful_loan_value,
             "outstanding_balance": doubtful_loan_value,
+            "balance_difference": doubtful_data.get("balance_difference", 0),
             "provision": doubtful_provision
         },
         "loss": {
             "loan_value": loss_loan_value,
             "outstanding_balance": loss_loan_value,
+            "balance_difference": loss_data.get("balance_difference", 0),
             "provision": loss_provision
         }
     }

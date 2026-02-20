@@ -66,6 +66,7 @@ async def process_loan_details_with_progress(
             "cancelled": "cancelled",
             "outstanding loan balance": "outstanding_loan_balance",
             "accumulated arrears": "accumulated_arrears",
+            "theoretical balance": "theoretical_balance",
             "ndia": "ndia",
             "prevailing posted repayment": "prevailing_posted_repayment",
             "prevailing due payment": "prevailing_due_payment",
@@ -220,7 +221,7 @@ async def process_loan_details_with_progress(
             "principal_due", "interest_due", "total_due", "principal_paid", 
             "interest_paid", "total_paid", "principal_paid2", "interest_paid2", 
             "total_paid2", "outstanding_principal", "outstanding_interest", 
-            "outstanding_loan_balance", "days_in_arrears", "ndia", "recovery_rate",
+            "outstanding_loan_balance", "theoretical_balance", "days_in_arrears", "ndia", "recovery_rate",
             "accumulated_arrears", "prevailing_posted_repayment", 
             "prevailing_due_payment", "current_missed_deduction", "admin_charge"
         ]
@@ -450,6 +451,19 @@ async def process_loan_details_with_progress(
                         pl.col(col).cast(pl.Utf8).is_in(bool_values).fill_null(False)
                     )
             
+            # Calculate balance_difference (difference between reported and theoretical+arrears)
+            # balance_difference = (Outstanding balance) - (Theoretical balance + Accumulated arrears)
+            if "balance_difference" not in df_chunk.columns and "outstanding_loan_balance" in df_chunk.columns:
+                df_chunk = df_chunk.with_columns([
+                    (pl.col("outstanding_loan_balance") - (
+                        pl.col("theoretical_balance").fill_null(0.0) if "theoretical_balance" in df_chunk.columns else pl.lit(0.0)
+                    ) - (
+                        pl.col("accumulated_arrears").fill_null(0.0) if "accumulated_arrears" in df_chunk.columns else pl.lit(0.0)
+                    )).alias("balance_difference")
+                ])
+            elif "balance_difference" not in df_chunk.columns:
+                df_chunk = df_chunk.with_columns(pl.lit(0.0).alias("balance_difference"))
+
             # Add portfolio_id to all records
             df_chunk = df_chunk.with_columns(pl.lit(portfolio_id).alias("portfolio_id"))
             
@@ -534,7 +548,7 @@ async def process_loan_details_with_progress(
                                "principal_due", "interest_due", "total_due", "principal_paid", 
                                "interest_paid", "total_paid", "principal_paid2", "interest_paid2", 
                                "total_paid2", "paid", "cancelled", "outstanding_loan_balance", 
-                               "accumulated_arrears", "ndia", "prevailing_posted_repayment", 
+                               "accumulated_arrears", "theoretical_balance", "balance_difference", "ndia", "prevailing_posted_repayment", 
                                "prevailing_due_payment", "current_missed_deduction", 
                                "admin_charge", "recovery_rate", "deduction_status"]:
                         if col in df_insert.columns:
@@ -592,7 +606,7 @@ async def process_loan_details_with_progress(
                                 "principal_due", "interest_due", "total_due", "principal_paid", 
                                 "interest_paid", "total_paid", "principal_paid2", "interest_paid2", 
                                 "total_paid2", "paid", "cancelled", "outstanding_loan_balance", 
-                                "accumulated_arrears", "ndia", "prevailing_posted_repayment", 
+                                "accumulated_arrears", "theoretical_balance", "balance_difference", "ndia", "prevailing_posted_repayment", 
                                 "prevailing_due_payment", "current_missed_deduction", 
                                 "admin_charge", "recovery_rate", "deduction_status"
                             ],
