@@ -344,6 +344,27 @@ async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, d
 
             offset += batch_size
 
+        # Get summary from DB
+        summary_query = db.query(
+            Loan.ifrs9_stage,
+            func.count(Loan.id).label("num_loans"),
+            func.sum(Loan.loan_amount).label("total_loan_value"),
+            func.sum(Loan.ead).label("outstanding_balance"),
+            func.sum(Loan.balance_difference).label("balance_difference"),
+            func.sum(Loan.final_ecl).label("provision_amount")
+        ).filter(Loan.portfolio_id == portfolio_id).group_by(Loan.ifrs9_stage).all()
+
+        result_summary = {}
+        for row in summary_query:
+            stage_name = row.ifrs9_stage or "Unknown"
+            result_summary[stage_name] = {
+                "num_loans": row.num_loans,
+                "total_loan_value": float(row.total_loan_value or 0),
+                "outstanding_balance": float(row.outstanding_balance or 0),
+                "balance_difference": float(row.balance_difference or 0),
+                "provision_amount": float(row.provision_amount or 0)
+            }
+
         # Save summary record
         calculation_result = CalculationResult(
             portfolio_id=portfolio_id,
@@ -352,7 +373,7 @@ async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, d
             provision_percentage=0.0,
             reporting_date=datetime.now().date(),
             config={},
-            result_summary={},
+            result_summary=result_summary,
         )
         db.add(calculation_result)
         db.commit()
@@ -535,6 +556,27 @@ async def process_bog_impairment_calculation_sync(
 
             offset += batch_size
 
+        # Get summary from DB
+        summary_query = db.query(
+            Loan.bog_stage,
+            func.count(Loan.id).label("num_loans"),
+            func.sum(Loan.loan_amount).label("total_loan_value"),
+            func.sum(Loan.ead).label("outstanding_balance"),
+            func.sum(Loan.balance_difference).label("balance_difference"),
+            func.sum(Loan.bog_provision).label("provision_amount")
+        ).filter(Loan.portfolio_id == portfolio_id).group_by(Loan.bog_stage).all()
+
+        result_summary = {}
+        for row in summary_query:
+            cat_name = row.bog_stage or "Unknown"
+            result_summary[cat_name] = {
+                "num_loans": row.num_loans,
+                "total_loan_value": float(row.total_loan_value or 0),
+                "outstanding_balance": float(row.outstanding_balance or 0),
+                "balance_difference": float(row.balance_difference or 0),
+                "provision_amount": float(row.provision_amount or 0)
+            }
+
         # -------------------------------------------------------
         # 3. SAVE SUMMARY RECORD
         # -------------------------------------------------------
@@ -545,7 +587,7 @@ async def process_bog_impairment_calculation_sync(
             provision_percentage=0.0,
             reporting_date=datetime.now().date(),
             config={},
-            result_summary={}
+            result_summary=result_summary
         )
         db.add(calculation_result)
         db.commit()

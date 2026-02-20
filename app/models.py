@@ -404,6 +404,7 @@ class Loan(TenantMixin,Base):
     ecl_lifetime = Column(Numeric(precision=38, scale=2), default=0)
     final_ecl = Column(Numeric(precision=38, scale=2), default=0)
     bog_provision = Column(Numeric(precision=38, scale=2), default=0)
+    balance_difference = Column(Numeric(precision=38, scale=2), default=0)
     calculation_date = Column(DateTime(timezone=False), nullable=True)
 
 class Guarantee(TenantMixin,Base):

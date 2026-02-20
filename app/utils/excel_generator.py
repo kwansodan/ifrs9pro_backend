@@ -499,6 +499,12 @@ def populate_ecl_detailed_report(
             ecl = float(loan.get('ecl', '0'))
             ws.cell(row=row, column=13, value=ecl).number_format = currency_format
 
+            # Outsanding balance (difference)
+            balance_diff = float(loan.get('balance_difference', '0'))
+            ws.cell(row=row, column=14, value=balance_diff).number_format = currency_format
+            if row == 15: # Add header if it's the first row
+                ws.cell(row=14, column=14, value="Oustanding balance")
+
         except (ValueError, TypeError) as e:
              print(f"Warning: Could not parse data for row {row}, loan_id {loan.get('loan_id', 'N/A')}. Error: {e}")
              # Optionally fill cells with error indicators or skip row
@@ -591,9 +597,15 @@ def populate_ecl_report_summarised(
         ws[f'{col}19'].number_format = currency_format
     
     # ECL amounts
-    ws['C20'] = report_data.get('stage_1', {}).get('ecl', 0)
+    ws['C20'] = report_data.get('stage_2', {}).get('ecl', 0)
     ws['D20'] = report_data.get('stage_2', {}).get('ecl', 0)
     ws['E20'] = report_data.get('stage_3', {}).get('ecl', 0)
+
+    # Outsanding balance (difference)
+    ws['B21'] = "Oustanding balance"
+    ws['C21'] = report_data.get('stage_1', {}).get('balance_difference', 0)
+    ws['D21'] = report_data.get('stage_2', {}).get('balance_difference', 0)
+    ws['E21'] = report_data.get('stage_3', {}).get('balance_difference', 0)
     
     # Apply currency format to ECL amounts
     for col in ['C', 'D', 'E']:
@@ -695,6 +707,12 @@ def populate_local_impairment_details_report(
             provision_amount = float(loan.get('provision_amount', '0'))
             ws.cell(row=row, column=10, value=provision_amount).number_format = currency_format
 
+            # Outsanding balance (difference)
+            balance_diff = float(loan.get('balance_difference', '0'))
+            ws.cell(row=row, column=11, value=balance_diff).number_format = currency_format
+            if row == 15: # Add header if it's the first row
+                ws.cell(row=14, column=11, value="Oustanding balance")
+
         except (ValueError, TypeError) as e:
              print(f"Warning: Could not parse data for row {row}, loan_id {loan.get('loan_id', 'N/A')}. Error: {e}")
              ws.cell(row=row, column=1, value=loan.get('loan_id', 'N/A'))
@@ -791,6 +809,14 @@ def populate_local_impairment_report_summarised(
     ws['E20'] = report_data.get('substandard', {}).get('provision', 0)
     ws['F20'] = report_data.get('doubtful', {}).get('provision', 0)
     ws['G20'] = report_data.get('loss', {}).get('provision', 0)
+    
+    # Outsanding balance (difference)
+    ws['B21'] = "Oustanding balance"
+    ws['C21'] = report_data.get('current', {}).get('balance_difference', 0)
+    ws['D21'] = report_data.get('olem', {}).get('balance_difference', 0)
+    ws['E21'] = report_data.get('substandard', {}).get('balance_difference', 0)
+    ws['F21'] = report_data.get('doubtful', {}).get('balance_difference', 0)
+    ws['G21'] = report_data.get('loss', {}).get('balance_difference', 0)
     
     # Apply currency format to provision amounts
     for col in ['C', 'D', 'E', 'F', 'G']:
