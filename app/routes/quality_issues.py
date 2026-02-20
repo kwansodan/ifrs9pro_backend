@@ -61,15 +61,23 @@ def transform_affected_records(quality_issues: List[QualityIssue]) -> List[Quali
 def excel_safe(values):
     """
     Convert SQLAlchemy rows to list/tuple and safely handle complex values (dict/list)
-    for OpenPyXL write-only mode.
+    and timezone-aware datetimes for OpenPyXL write-only mode.
+    openpyxl write-only mode cannot handle: dicts, lists, or timezone-aware datetimes.
     """
+    from datetime import datetime
     if not isinstance(values, (list, tuple)):
         values = tuple(values)
-        
-    return [
-        str(v) if isinstance(v, (dict, list)) else v
-        for v in values
-    ]
+
+    result = []
+    for v in values:
+        if isinstance(v, (dict, list)):
+            result.append(str(v))
+        elif isinstance(v, datetime) and v.tzinfo is not None:
+            # Strip timezone info — openpyxl write-only mode rejects tz-aware datetimes
+            result.append(v.replace(tzinfo=None))
+        else:
+            result.append(v)
+    return result
 
 
 @router.get(
@@ -245,7 +253,7 @@ def download_all_quality_issues_excel(
 
     # ---- Stream issues in chunks
     for issue in query.yield_per(1000):
-        ws.append([
+        ws.append(excel_safe([
             issue.id,
             issue.issue_type,
             issue.description,
@@ -253,7 +261,7 @@ def download_all_quality_issues_excel(
             issue.status,
             issue.created_at,
             issue.updated_at,
-        ])
+        ]))
 
     # ---- Comments sheet (optional)
     if include_comments:
@@ -283,7 +291,11 @@ def download_all_quality_issues_excel(
 
     # ---- Save to memory buffer
     buffer = BytesIO()
-    wb.save(buffer)
+    try:
+        wb.save(buffer)
+    except Exception as e:
+        logger.error(f"Failed to serialize quality issues workbook for portfolio {portfolio_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to generate Excel report: {str(e)}")
     buffer.seek(0)
 
     filename = f"quality_issues_{portfolio_id}.xlsx"
@@ -768,7 +780,7 @@ async def download_quality_issue_excel(
         "Severity", "Status", "Created", "Updated"
     ])
 
-    ws.append([
+    ws.append(excel_safe([
         issue.id,
         issue.issue_type,
         issue.description,
@@ -776,7 +788,7 @@ async def download_quality_issue_excel(
         issue.status,
         issue.created_at,
         issue.updated_at
-    ])
+    ]))
 
     # ---- Affected records sheet
     if issue.affected_records and isinstance(issue.affected_records, list):
@@ -813,7 +825,11 @@ async def download_quality_issue_excel(
 
     # ---- Save buffer
     buffer = BytesIO()
-    wb.save(buffer)
+    try:
+        wb.save(buffer)
+    except Exception as e:
+        logger.error(f"Failed to serialize quality issue workbook for issue {issue_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to generate Excel report: {str(e)}")
     buffer.seek(0)
 
     filename = f"quality_issue_{issue_id}.xlsx"
