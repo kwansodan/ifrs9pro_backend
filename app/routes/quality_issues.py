@@ -19,6 +19,8 @@ from io import BytesIO
 import pandas as pd
 import logging
 
+logger = logging.getLogger(__name__)
+
 from app.database import get_db
 from app.dependencies import get_tenant_db
 from app.models import Portfolio, User, QualityIssue, QualityIssueComment
@@ -738,7 +740,7 @@ def recheck_quality_issues(
             description="Download a specific quality issue as Excel", 
             status_code=status.HTTP_200_OK,
             responses={404: {"description": "Portfolio not found"},
-                       401: {"description": "Not Aunthenticated"},}
+                       401: {"description": "Not Authenticated"},}
                        )
 async def download_quality_issue_excel(
     portfolio_id: int,
@@ -770,7 +772,8 @@ async def download_quality_issue_excel(
     if not issue:
         raise HTTPException(404, "Quality issue not found")
 
-    wb = Workbook(write_only=True)
+    wb = Workbook()
+    wb.remove(wb.active)  # remove default blank sheet
 
     # ---- Issue details sheet
     ws = wb.create_sheet("Issue")
