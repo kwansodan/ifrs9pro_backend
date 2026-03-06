@@ -1045,6 +1045,69 @@ async def calculate_local_provision(
     except Exception as e:
         logger.error(f"Local Impairment calculation task failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{portfolio_id}/calculate-eir",
+             responses={404: {"description": "Portfolio not found"},
+                        401: {"description": "Not authenticated"}},
+             description="Calculate and update Effective Interest Rate (EIR) for all loans with open balances in a portfolio.")
+async def calculate_portfolio_eir(
+    portfolio_id: int,
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Calculate and update EIR for all loans with open balances.
+    """
+    # Verify portfolio exists
+    portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
+    if not portfolio:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+
+    try:
+        from app.utils.background_calculations import update_portfolio_eir_sync
+        result = await update_portfolio_eir_sync(portfolio_id, db)
+        
+        if "error" in result:
+            raise HTTPException(status_code=500, detail=result["error"])
+            
+        return result
+    except Exception as e:
+        logger.error(f"EIR calculation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{portfolio_id}/calculate-ead",
+             responses={404: {"description": "Portfolio not found"},
+                        401: {"description": "Not authenticated"}},
+             description="Calculate and update Exposure at Default (EAD) for all loans with open balances in a portfolio.")
+async def calculate_portfolio_ead(
+    portfolio_id: int,
+    reporting_date: Optional[date] = None,
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Calculate and update EAD for all loans with open balances.
+    """
+    # Verify portfolio exists
+    portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
+    if not portfolio:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+
+    try:
+        from app.utils.background_calculations import update_portfolio_ead_sync
+        date_str = reporting_date.isoformat() if reporting_date else None
+        
+        result = await update_portfolio_ead_sync(portfolio_id, db, date_str)
+        
+        if "error" in result:
+            raise HTTPException(status_code=500, detail=result["error"])
+            
+        return result
+    except Exception as e:
+        logger.error(f"EAD calculation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
     
 
 
