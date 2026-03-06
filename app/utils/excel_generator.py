@@ -11,6 +11,9 @@ from datetime import datetime
 import traceback
 
 
+ECL_NARRATIVE = "The latest ECL calculation and the related report below covers only assets with  open balances"
+
+
 def create_report_excel(
     portfolio_name: str,
     report_type: str,
@@ -79,12 +82,16 @@ def create_report_excel(
     thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
     # Add title
-    ws['A1'] = f"{portfolio_name} - {report_type} Report"
-    ws['A1'].font = title_font; ws.merge_cells('A1:D1'); ws['A1'].alignment = Alignment(horizontal='center')
-    ws['A2'] = f"Generated on: {report_date.strftime('%B %d, %Y')}"
-    ws['A2'].font = subtitle_font; ws.merge_cells('A2:D2'); ws['A2'].alignment = Alignment(horizontal='center')
+    ws['A1'] = ECL_NARRATIVE
+    ws['A1'].font = Font(name='Calibri', size=11, italic=True)
+    ws.merge_cells('A1:D1')
 
-    current_row = 4
+    ws['A2'] = f"{portfolio_name} - {report_type} Report"
+    ws['A2'].font = title_font; ws.merge_cells('A2:D2'); ws['A2'].alignment = Alignment(horizontal='center')
+    ws['A3'] = f"Generated on: {report_date.strftime('%B %d, %Y')}"
+    ws['A3'].font = subtitle_font; ws.merge_cells('A3:D3'); ws['A3'].alignment = Alignment(horizontal='center')
+
+    current_row = 5
     if isinstance(report_data, dict):
         ws.cell(row=current_row, column=1, value="Summary").font = subtitle_font; current_row += 1
 
@@ -420,6 +427,9 @@ def populate_ecl_detailed_report(
     currency_format = '#,##0.00'
     percentage_format = '0.00%'
 
+    ws['A1'] = ECL_NARRATIVE
+    ws['A1'].font = Font(name='Calibri', size=11, italic=True)
+
     # Populate header information from report_data
     ws['B3'] = report_date
     ws['B4'] = report_data.get('report_run_date', datetime.now().strftime("%Y-%m-%d"))
@@ -499,11 +509,11 @@ def populate_ecl_detailed_report(
             ecl = float(loan.get('ecl', '0'))
             ws.cell(row=row, column=13, value=ecl).number_format = currency_format
 
-            # Outsanding balance (difference)
+            # Outstanding balance (difference)
             balance_diff = float(loan.get('balance_difference', '0'))
             ws.cell(row=row, column=14, value=balance_diff).number_format = currency_format
             if row == 15: # Add header if it's the first row
-                ws.cell(row=14, column=14, value="Oustanding balance")
+                ws.cell(row=14, column=14, value="Outstanding Balance Difference")
 
         except (ValueError, TypeError) as e:
              print(f"Warning: Could not parse data for row {row}, loan_id {loan.get('loan_id', 'N/A')}. Error: {e}")
@@ -572,6 +582,9 @@ def populate_ecl_report_summarised(
     currency_format = '#,##0.00'
     percentage_format = '0.00%'
     
+    ws['A1'] = ECL_NARRATIVE
+    ws['A1'].font = Font(name='Calibri', size=11, italic=True)
+
     # Populate header information
     ws['B3'] = report_date
     ws['B4'] = report_data.get('report_run_date', datetime.now().date())
@@ -601,8 +614,8 @@ def populate_ecl_report_summarised(
     ws['D20'] = report_data.get('stage_2', {}).get('ecl', 0)
     ws['E20'] = report_data.get('stage_3', {}).get('ecl', 0)
 
-    # Outsanding balance (difference)
-    ws['B21'] = "Oustanding balance"
+    # Outstanding balance (difference)
+    ws['B21'] = "Outstanding Balance Difference"
     ws['C21'] = report_data.get('stage_1', {}).get('balance_difference', 0)
     ws['D21'] = report_data.get('stage_2', {}).get('balance_difference', 0)
     ws['E21'] = report_data.get('stage_3', {}).get('balance_difference', 0)
@@ -644,6 +657,9 @@ def populate_local_impairment_details_report(
     ws = wb.active
     currency_format = '#,##0.00'
     percentage_format = '0.00%'
+
+    ws['A1'] = ECL_NARRATIVE
+    ws['A1'].font = Font(name='Calibri', size=11, italic=True)
 
     # Populate header information from report_data
     ws['B3'] = report_date
@@ -707,11 +723,11 @@ def populate_local_impairment_details_report(
             provision_amount = float(loan.get('provision_amount', '0'))
             ws.cell(row=row, column=10, value=provision_amount).number_format = currency_format
 
-            # Outsanding balance (difference)
+            # Outstanding balance (difference)
             balance_diff = float(loan.get('balance_difference', '0'))
             ws.cell(row=row, column=11, value=balance_diff).number_format = currency_format
             if row == 15: # Add header if it's the first row
-                ws.cell(row=14, column=11, value="Oustanding balance")
+                ws.cell(row=14, column=11, value="Outstanding Balance Difference")
 
         except (ValueError, TypeError) as e:
              print(f"Warning: Could not parse data for row {row}, loan_id {loan.get('loan_id', 'N/A')}. Error: {e}")
@@ -775,6 +791,9 @@ def populate_local_impairment_report_summarised(
     currency_format = '#,##0.00'
     percentage_format = '0.00%'
     
+    ws['A1'] = ECL_NARRATIVE
+    ws['A1'].font = Font(name='Calibri', size=11, italic=True)
+
     # Populate header information
     ws['B3'] = report_date
     ws['B4'] = report_data.get('report_run_date', datetime.now().date())
@@ -810,8 +829,8 @@ def populate_local_impairment_report_summarised(
     ws['F20'] = report_data.get('doubtful', {}).get('provision', 0)
     ws['G20'] = report_data.get('loss', {}).get('provision', 0)
     
-    # Outsanding balance (difference)
-    ws['B21'] = "Oustanding balance"
+    # Outstanding balance (difference)
+    ws['B21'] = "Outstanding Balance Difference"
     ws['C21'] = report_data.get('current', {}).get('balance_difference', 0)
     ws['D21'] = report_data.get('olem', {}).get('balance_difference', 0)
     ws['E21'] = report_data.get('substandard', {}).get('balance_difference', 0)

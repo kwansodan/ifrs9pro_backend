@@ -212,6 +212,12 @@ def process_loan_sync(loan_data, selected_dt_str):
         if "final_ecl" not in loan_result:
             raise RuntimeError(f"final_ecl not computed for loan {loan_data.get('id')}")
 
+        # Calculate balance_difference
+        # formula: Outstanding balance - (Theoretical balance + Accumulated arrears)
+        outstanding_bal = safe_float(loan_data.get("outstanding_loan_balance", 0))
+        theoretical_bal = loan_result.get("theoretical_balance", 0)
+        loan_result["balance_difference"] = round(outstanding_bal - (theoretical_bal + arrears), 2)
+
         # Log computed result (structured)
         return loan_data["id"], loan_result, None
 
@@ -300,6 +306,7 @@ async def process_ecl_calculation_sync(portfolio_id: int, reporting_date: str, d
                     "pd_value": pd_value,
                     "submission_period": loan.submission_period,
                     "maturity_period": loan.maturity_period,
+                    "outstanding_loan_balance": loan.outstanding_loan_balance,
                 }
 
                 task = asyncio.get_running_loop().run_in_executor(executor, process_loan_sync, loan_data, selected_dt_str)
@@ -415,6 +422,12 @@ def process_loan_local_sync(loan_data, relevant_prov_rate, selected_dt_str):
         loan_result['bog_prov_rate'] = float(rate)
         loan_result['bog_provision'] = round(float(rate * ead), 2)
         
+        # Calculate balance_difference
+        outstanding_bal = safe_float(loan_data.get("outstanding_loan_balance", 0))
+        theoretical_bal = safe_float(loan_data.get("theoretical_balance", 0))
+        arrears = safe_float(loan_data.get("accumulated_arrears", 0))
+        loan_result["balance_difference"] = round(outstanding_bal - (theoretical_bal + arrears), 2)
+
         return loan_data['id'], loan_result, None
 
     except Exception as e:
@@ -508,6 +521,9 @@ async def process_bog_impairment_calculation_sync(
                     "id": loan.id,
                     "ead": loan.ead,
                     "bog_stage": loan.bog_stage,
+                    "outstanding_loan_balance": loan.outstanding_loan_balance,
+                    "theoretical_balance": loan.theoretical_balance,
+                    "accumulated_arrears": loan.accumulated_arrears,
                 }
 
                 task = asyncio.get_running_loop().run_in_executor(
@@ -1135,3 +1151,160 @@ async def process_local_impairment_calculation_sync(
             "message": str(e),
             "portfolio_id": portfolio_id
         }
+
+
+async def update_portfolio_eir_sync(portfolio_id: int, db: Session):
+    """
+    Dedicated function to calculate and update EIR for all loans with open balances.
+    """
+    try:
+        batch_size = 500
+        max_workers = max(1, multiprocessing.cpu_count() - 1)
+        executor = ThreadPoolExecutor(max_workers=min(8, max_workers))
+        
+        offset = 0
+        total_updated = 0
+        
+        while True:
+            loans = (
+                db.query(Loan)
+                .filter(
+                    Loan.portfolio_id == portfolio_id,
+                    Loan.outstanding_loan_balance > 0
+                )
+                .order_by(Loan.id)
+                .offset(offset)
+                .limit(batch_size)
+                .all()
+            )
+            
+            if not loans:
+                break
+                
+            tasks = []
+            for loan in loans:
+                # Setup minimal loan data for process_loan_sync to only care about EIR
+                loan_data = {
+                    "id": loan.id,
+                    "loan_amount": loan.loan_amount,
+                    "loan_term": loan.loan_term,
+                    "monthly_installment": loan.monthly_installment,
+                    "administrative_fees": loan.administrative_fees,
+                    "loan_issue_date": loan.loan_issue_date,
+                    "submission_period": loan.submission_period,
+                    "maturity_period": loan.maturity_period,
+                    "deduction_start_period": loan.deduction_start_period,
+                    "outstanding_loan_balance": loan.outstanding_loan_balance,
+                    # dummy values for other fields process_loan_sync expects
+                    "accumulated_arrears": 0,
+                    "pd_value": 0,
+                }
+                
+                # We use process_loan_sync but we only care about the 'eir' in field results
+                # We pass a dummy reporting date
+                task = asyncio.get_running_loop().run_in_executor(
+                    executor, process_loan_sync, loan_data, str(date.today())
+                )
+                tasks.append(task)
+                
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for i, res in enumerate(results):
+                if isinstance(res, tuple) and len(res) == 3:
+                    res_id, loan_fields, error_msg = res
+                    if loan_fields and "eir" in loan_fields:
+                        db.query(Loan).filter(Loan.id == res_id).update({"eir": loan_fields["eir"]})
+                        total_updated += 1
+            
+            db.commit()
+            offset += batch_size
+            logger.info(f"Updated EIR for {total_updated} loans in portfolio {portfolio_id}")
+            
+        return {"status": "success", "total_updated": total_updated}
+        
+    except Exception as e:
+        logger.error(f"Error in update_portfolio_eir_sync: {e}")
+        return {"error": str(e)}
+
+
+async def update_portfolio_ead_sync(portfolio_id: int, db: Session, reporting_date: str = None):
+    """
+    Dedicated function to calculate and update EAD for all loans with open balances.
+    """
+    try:
+        if not reporting_date:
+            reporting_date = str(date.today())
+            
+        batch_size = 500
+        max_workers = max(1, multiprocessing.cpu_count() - 1)
+        executor = ThreadPoolExecutor(max_workers=min(8, max_workers))
+        
+        offset = 0
+        total_updated = 0
+        
+        while True:
+            loans = (
+                db.query(Loan)
+                .filter(
+                    Loan.portfolio_id == portfolio_id,
+                    Loan.outstanding_loan_balance > 0
+                )
+                .order_by(Loan.id)
+                .offset(offset)
+                .limit(batch_size)
+                .all()
+            )
+            
+            if not loans:
+                break
+                
+            tasks = []
+            for loan in loans:
+                loan_data = {
+                    "id": loan.id,
+                    "loan_amount": loan.loan_amount,
+                    "loan_term": loan.loan_term,
+                    "monthly_installment": loan.monthly_installment,
+                    "administrative_fees": loan.administrative_fees,
+                    "loan_issue_date": loan.loan_issue_date,
+                    "submission_period": loan.submission_period,
+                    "maturity_period": loan.maturity_period,
+                    "deduction_start_period": loan.deduction_start_period,
+                    "accumulated_arrears": loan.accumulated_arrears,
+                    "outstanding_loan_balance": loan.outstanding_loan_balance,
+                    "pd_value": 0, # Not needed for EAD
+                }
+                
+                task = asyncio.get_running_loop().run_in_executor(
+                    executor, process_loan_sync, loan_data, reporting_date
+                )
+                tasks.append(task)
+                
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for i, res in enumerate(results):
+                if isinstance(res, tuple) and len(res) == 3:
+                    res_id, loan_fields, error_msg = res
+                    if loan_fields and "ead" in loan_fields:
+                        # Update EAD and related amortised balance fields
+                        update_dict = {
+                            "ead": loan_fields["ead"],
+                            "amortised_bal": loan_fields.get("amortised_bal"),
+                            "adjusted_amortised_bal": loan_fields.get("adjusted_amortised_bal"),
+                            "theoretical_balance": loan_fields.get("theoretical_balance"),
+                            "balance_difference": loan_fields.get("balance_difference"),
+                        }
+                        # Remove None values
+                        update_dict = {k: v for k, v in update_dict.items() if v is not None}
+                        db.query(Loan).filter(Loan.id == res_id).update(update_dict)
+                        total_updated += 1
+            
+            db.commit()
+            offset += batch_size
+            logger.info(f"Updated EAD for {total_updated} loans in portfolio {portfolio_id}")
+            
+        return {"status": "success", "total_updated": total_updated}
+        
+    except Exception as e:
+        logger.error(f"Error in update_portfolio_ead_sync: {e}")
+        return {"error": str(e)}

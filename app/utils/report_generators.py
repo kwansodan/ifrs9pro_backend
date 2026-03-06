@@ -1102,7 +1102,7 @@ def generate_ecl_detailed_report(
             loan_batch = db.query(
                 Loan.id, Loan.employee_id, Loan.loan_amount, Loan.theoretical_balance, Loan.ead,
                 Loan.lgd, Loan.eir, Loan.pd, Loan.final_ecl,
-                Loan.accumulated_arrears, Loan.ifrs9_stage, Loan.ndia
+                Loan.accumulated_arrears, Loan.ifrs9_stage, Loan.ndia, Loan.balance_difference
             ).filter(
                 Loan.portfolio_id == portfolio_id
             ).order_by(Loan.id).offset(offset).limit(batch_size).all()
@@ -1441,7 +1441,7 @@ def generate_local_impairment_details_report(
             # Query necessary columns
             loan_batch = db.query(
                  Loan.id, Loan.employee_id, Loan.loan_amount, Loan.outstanding_loan_balance,
-                 Loan.accumulated_arrears, Loan.ndia # Add others if needed by LGD calc
+                 Loan.accumulated_arrears, Loan.ndia, Loan.balance_difference
                  ).filter(
                  Loan.portfolio_id == portfolio_id
              ).order_by(Loan.id).offset(offset).limit(batch_size).all()
