@@ -585,10 +585,13 @@ async def change_subscription(
         f"{old_plan_code} -> {payload.new_plan_code}"
     )
 
-    # 3. Initialize new payment (Paystack links plan price automatically, so no 'amount' sent)
+    # 3. Initialize new payment
+    # Paystack requires an amount > 0 even when passing a plan.
+    # The actual amount charged is overridden by the plan's price when the subscription is created.
     transaction_data = {
         "email": current_user.email,
         "plan": payload.new_plan_code,
+        "amount": 10000  # Placeholder amount required by Paystack API (e.g. 10000 kobo)
     }
 
     try:
