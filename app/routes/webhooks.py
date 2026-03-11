@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from app.utils.billing import verify_paystack_signature
+from app.utils.billing import verify_paystack_signature, paystack_request
 from app.database import get_db
 from app.models import (
     User,
@@ -143,13 +143,37 @@ async def paystack_webhook(
                     .filter(
                         TenantSubscription.tenant_id == tenant.id,
                         TenantSubscription.status.in_(
-                            ["active", "past_due", "non-renewing"]
+                            ["active", "past_due", "non-renewing", "pending_change"]
                         ),
                     )
                     .all()
                 )
 
                 for old_sub in previous_subscriptions:
+                    # Don't try to disable the current new subscription if we somehow found it
+                    if old_sub.paystack_subscription_code == subscription_code:
+                        continue
+
+                    # 3.5. Actually disable on Paystack (best effort)
+                    try:
+                        # Fetch email token from Paystack if we don't have it (optional, but code and token are usually needed for manual disable)
+                        # Actually POST /subscription/disable only requires code and token.
+                        # For now, we only have the code locally. We can try to disable it.
+                        # Paystack subscription disable documentation says token is required.
+                        # If we don't have the token, we might need to fetch it via GET /subscription/:code first.
+                        
+                        sub_details = await paystack_request("GET", f"/subscription/{old_sub.paystack_subscription_code}")
+                        email_token = sub_details.get("data", {}).get("email_token")
+                        
+                        if email_token:
+                            await paystack_request("POST", "/subscription/disable", {
+                                "code": old_sub.paystack_subscription_code,
+                                "token": email_token
+                            })
+                            logger.info(f"Successfully disabled old Paystack subscription: {old_sub.paystack_subscription_code}")
+                    except Exception as e:
+                        logger.warning(f"Failed to disable old subscription {old_sub.paystack_subscription_code} on Paystack: {e}")
+
                     old_sub.status = "expired"
                     old_sub.ended_at = datetime.now(timezone.utc)
 
