@@ -511,6 +511,8 @@ async def get_subscription_manage_link(
     status_code=status.HTTP_201_CREATED,
     responses={
         404: {"description": "No active subscription found"},
+        400: {"description": "Invalid plan"},
+        409: {"description": "Subscription change already in progress"},
         500: {"description": "Paystack failure"},
         422: {"description": "Invalid parameters"},
         401: {"description": "Not authenticated"},
@@ -524,22 +526,25 @@ async def change_subscription(
 ):
     """
     Change tenant subscription by:
-    1. Initializing a new subscription for a new plan
-    2. Disabling the existing subscription (from DB)
+    1. Validating the requested plan
+    2. Initializing a new subscription for the new plan
+    Note: The actual subscription update and old subscription disablement
+    must be handled by the Paystack webhook after payment success.
     """
-
-    if not current_user.tenant:
+    tenant = current_user.tenant
+    if not tenant:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User is not associated with a tenant",
         )
 
-    # 1. Fetch current subscription from DB (authoritative)
+    # 1. Fetch current subscription from DB (with explicit tenant isolation constraint)
     old_subscription = (
         db.query(TenantSubscription)
         .filter(
+            TenantSubscription.tenant_id == tenant.id,
             TenantSubscription.status.in_(
-                ["active", "past_due", "non-renewing"]
+                ["active", "past_due", "non-renewing", "pending_change"]
             )
         )
         .order_by(TenantSubscription.created_at.desc())
@@ -552,41 +557,61 @@ async def change_subscription(
             detail="No active subscription found for tenant",
         )
 
-    # 2. Initialize new subscription (Paystack creates it after payment)
+    if old_subscription.status == "pending_change":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Subscription change already in progress"
+        )
+
+    # 2. Validate plan
+    valid_plan = (
+        db.query(SubscriptionPlan)
+        .filter(
+            SubscriptionPlan.paystack_plan_code == payload.new_plan_code, 
+            SubscriptionPlan.is_active == True
+        )
+        .first()
+    )
+    
+    if not valid_plan:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid plan"
+        )
+
+    old_plan_code = old_subscription.plan.paystack_plan_code if old_subscription.plan else "Unknown"
+    logger.info(
+        f"Tenant {tenant.id} changing plan "
+        f"{old_plan_code} -> {payload.new_plan_code}"
+    )
+
+    # 3. Initialize new payment (Paystack links plan price automatically, so no 'amount' sent)
     transaction_data = {
         "email": current_user.email,
         "plan": payload.new_plan_code,
-        "amount": 3000
     }
 
-    init_result = await paystack_request(
-        "POST",
-        "/transaction/initialize",
-        transaction_data,
-    )
+    try:
+        init_result = await paystack_request(
+            "POST",
+            "/transaction/initialize",
+            transaction_data,
+        )
+    except Exception as e:
+        logger.error(f"Network error handling Paystack initialize for tenant {tenant.id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to initialize new subscription with payment gateway"
+        )
 
-    if not init_result.get("status"):
+    if not init_result or not init_result.get("status"):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to initialize new subscription",
         )
 
-    # 3. Disable old subscription
-    disable_data = {
-        "code": old_subscription.paystack_subscription_code,
-        "token": payload.old_subscription_token,
-    }
-
-    await paystack_request(
-        "POST",
-        "/subscription/disable",
-        disable_data,
-    )
-
-    # 4. Mark local old subscription as non-renewing immediately
-    old_subscription.status = "non-renewing"
-    old_subscription.cancelled_at = datetime.now(timezone.utc)
-    db.commit()
+    # We do NOT disable the old subscription here!
+    # Webhooks must handle marking old subscription non-renewing/disabled and setting up new sub.
 
     return {
         "status": True,
