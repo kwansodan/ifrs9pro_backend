@@ -295,11 +295,11 @@ async def get_subscription(
             detail="User is not associated with a tenant"
         )
 
-    # Query for the latest active (or past_due/non-renewing) subscription for this tenant.
+    # Query for the latest active (or past_due/non-renewing/pending_change) subscription for this tenant.
     # The query is automatically filtered by tenant_id via get_tenant_db
     subscription = (
         db.query(TenantSubscription)
-        .filter(TenantSubscription.status.in_(["active", "past_due", "non-renewing"]))
+        .filter(TenantSubscription.status.in_(["active", "past_due", "non-renewing", "pending_change"]))
         .order_by(TenantSubscription.created_at.desc())
         .first()
     )
@@ -389,7 +389,7 @@ async def billing_summary(
 
         subscription = (
             db.query(TenantSubscription)
-            .filter(TenantSubscription.status.in_(["active", "past_due", "non-renewing"]))
+            .filter(TenantSubscription.status.in_(["active", "past_due", "non-renewing", "pending_change"]))
             .order_by(TenantSubscription.created_at.desc())
             .first()
         )
@@ -479,7 +479,7 @@ async def get_subscription_manage_link(
         db.query(TenantSubscription)
         .filter(
             TenantSubscription.status.in_(
-                ["active", "past_due", "non-renewing"]
+                ["active", "past_due", "non-renewing", "pending_change"]
             )
         )
         .order_by(TenantSubscription.created_at.desc())
@@ -613,8 +613,10 @@ async def change_subscription(
             detail="Failed to initialize new subscription",
         )
 
-    # We do NOT disable the old subscription here!
-    # Webhooks must handle marking old subscription non-renewing/disabled and setting up new sub.
+    # 4. Mark old subscription as pending_change
+    # NOTE: The status will be updated to 'expired' by the subscription.create webhook
+    old_subscription.status = "pending_change"
+    db.commit()
 
     return {
         "status": True,
