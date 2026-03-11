@@ -583,6 +583,11 @@ async def change_subscription(
         disable_data,
     )
 
+    # 4. Mark local old subscription as non-renewing immediately
+    old_subscription.status = "non-renewing"
+    old_subscription.cancelled_at = datetime.now(timezone.utc)
+    db.commit()
+
     return {
         "status": True,
         "message": "Subscription change initiated",

@@ -198,14 +198,19 @@ async def paystack_webhook(
                     .one_or_none()
                 )
                 if not usage:
-                    db.add(
-                        SubscriptionUsage(
-                            subscription_id=subscription.id,
-                            current_loan_count=0,
-                            current_portfolio_count=0,
-                            current_team_count=0,
-                        )
+                    usage = SubscriptionUsage(
+                        subscription_id=subscription.id,
+                        current_loan_count=0,
+                        current_portfolio_count=0,
+                        current_team_count=0,
                     )
+                    db.add(usage)
+                else:
+                    # Reset existing usage if this is a plan change/renew
+                    usage.current_loan_count = 0
+                    usage.current_portfolio_count = 0
+                    usage.current_team_count = 0
+                    db.add(usage)
 
                 # 7. Tenant denormalized state
                 tenant.paystack_customer_code = (
