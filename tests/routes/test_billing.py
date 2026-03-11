@@ -56,6 +56,18 @@ def mock_db():
     return db
 
 
+@pytest.fixture
+def mock_plan():
+    """Create a mock subscription plan"""
+    from app.models import SubscriptionPlan
+    plan = MagicMock(spec=SubscriptionPlan)
+    plan.id = 1
+    plan.name = "Pro Plan"
+    plan.paystack_plan_code = "PLN_pro"
+    plan.is_active = True
+    return plan
+
+
 class TestListPlans:
     @pytest.mark.asyncio
     async def test_list_plans_success(self):
@@ -214,8 +226,8 @@ class TestGetMyCustomer:
 
 class TestInitializeTransaction:
     @pytest.mark.asyncio
-    async def test_initialize_transaction_success(self, mock_user):
-        """Test successful transaction initialization"""
+    async def test_initialize_transaction_success(self, mock_user, mock_db):
+        """Test successful transaction initialization without plan change"""
         from app.schemas import TransactionInitialize
 
         transaction_data = TransactionInitialize(
@@ -233,10 +245,13 @@ class TestInitializeTransaction:
             }
         }
 
+        # Mock db query for old subscription to return None (no plan change)
+        mock_db.query.return_value.filter.return_value.order_by.return_value.first.return_value = None
+
         with patch("app.routes.billing.paystack_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = mock_response
 
-            result = await initialize_transaction(transaction_data, mock_user)
+            result = await initialize_transaction(transaction_data, mock_user, mock_db)
 
             assert result["status"] is True
             assert "authorization_url" in result["data"]
@@ -245,6 +260,67 @@ class TestInitializeTransaction:
             sent_data = call_args[0][2]
             assert sent_data["email"] == mock_user.email
             assert sent_data["amount"] == 50000
+
+    @pytest.mark.asyncio
+    async def test_initialize_transaction_change_subscription(self, mock_user, mock_db, mock_subscription, mock_plan):
+        """Test transaction initialization for a plan change (active sub exists)"""
+        from app.schemas import TransactionInitialize
+        from app.models import TenantSubscription, SubscriptionPlan
+        
+        transaction_data = TransactionInitialize(
+            amount=50000,
+            plan="PLN_pro"
+        )
+        
+        # Mock old subscription exists and plan is valid
+        # We need to handle multiple queries to db.query()
+        def db_query_side_effect(model):
+            mock_query = MagicMock()
+            if model == TenantSubscription:
+                mock_query.filter.return_value.order_by.return_value.first.return_value = mock_subscription
+            elif model == SubscriptionPlan:
+                mock_query.filter.return_value.first.return_value = mock_plan
+            return mock_query
+
+        mock_db.query.side_effect = db_query_side_effect
+        
+        mock_response = {"status": True, "data": {"authorization_url": "http://pay.it"}}
+        
+        with patch("app.routes.billing.paystack_request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = mock_response
+            
+            result = await initialize_transaction(transaction_data, mock_user, mock_db)
+            
+            assert result["status"] is True
+            assert mock_subscription.status == "pending_change"
+            mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_initialize_transaction_invalid_plan(self, mock_user, mock_db, mock_subscription):
+        """Test error when providing an invalid plan during change"""
+        from app.schemas import TransactionInitialize
+        from app.models import TenantSubscription, SubscriptionPlan
+        
+        transaction_data = TransactionInitialize(
+            amount=50000,
+            plan="PLN_invalid"
+        )
+        
+        def db_query_side_effect(model):
+            mock_query = MagicMock()
+            if model == TenantSubscription:
+                mock_query.filter.return_value.order_by.return_value.first.return_value = mock_subscription
+            elif model == SubscriptionPlan:
+                mock_query.filter.return_value.first.return_value = None
+            return mock_query
+
+        mock_db.query.side_effect = db_query_side_effect
+        
+        with pytest.raises(HTTPException) as exc_info:
+            await initialize_transaction(transaction_data, mock_user, mock_db)
+            
+        assert exc_info.value.status_code == 400
+        assert "Invalid plan" in exc_info.value.detail
 
 
 class TestDisableSubscription:

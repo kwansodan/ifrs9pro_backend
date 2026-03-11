@@ -236,11 +236,76 @@ async def get_my_customer(current_user: User = Depends(get_current_active_user))
                     })
 async def initialize_transaction(
     transaction: TransactionInitialize,
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
 ):
-    """Initialize a transaction (amount in kobo) using authenticated user's email"""
+    """Initialize a transaction (amount in kobo) using authenticated user's email.
+       If a plan is provided and the tenant has an active subscription, it treats it as a subscription change.
+    """
+    tenant = current_user.tenant
+    if not tenant:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User is not associated with a tenant",
+        )
+
     transaction_data = transaction.model_dump(exclude_none=True)
     transaction_data["email"] = current_user.email  # Use authenticated user's email
+    
+    # Check if we are changing an existing subscription (plan is provided)
+    new_plan_code = transaction.plan
+    if new_plan_code:
+        # 1. Fetch current subscription from DB
+        old_subscription = (
+            db.query(TenantSubscription)
+            .filter(
+                TenantSubscription.tenant_id == tenant.id,
+                TenantSubscription.status.in_(
+                    ["active", "past_due", "non-renewing", "pending_change"]
+                )
+            )
+            .order_by(TenantSubscription.created_at.desc())
+            .first()
+        )
+
+        if old_subscription:
+            # This is a subscription change flow
+            if old_subscription.status == "pending_change":
+                 logger.info(f"Tenant {tenant.id} already has a pending subscription change. Proceeding to initialize another.")
+
+            # 2. Validate plan
+            valid_plan = (
+                db.query(SubscriptionPlan)
+                .filter(
+                    SubscriptionPlan.paystack_plan_code == new_plan_code, 
+                    SubscriptionPlan.is_active == True
+                )
+                .first()
+            )
+            
+            if not valid_plan:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid plan"
+                )
+
+            old_plan_code = old_subscription.plan.paystack_plan_code if old_subscription.plan else "Unknown"
+            logger.info(
+                f"Tenant {tenant.id} initializing plan change via transaction "
+                f"{old_plan_code} -> {new_plan_code}"
+            )
+
+            # 3. Initialize Paystack transaction
+            result = await paystack_request("POST", "/transaction/initialize", transaction_data)
+            
+            if result.get("status"):
+                # 4. Mark old subscription as pending_change
+                old_subscription.status = "pending_change"
+                db.commit()
+            
+            return result
+
+    # Regular transaction initialization (first subscription or non-plan payment)
     result = await paystack_request("POST", "/transaction/initialize", transaction_data)
     return result
 
