@@ -26,9 +26,12 @@ os.environ.setdefault("SQLALCHEMY_DATABASE_URL", TEST_DATABASE_URL)
 import sys
 from unittest.mock import MagicMock
 
-# Create a mock for the celery module
+# Create a mock for the celery and azure modules
 mock_celery = MagicMock()
 sys.modules["celery"] = mock_celery
+sys.modules["azure"] = MagicMock()
+sys.modules["azure.storage"] = MagicMock()
+sys.modules["azure.storage.blob"] = MagicMock()
 
 # Mock the Celery class and its .task decorator
 mock_celery_app = MagicMock()

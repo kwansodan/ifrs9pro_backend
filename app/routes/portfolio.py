@@ -797,15 +797,14 @@ async def accept_portfolio_data(
         )
 
     # Check if adding these loans would exceed the plan limit
-    projected_loan_total = usage.current_loan_count + new_loan_rows
-    if projected_loan_total > plan.max_loan_data:
+    if new_loan_rows > plan.max_loan_data:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail=(
                 f"Loan data limit exceeded. Your plan allows {plan.max_loan_data} loans. "
                 f"You currently have {usage.current_loan_count} loans. "
                 f"This upload contains {new_loan_rows} loans, which would exceed your limit by "
-                f"{projected_loan_total - plan.max_loan_data} loans. "
+                f"{new_loan_rows - plan.max_loan_data} loans. "
                 f"Please upgrade your plan or remove some existing loans."
             ),
         )
