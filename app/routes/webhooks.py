@@ -81,15 +81,51 @@ async def paystack_webhook(
             amount = data.get("amount")
             customer_email = data.get("customer", {}).get("email")
             currency = data.get("currency")
+            metadata = data.get("metadata") or {}
             
             logger.info(f"Payment successful - Reference: {reference}, Amount: {amount} {currency}, Customer: {customer_email}")
+            
+            # Handle subscription change if metadata is present
+            if metadata.get("type") == "subscription_change":
+                old_sub_code = metadata.get("old_subscription_code")
+                new_plan_code = metadata.get("new_plan_code")
+                auth_code = data.get("authorization", {}).get("authorization_code")
+                
+                if old_sub_code and new_plan_code and auth_code:
+                    logger.info(f"Detected subscription change: {old_sub_code} -> {new_plan_code}")
+                    
+                    try:
+                        # 1. Disable old subscription
+                        sub_details = await paystack_request("GET", f"/subscription/{old_sub_code}")
+                        email_token = sub_details.get("data", {}).get("email_token")
+                        
+                        if email_token:
+                            await paystack_request("POST", "/subscription/disable", {
+                                "code": old_sub_code,
+                                "token": email_token
+                            })
+                            logger.info(f"Disabled old subscription: {old_sub_code}")
+                        
+                        # 2. Create new subscription
+                        # This will trigger subscription.create webhook event
+                        await paystack_request("POST", "/subscription", {
+                            "customer": customer_email,
+                            "plan": new_plan_code,
+                            "authorization": auth_code
+                        })
+                        logger.info(f"Created new subscription request for {customer_email} with plan {new_plan_code}")
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to process subscription change in webhook: {e}")
+                        # We don't raise here to avoid Paystack retrying the webhook if the payment was actually successful
             
             response_details["details"] = {
                 "reference": reference,
                 "amount": amount,
                 "currency": currency,
                 "customer_email": customer_email,
-                "status": data.get("status")
+                "status": data.get("status"),
+                "metadata": metadata
             }
 
         elif event_type == "subscription.create":
