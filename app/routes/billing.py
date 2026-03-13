@@ -271,7 +271,10 @@ async def initialize_transaction(
         if old_subscription:
             # This is a subscription change flow
             if old_subscription.status == "pending_change":
-                 logger.info(f"Tenant {tenant.id} already has a pending subscription change. Proceeding to initialize another.")
+                 raise HTTPException(
+                     status_code=status.HTTP_409_CONFLICT,
+                     detail="Subscription change already in progress"
+                 )
 
             # 2. Validate plan
             valid_plan = (
@@ -295,11 +298,21 @@ async def initialize_transaction(
                 f"{old_plan_code} -> {new_plan_code}"
             )
 
-            # 3. Initialize Paystack transaction
+            # 3. Add metadata for plan change
+            if "metadata" not in transaction_data or transaction_data["metadata"] is None:
+                transaction_data["metadata"] = {}
+            
+            transaction_data["metadata"].update({
+                "old_subscription_code": old_subscription.paystack_subscription_code,
+                "new_plan_code": new_plan_code,
+                "type": "subscription_change"
+            })
+
+            # 4. Initialize Paystack transaction
             result = await paystack_request("POST", "/transaction/initialize", transaction_data)
             
             if result.get("status"):
-                # 4. Mark old subscription as pending_change
+                # 5. Mark old subscription as pending_change
                 old_subscription.status = "pending_change"
                 db.commit()
             
@@ -656,7 +669,12 @@ async def change_subscription(
     transaction_data = {
         "email": current_user.email,
         "plan": payload.new_plan_code,
-        "amount": 10000  # Placeholder amount required by Paystack API (e.g. 10000 kobo)
+        "amount": 10000,  # Placeholder amount required by Paystack API (e.g. 10000 kobo)
+        "metadata": {
+            "old_subscription_code": old_subscription.paystack_subscription_code,
+            "new_plan_code": payload.new_plan_code,
+            "type": "subscription_change"
+        }
     }
 
     try:
